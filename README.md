@@ -1,13 +1,8 @@
-<<<<<<< HEAD
-# city-view
-
-Antwerp street generation from facade photos.
-=======
 # City View
 
 Generate a walkable Antwerp side street in Blender from facade photos. The first block is a late-70s / early-80s Flemish rijhuis street: shopfronts, plaster, brick, and black aluminum frames.
 
-There is **no Blender MCP** in this project. Generation runs headless through the local Blender 4.4 binary.
+Generation can run headless through the local Blender binary, or live through the official Blender Lab MCP add-on (Blender 5.1+).
 
 ## What you get
 
@@ -18,7 +13,7 @@ There is **no Blender MCP** in this project. Generation runs headless through th
 
 ## Requirements
 
-- macOS with Blender at `/Applications/Blender.app` (or set `BLENDER_BIN`)
+- macOS with Blender 5.1+ at `/Applications/Blender.app` (or set `BLENDER_BIN`)
 - Python 3.11+
 
 ## Build the street
@@ -61,5 +56,25 @@ Styles: `yellow-brick`, `cream-tile`, `white-modern`, `prefab-70s`, `red-brick`,
 
 ## Blender MCP
 
-This session does not expose a Blender MCP server. To drive Blender live from Cursor later, install [blender-mcp](https://github.com/ahujasid/blender-mcp) (addon + `uvx blender-mcp`) and add it to Cursor MCP settings. The CLI path here stays the source of truth for reproducible streets.
->>>>>>> 4d87083 (Add Antwerp 70s-80s street builder from facade photos)
+Uses the official Blender Lab server from `~/blender_mcp`, not a third-party fork.
+
+1. Blender 5.1+ (this machine: 5.2.1 LTS)
+2. MCP add-on installed and enabled (`scripts/setup_blender_mcp.sh`)
+3. **Allow Online Access** in Blender Preferences → System
+4. Cursor MCP entry pointing at the local `uv` project:
+
+```json
+"blender": {
+  "command": "/Users/emielmasyn/.local/bin/uv",
+  "args": [
+    "--directory",
+    "/Users/emielmasyn/blender_mcp/mcp",
+    "run",
+    "blender-mcp"
+  ]
+}
+```
+
+`$HOME` is not expanded in Cursor MCP JSON — use the absolute path.
+
+Restart the Blender GUI after installing the add-on. Autostart listens on `localhost:9876`. Confirm in Preferences → Add-ons → MCP that the server shows as running. Then reload the Blender MCP server in Cursor Settings.
