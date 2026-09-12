@@ -247,38 +247,44 @@ def resolve_photo(root: Path, spec: dict) -> Path:
     return photo
 
 
-def build_photo_building(spec: dict, origin: Vector, facing: int, root: Path) -> bpy.types.Object:
+def street_y(lot_dir: int, toward_street: float = 0.06) -> float:
+    """Local Y on the sidewalk face. lot_dir is the way the lot grows away from the road."""
+    return -lot_dir * toward_street
+
+
+def build_photo_building(spec: dict, origin: Vector, lot_dir: int, root: Path) -> bpy.types.Object:
     style = style_of(spec)
     width, depth, height = spec["width"], spec["depth"], spec["height"]
     parapet = spec.get("parapet", 0.4)
     recess = spec.get("shop_recess", 0.7)
     parent = new_empty(spec["name"], (origin.x, origin.y, 0.0))
+    street_axis = "-Y" if lot_dir > 0 else "+Y"
 
     body = add_box(
         f"{spec['name']}_body",
         (width, depth, height),
-        (0.0, facing * (depth / 2.0), height / 2.0),
+        (0.0, lot_dir * (depth / 2.0), height / 2.0),
         parent,
     )
     assign(body, principled(f"{spec['name']}_side", style["side"], style["rough"]))
-    unwrap_front_face(body, "+Y" if facing > 0 else "-Y")
+    unwrap_front_face(body, street_axis)
 
     facade_depth = 0.08
     facade = add_box(
         f"{spec['name']}_facade",
         (width + 0.02, facade_depth, height + 0.02),
-        (0.0, facing * (depth + facade_depth / 2.0 - 0.01), height / 2.0),
+        (0.0, street_y(lot_dir, facade_depth / 2.0), height / 2.0),
         parent,
     )
     crop = spec.get("crop") or [0.0, 0.0, 1.0, 1.0]
     assign(facade, photo_material(f"{spec['name']}_photo", resolve_photo(root, spec), crop, 0.86))
-    unwrap_front_face(facade, "+Y" if facing > 0 else "-Y")
+    unwrap_front_face(facade, street_axis)
 
     if recess > 0:
         hole = add_box(
             f"{spec['name']}_recess",
             (width * 0.42, recess, height * 0.28),
-            (width * 0.16, facing * (depth - recess / 2.0 + 0.02), height * 0.16),
+            (width * 0.16, lot_dir * (recess / 2.0), height * 0.16),
             parent,
         )
         assign(hole, principled(f"{spec['name']}_void", (0.04, 0.04, 0.045, 1.0), 0.7))
@@ -286,7 +292,7 @@ def build_photo_building(spec: dict, origin: Vector, facing: int, root: Path) ->
     cornice = add_box(
         f"{spec['name']}_cornice",
         (width + 0.18, 0.28, 0.16),
-        (0.0, facing * (depth + 0.08), height * 0.34),
+        (0.0, street_y(lot_dir, 0.12), height * 0.34),
         parent,
     )
     assign(cornice, principled(f"{spec['name']}_trim", style["trim"], 0.7))
@@ -294,7 +300,7 @@ def build_photo_building(spec: dict, origin: Vector, facing: int, root: Path) ->
     cap = add_box(
         f"{spec['name']}_parapet",
         (width + 0.12, 0.22, parapet),
-        (0.0, facing * (depth + 0.04), height + parapet / 2.0),
+        (0.0, street_y(lot_dir, 0.08), height + parapet / 2.0),
         parent,
     )
     assign(cap, principled(f"{spec['name']}_parapet", style["trim"], 0.75))
@@ -302,21 +308,21 @@ def build_photo_building(spec: dict, origin: Vector, facing: int, root: Path) ->
     roof = add_box(
         f"{spec['name']}_roof",
         (width - 0.3, depth - 0.4, 0.18),
-        (0.0, facing * (depth / 2.0 - 0.1), height + 0.05),
+        (0.0, lot_dir * (depth / 2.0 - 0.1), height + 0.05),
         parent,
     )
     assign(roof, principled(f"{spec['name']}_roof", style["roof"], 0.55, metallic=0.15))
     return parent
 
 
-def add_window(name: str, w: float, h: float, loc: tuple[float, float, float], parent, style, facing: int):
+def add_window(name: str, w: float, h: float, loc: tuple[float, float, float], parent, style, lot_dir: int):
     frame_t = 0.07
     frame = add_box(f"{name}_frame", (w, 0.1, h), loc, parent)
     assign(frame, principled(f"{name}_frame", style["frame"], 0.45, metallic=0.35))
     glass = add_box(
         f"{name}_glass",
         (w - frame_t * 2, 0.04, h - frame_t * 2),
-        (loc[0], loc[1] + facing * 0.03, loc[2]),
+        (loc[0], loc[1] - lot_dir * 0.03, loc[2]),
         parent,
     )
     assign(
@@ -325,18 +331,19 @@ def add_window(name: str, w: float, h: float, loc: tuple[float, float, float], p
     )
 
 
-def build_procedural_building(spec: dict, origin: Vector, facing: int) -> bpy.types.Object:
+def build_procedural_building(spec: dict, origin: Vector, lot_dir: int) -> bpy.types.Object:
     style = style_of(spec)
     width, depth, height = spec["width"], spec["depth"], spec["height"]
     floors = int(spec.get("floors", 3))
     bays = int(spec.get("bays", 2))
     ground = spec.get("ground", "shop")
     parent = new_empty(spec["name"], (origin.x, origin.y, 0.0))
+    face = street_y(lot_dir, 0.08)
 
     body = add_box(
         f"{spec['name']}_body",
         (width, depth, height),
-        (0.0, facing * (depth / 2.0), height / 2.0),
+        (0.0, lot_dir * (depth / 2.0), height / 2.0),
         parent,
     )
     assign(body, principled(f"{spec['name']}_wall", style["wall"], style["rough"]))
@@ -345,11 +352,10 @@ def build_procedural_building(spec: dict, origin: Vector, facing: int) -> bpy.ty
     upper_h = height - ground_h
     floor_h = upper_h / max(floors - 1, 1)
 
-    # Ground-floor band
     band = add_box(
         f"{spec['name']}_plinth",
         (width + 0.06, 0.12, ground_h),
-        (0.0, facing * (depth + 0.02), ground_h / 2.0),
+        (0.0, face, ground_h / 2.0),
         parent,
     )
     assign(band, principled(f"{spec['name']}_plinth", style["ground"], 0.82))
@@ -361,17 +367,17 @@ def build_procedural_building(spec: dict, origin: Vector, facing: int) -> bpy.ty
             f"{spec['name']}_shop",
             shop_w,
             shop_h,
-            (0.0, facing * (depth + 0.08), ground_h * 0.48),
+            (0.0, face, ground_h * 0.48),
             parent,
             style,
-            facing,
+            lot_dir,
         )
     else:
         door_w, door_h = 1.05, ground_h * 0.78
         door = add_box(
             f"{spec['name']}_door",
             (door_w, 0.08, door_h),
-            (-width * 0.28, facing * (depth + 0.06), door_h / 2.0 + 0.04),
+            (-width * 0.28, face, door_h / 2.0 + 0.04),
             parent,
         )
         assign(door, principled(f"{spec['name']}_door", (0.86, 0.86, 0.84, 1.0), 0.55))
@@ -379,10 +385,10 @@ def build_procedural_building(spec: dict, origin: Vector, facing: int) -> bpy.ty
             f"{spec['name']}_gwin",
             width * 0.34,
             ground_h * 0.42,
-            (width * 0.18, facing * (depth + 0.08), ground_h * 0.52),
+            (width * 0.18, face, ground_h * 0.52),
             parent,
             style,
-            facing,
+            lot_dir,
         )
 
     win_w = min(1.15, (width - 0.7) / bays - 0.15)
@@ -395,16 +401,16 @@ def build_procedural_building(spec: dict, origin: Vector, facing: int) -> bpy.ty
                 f"{spec['name']}_w{floor}_{bay}",
                 win_w,
                 win_h,
-                (x, facing * (depth + 0.08), z),
+                (x, face, z),
                 parent,
                 style,
-                facing,
+                lot_dir,
             )
 
     cornice = add_box(
         f"{spec['name']}_cornice",
         (width + 0.2, 0.26, 0.18),
-        (0.0, facing * (depth + 0.08), height - 0.12),
+        (0.0, face, height - 0.12),
         parent,
     )
     assign(cornice, principled(f"{spec['name']}_cornice", style["trim"], 0.7))
@@ -412,7 +418,7 @@ def build_procedural_building(spec: dict, origin: Vector, facing: int) -> bpy.ty
     roof = add_box(
         f"{spec['name']}_roof",
         (width - 0.2, depth - 0.35, 0.2),
-        (0.0, facing * (depth / 2.0 - 0.05), height + 0.08),
+        (0.0, lot_dir * (depth / 2.0 - 0.05), height + 0.08),
         parent,
     )
     assign(roof, principled(f"{spec['name']}_roof", style["roof"], 0.5, metallic=0.2))
@@ -488,23 +494,28 @@ def setup_world() -> None:
     link(sun)
 
 
+def _aim(obj: bpy.types.Object, target: Vector) -> None:
+    obj.rotation_euler = (target - obj.location).to_track_quat("-Z", "Y").to_euler()
+
+
 def setup_camera(target: Vector) -> None:
+    # Stand in the roadway, not inside the opposite block.
     cam_data = bpy.data.cameras.new("StreetCam")
-    cam_data.lens = 32
+    cam_data.lens = 24
+    cam_data.clip_start = 0.1
     cam_data.clip_end = 400
     cam = bpy.data.objects.new("StreetCam", cam_data)
-    cam.location = (1.4, -8.6, 1.65)
-    direction = target - cam.location
-    cam.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    cam.location = (-4.6, -2.7, 1.55)
+    _aim(cam, target)
     link(cam)
     bpy.context.scene.camera = cam
 
     three_q = bpy.data.cameras.new("ThreeQuarterCam")
-    three_q.lens = 35
+    three_q.lens = 32
     three_q.clip_end = 400
     q = bpy.data.objects.new("ThreeQuarterCam", three_q)
-    q.location = (18.0, -16.0, 7.5)
-    q.rotation_euler = (target - q.location).to_track_quat("-Z", "Y").to_euler()
+    q.location = (12.0, -2.2, 6.4)
+    _aim(q, Vector((-2.0, target.y, 4.8)))
     link(q)
 
 
@@ -544,6 +555,16 @@ def export_outputs(output_dir: Path, name: str, do_render: bool) -> None:
         preview = setup_render(output_dir, name)
         bpy.ops.render.render(write_still=True)
         print(f"Wrote {preview}")
+        three_q = bpy.data.objects.get("ThreeQuarterCam")
+        if three_q is not None:
+            bpy.context.scene.camera = three_q
+            angled = output_dir / f"{name}_angled.jpg"
+            bpy.context.scene.render.filepath = str(angled)
+            bpy.ops.render.render(write_still=True)
+            print(f"Wrote {angled}")
+            street = bpy.data.objects.get("StreetCam")
+            if street is not None:
+                bpy.context.scene.camera = street
     print(f"Wrote {blend}")
     print(f"Wrote {glb}")
 
@@ -566,13 +587,13 @@ def build(job: dict) -> None:
         place_row(opposite, back_y, facing=-1, root=root)
     build_ground(street, length)
 
-    for i, x in enumerate((-18.0, -6.0, 6.0, 18.0)):
+    for i, x in enumerate((-20.0, -11.0, 4.0, 16.0)):
         add_lamp(f"lamp_n_{i}", x, front_y - 0.45)
-        add_lamp(f"lamp_s_{i}", x + 2.0, back_y + 0.45)
+        add_lamp(f"lamp_s_{i}", x + 3.0, back_y + 0.45)
 
     setup_world()
     hero = next((b for b in buildings if b.get("kind") == "photo"), buildings[len(buildings) // 2])
-    setup_camera(Vector((0.0, front_y + 0.2, hero["height"] * 0.45)))
+    setup_camera(Vector((-4.6, front_y, 5.1)))
 
 
 def main() -> None:
