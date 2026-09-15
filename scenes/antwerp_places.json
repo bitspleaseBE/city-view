@@ -1,0 +1,14 @@
+{
+  "centrum": {
+    "title": "Historisch centrum and Scheldekaaien",
+    "description": "Scheldt waterfront, Het Steen, Groenplaats grain. The part of the poster map that reads as Antwerp.",
+    "bbox": [51.2180, 4.3880, 51.2265, 4.4055],
+    "origin": [51.2214, 4.3978]
+  },
+  "eilandje": {
+    "title": "Eilandje docklands",
+    "description": "Bonaparte and Willemdok, MAS, Kattendijk. The harbour blocks from the north of the poster.",
+    "bbox": [51.2280, 4.4020, 51.2370, 4.4180],
+    "origin": [51.2325, 4.4095]
+  }
+}

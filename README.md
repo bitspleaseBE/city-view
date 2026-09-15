@@ -48,7 +48,32 @@ python3 -m cityview serve
 
 Open http://127.0.0.1:8765/
 
-## Add buildings
+## Whole city from the Antwerp map
+
+The poster map is the silhouette we want — Scheldt, docks, dense street grain — but it is not geometry. Tracing it would fake the city. Real Antwerp comes from map data, then we dress it with the 70s-80s building language.
+
+```
+OpenStreetMap (now) / GRB + Stad Antwerpen 3D (later)
+    → water, roads, building footprints
+    → LOD1 extruded blocks for a whole district
+    → near-camera tiles swap in procedural rijhuizen + facade photos
+```
+
+Do not generate every house in Flanders at street-photo detail. Tile the city (~1 km) and use three levels:
+
+1. **Far** — water and road skeleton. This is what makes it *read* as Antwerp.
+2. **Mid** — footprint extrusions with period styles (this `city` command).
+3. **Near** — the existing `build` street generator plus geolocated facade photos.
+
+```bash
+python3 -m cityview city --place centrum
+python3 -m cityview city --place eilandje
+python3 -m cityview city --bbox 51.218,4.388,51.226,4.405
+```
+
+Presets live in `scenes/antwerp_places.json`. OSM downloads cache under `assets/osm/`.
+
+Later upgrades: Flemish **GRB** footprints and the city's own 1 km² GLB/CityGML tiles for real roof heights, then snap facade photos onto street-facing edges.
 
 Edit `scenes/antwerp_side_street.json`. A photo building needs a facade image and a crop rectangle. Procedural buildings take `style`, `floors`, `bays`, and `ground` (`shop` or `door`).
 
