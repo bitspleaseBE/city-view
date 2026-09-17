@@ -40,11 +40,18 @@ class OsmLayoutTests(unittest.TestCase):
                     "nodes": [1, 2],
                     "tags": {"highway": "residential"},
                 },
+                {
+                    "type": "way",
+                    "id": 12,
+                    "nodes": [1, 2, 3, 4, 1],
+                    "tags": {"leisure": "park", "name": "Harmoniepark"},
+                },
             ]
         }
         layout = layout_from_osm(osm, (51.221, 4.400))
         self.assertEqual(len(layout["buildings"]), 1)
         self.assertEqual(len(layout["roads"]), 1)
+        self.assertEqual(len(layout["parks"]), 1)
         self.assertGreater(layout["buildings"][0]["height"], 8.0)
 
 

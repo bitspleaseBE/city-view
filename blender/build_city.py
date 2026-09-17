@@ -141,7 +141,7 @@ def add_road(name: str, points: list[list[float]], width: float, mat: bpy.types.
 def bounds(layout: dict) -> tuple[float, float, float, float]:
     xs: list[float] = []
     ys: list[float] = []
-    for group in ("buildings", "water"):
+    for group in ("buildings", "water", "parks"):
         for item in layout.get(group) or []:
             for x, y in item.get("ring") or []:
                 xs.append(x)
@@ -210,11 +210,15 @@ def build(layout: dict) -> None:
     assign(link(ground_obj), principled("ground", (0.78, 0.77, 0.73, 1.0), 0.95))
 
     water_mat = principled("water", (0.16, 0.18, 0.20, 1.0), 0.22)
+    park_mat = principled("park", (0.42, 0.52, 0.38, 1.0), 0.92)
     road_mat = principled("asphalt", (0.08, 0.08, 0.085, 1.0), 0.95)
     style_mats = {name: principled(f"bldg_{name}", color, 0.88) for name, color in STYLES.items()}
 
     for i, pond in enumerate(layout.get("water") or []):
         add_ring(f"water_{pond.get('id', i)}", pond["ring"], 0.0, -0.04, water_mat)
+
+    for i, park in enumerate(layout.get("parks") or []):
+        add_ring(f"park_{park.get('id', i)}", park["ring"], 0.0, 0.02, park_mat)
 
     for i, road in enumerate(layout.get("roads") or []):
         add_road(f"road_{road.get('id', i)}", road["points"], float(road["width"]), road_mat)

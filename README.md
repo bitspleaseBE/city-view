@@ -68,6 +68,7 @@ Do not generate every house in Flanders at street-photo detail. Tile the city (~
 ```bash
 python3 -m cityview city --place centrum
 python3 -m cityview city --place eilandje
+python3 -m cityview city --place harmonie
 python3 -m cityview city --bbox 51.218,4.388,51.226,4.405
 ```
 

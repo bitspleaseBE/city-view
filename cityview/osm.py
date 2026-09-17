@@ -11,9 +11,11 @@ from typing import Any
 from cityview.geo import project
 
 OVERPASS_URLS = (
-    "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
 )
+OSM_MAP_URL = "https://api.openstreetmap.org/api/0.6/map"
 
 ROAD_WIDTHS = {
     "motorway": 16.0,
@@ -56,6 +58,9 @@ def overpass_query(south: float, west: float, north: float, east: float) -> str:
 (
   way["highway"]({bbox});
   way["building"]({bbox});
+  way["leisure"="park"]({bbox});
+  way["leisure"="garden"]({bbox});
+  way["landuse"="grass"]({bbox});
   way["natural"="water"]({bbox});
   way["waterway"="riverbank"]({bbox});
   way["waterway"="dock"]({bbox});
@@ -64,19 +69,63 @@ def overpass_query(south: float, west: float, north: float, east: float) -> str:
   relation["natural"="water"]({bbox});
   relation["water"]({bbox});
   relation["landuse"="basin"]({bbox});
+  relation["leisure"="park"]({bbox});
 );
 (._;>;);
 out body;
 """.strip()
 
 
-def fetch_osm(bbox: tuple[float, float, float, float], cache_path: Path) -> dict[str, Any]:
-    if cache_path.exists():
-        return json.loads(cache_path.read_text())
-    south, west, north, east = bbox
+def _osm_xml_to_elements(xml_text: str) -> list[dict[str, Any]]:
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml_text)
+    elements: list[dict[str, Any]] = []
+    for node in root.findall("node"):
+        tags = {tag.attrib["k"]: tag.attrib["v"] for tag in node.findall("tag")}
+        item = {
+            "type": "node",
+            "id": int(node.attrib["id"]),
+            "lat": float(node.attrib["lat"]),
+            "lon": float(node.attrib["lon"]),
+        }
+        if tags:
+            item["tags"] = tags
+        elements.append(item)
+    for way in root.findall("way"):
+        tags = {tag.attrib["k"]: tag.attrib["v"] for tag in way.findall("tag")}
+        item = {
+            "type": "way",
+            "id": int(way.attrib["id"]),
+            "nodes": [int(nd.attrib["ref"]) for nd in way.findall("nd")],
+        }
+        if tags:
+            item["tags"] = tags
+        elements.append(item)
+    for rel in root.findall("relation"):
+        tags = {tag.attrib["k"]: tag.attrib["v"] for tag in rel.findall("tag")}
+        item = {
+            "type": "relation",
+            "id": int(rel.attrib["id"]),
+            "members": [
+                {
+                    "type": member.attrib.get("type"),
+                    "ref": int(member.attrib["ref"]),
+                    "role": member.attrib.get("role", ""),
+                }
+                for member in rel.findall("member")
+            ],
+        }
+        if tags:
+            item["tags"] = tags
+        elements.append(item)
+    return elements
+
+
+def _fetch_overpass(south: float, west: float, north: float, east: float) -> dict[str, Any]:
     body = urllib.parse.urlencode({"data": overpass_query(south, west, north, east)}).encode()
     last_error: Exception | None = None
-    for url in OVERPASS_URLS:
+    for url in OVERPASS_URLS[:1]:
         req = urllib.request.Request(
             url,
             data=body,
@@ -84,14 +133,30 @@ def fetch_osm(bbox: tuple[float, float, float, float], cache_path: Path) -> dict
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                payload = json.loads(resp.read().decode())
-            break
+            with urllib.request.urlopen(req, timeout=25) as resp:
+                return json.loads(resp.read().decode())
         except Exception as exc:  # noqa: BLE001
             last_error = exc
-            payload = None
-    else:
-        raise RuntimeError(f"Overpass fetch failed: {last_error}") from last_error
+    raise RuntimeError(f"Overpass fetch failed: {last_error}") from last_error
+
+
+def _fetch_osm_map(south: float, west: float, north: float, east: float) -> dict[str, Any]:
+    # Official map API uses minlon,minlat,maxlon,maxlat.
+    url = f"{OSM_MAP_URL}?bbox={west:.6f},{south:.6f},{east:.6f},{north:.6f}"
+    req = urllib.request.Request(url, headers={"User-Agent": "city-view/0.1 (Antwerp procedural city)"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        xml_text = resp.read().decode()
+    return {"elements": _osm_xml_to_elements(xml_text)}
+
+
+def fetch_osm(bbox: tuple[float, float, float, float], cache_path: Path) -> dict[str, Any]:
+    if cache_path.exists():
+        return json.loads(cache_path.read_text())
+    south, west, north, east = bbox
+    try:
+        payload = _fetch_overpass(south, west, north, east)
+    except Exception:
+        payload = _fetch_osm_map(south, west, north, east)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(json.dumps(payload))
     return payload
@@ -208,6 +273,10 @@ def _relation_rings(
     return rings
 
 
+def _is_park(tags: dict[str, str]) -> bool:
+    return tags.get("leisure") in {"park", "garden"} or tags.get("landuse") in {"grass", "recreation_ground"}
+
+
 def layout_from_osm(
     osm: dict[str, Any],
     origin: tuple[float, float],
@@ -216,6 +285,7 @@ def layout_from_osm(
     buildings: list[dict[str, Any]] = []
     roads: list[dict[str, Any]] = []
     water: list[dict[str, Any]] = []
+    parks: list[dict[str, Any]] = []
 
     for way in ways.values():
         tags = way.get("tags") or {}
@@ -248,6 +318,11 @@ def layout_from_osm(
             if len(ring) >= 3 and _area(ring) >= 80.0:
                 water.append({"id": int(way["id"]), "ring": ring})
             continue
+        if _is_park(tags):
+            ring = _closed(pts)
+            if len(ring) >= 3 and _area(ring) >= 80.0:
+                parks.append({"id": int(way["id"]), "ring": ring, "name": tags.get("name") or ""})
+            continue
         width = road_width(tags)
         if width and len(pts) >= 2:
             roads.append(
@@ -261,20 +336,25 @@ def layout_from_osm(
 
     for rel in rels.values():
         tags = rel.get("tags") or {}
-        if not (
+        rings = _relation_rings(rel, ways, nodes, origin)
+        if (
             tags.get("natural") == "water"
             or "water" in tags
             or tags.get("landuse") == "basin"
             or tags.get("waterway") in {"river", "riverbank", "dock"}
         ):
-            continue
-        for i, ring in enumerate(_relation_rings(rel, ways, nodes, origin)):
-            if _area(ring) >= 80.0:
-                water.append({"id": int(rel["id"]) * 100 + i, "ring": ring})
+            for i, ring in enumerate(rings):
+                if _area(ring) >= 80.0:
+                    water.append({"id": int(rel["id"]) * 100 + i, "ring": ring})
+        elif _is_park(tags):
+            for i, ring in enumerate(rings):
+                if _area(ring) >= 80.0:
+                    parks.append({"id": int(rel["id"]) * 100 + i, "ring": ring, "name": tags.get("name") or ""})
 
     return {
         "origin": list(origin),
         "buildings": buildings,
         "roads": roads,
         "water": water,
+        "parks": parks,
     }

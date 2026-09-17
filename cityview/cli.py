@@ -108,7 +108,8 @@ def city_command(args: argparse.Namespace) -> int:
     layout = layout_from_osm(osm, origin)
     print(
         f"{place_name}: {len(layout['buildings'])} buildings, "
-        f"{len(layout['roads'])} roads, {len(layout['water'])} water polygons"
+        f"{len(layout['roads'])} roads, {len(layout['water'])} water, "
+        f"{len(layout.get('parks') or [])} parks"
     )
 
     output_dir = Path(args.out).resolve()
