@@ -1,20 +1,55 @@
 /**
  * Runtime GTA3-simple traffic: box cars follow driveable OSM centrelines
- * with car-following, 30s lights at real stop-lines, and stuck respawn.
+ * with car-following, 30s lights at real stop-lines, and stuck recovery.
  * Never uses tram/rail ways.
+ *
+ * Speeds: each road carries `speedKmh` (OSM maxspeed, else a Belgian urban
+ * default by highway class) exported into roads.json. Cars cruise slightly
+ * under that limit (per-driver variance) and brake kinematically for leaders,
+ * red lights and the player. Waiting at a red is never treated as "stuck";
+ * real blockages escalate: nudge -> ghost-through -> respawn.
  */
 
-const BASE_SPEED = 9.5;
+const KMH = 1 / 3.6;
+const DEFAULT_SPEED_KMH = {
+  motorway: 70,
+  motorway_link: 50,
+  trunk: 50,
+  trunk_link: 50,
+  primary: 50,
+  primary_link: 40,
+  secondary: 50,
+  secondary_link: 40,
+  tertiary: 50,
+  tertiary_link: 40,
+  unclassified: 30,
+  residential: 30,
+  living_street: 20,
+};
+const FALLBACK_SPEED_KMH = 30;
+const MAX_SPEED_KMH = 90; // sanity clamp on malformed data
+const ACCEL = 2.6; // m/s^2
+const BRAKE = 4.2; // comfortable decel, m/s^2
+const CAR_LEN = 4.2;
+const STANDSTILL_GAP = 1.6; // bumper gap kept to the leader / stop line
+const STOP_LINE_SETBACK = CAR_LEN * 0.5 + 0.4;
+const TURN_SPEED = 5.0; // m/s through sharp junction turns
+const CREEP_SPEED = 2.2; // m/s minimum while ghosting through a jam
+const BLOCK_NUDGE_SEC = 1.5;
+const BLOCK_GHOST_SEC = 4;
+const GHOST_SEC = 5;
+const BLOCK_RESPAWN_SEC = 14;
+const RED_QUEUE_PATIENCE_SEC = 22; // queue longer than a light cycle half = gridlock
+const RED_PATIENCE_SEC = 40; // a light that never turns green is ignored after this
 const FOLLOW_DIST = 9;
 const PLAYER_STOP_DIST = 4;
 const SNAP_M = 11;
 const LANE_OFFSET = 1.15;
-const STUCK_SEC = 5;
-const MIN_GAP = 3.4;
+const STUCK_SEC = 6;
 const CYCLE_SEC = 30;
 const METERS_PER_CAR = 480;
 const MIN_CARS = 8;
-const MAX_CARS = 14;
+const MAX_CARS = 16;
 const BODY_COLORS = [0xc45c48, 0x3d5a80, 0xd4a373, 0x4a5568, 0xb8b0a4, 0x2f6f5e];
 
 const DRIVEABLE_KINDS = new Set([
@@ -54,6 +89,15 @@ function blenderToThree(x, y, out) {
   return out;
 }
 
+/** Posted limit in km/h: exported speedKmh, else OSM maxspeed, else urban default. */
+function resolveSpeedKmh(road, kind) {
+  for (const v of [road.speedKmh, road.maxspeedKmh, road.maxspeed]) {
+    const n = Number.parseFloat(v);
+    if (Number.isFinite(n) && n > 0) return Math.min(MAX_SPEED_KMH, Math.max(5, n));
+  }
+  return DEFAULT_SPEED_KMH[kind] ?? FALLBACK_SPEED_KMH;
+}
+
 function buildPaths(roads, THREE) {
   const paths = [];
   for (const road of roads) {
@@ -81,9 +125,12 @@ function buildPaths(roads, THREE) {
     }
     if (len < 4) continue;
     const laneOffset = Number.isFinite(road.laneOffset) ? road.laneOffset : LANE_OFFSET;
+    const limitKmh = resolveSpeedKmh(road, kind);
     paths.push({
       id: road.id,
       kind,
+      limitKmh,
+      speedLimit: limitKmh * KMH,
       width: road.width || 6,
       laneOffset: road.tramShared ? Math.max(laneOffset, 2.35) : laneOffset,
       points: cleaned,
@@ -254,18 +301,27 @@ function createCar(paths, THREE, parts) {
   const s = 2 + Math.random() * Math.max(1, path.length * 0.8 - 4);
   const colorIndex = (Math.random() * BODY_COLORS.length) | 0;
   const mesh = makeCarMesh(THREE, parts, colorIndex);
-  const speed = BASE_SPEED * (0.8 + Math.random() * 0.45);
+  // Per-driver variance: 85-100% of the posted limit (rarely a touch over).
+  const driver = 0.85 + Math.random() * 0.15 + (Math.random() < 0.08 ? 0.05 : 0);
+  const speed = path.speedLimit * driver;
   return {
     mesh,
     pathIndex: index,
     reverse,
     s,
+    driver,
     speed,
     velocity: speed * (0.6 + Math.random() * 0.4),
     pos: new THREE.Vector3(),
     tan: new THREE.Vector3(),
     lateral: 0,
     stuck: 0,
+    blocked: 0,
+    queued: 0,
+    redWait: 0,
+    ghostUntil: 0,
+    ignoreSignalsUntil: 0,
+    wait: "",
   };
 }
 
@@ -341,6 +397,8 @@ export async function createTraffic(scene, THREE, opts = {}) {
       car.reverse = Math.random() < 0.5;
       tries++;
     }
+    // Path may have been re-rolled above; start at a fraction of *its* limit.
+    car.velocity = paths[car.pathIndex].speedLimit * car.driver * (0.6 + Math.random() * 0.4);
     placeCar(car, paths, THREE);
     root.add(car.mesh);
     cars.push(car);
@@ -351,7 +409,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
 
   function respawnCar(car) {
     let best = null;
-    for (let attempt = 0; attempt < 24; attempt++) {
+    for (let attempt = 0; attempt < 32; attempt++) {
       const pathIndex = (Math.random() * paths.length) | 0;
       const reverse = Math.random() < 0.5;
       const s = 2 + Math.random() * Math.max(1, paths[pathIndex].length * 0.85 - 4);
@@ -375,25 +433,41 @@ export async function createTraffic(scene, THREE, opts = {}) {
       car.pathIndex = best.pathIndex;
       car.reverse = best.reverse;
       car.s = best.s;
-      car.velocity = car.speed * 0.7;
-      car.stuck = 0;
-      car.lateral = 0;
-      placeCar(car, paths, THREE);
     }
+    const path = paths[car.pathIndex];
+    car.velocity = path.speedLimit * car.driver * 0.7;
+    car.stuck = 0;
+    car.blocked = 0;
+    car.queued = 0;
+    car.redWait = 0;
+    car.ghostUntil = 0;
+    car.ignoreSignalsUntil = simTime + 3;
+    car.wait = "";
+    car.lateral = 0;
+    placeCar(car, paths, THREE);
   }
 
-  function advanceJunction(car) {
+  function advanceJunction(car, overshoot) {
     const path = paths[car.pathIndex];
     const atEnd = !car.reverse;
     const next = pickNextPath(paths, path, atEnd, cars, car, THREE);
     if (next.flip) {
       car.reverse = !car.reverse;
       car.s = 1.0;
+      car.velocity = Math.min(car.velocity, TURN_SPEED);
       return;
     }
+    const nextPath = paths[next.index];
     car.pathIndex = next.index;
     car.reverse = next.reverse;
-    car.s = 1.0;
+    car.s = Math.min(Math.max(1.0, overshoot), Math.max(1.0, nextPath.length - 1));
+    // Slow through sharp turns; they re-accelerate toward the new road's limit.
+    if (next.align < 0.7) car.velocity = Math.min(car.velocity, TURN_SPEED);
+  }
+
+  /** Max speed that still lets us stop within `gap` metres (v^2 = 2*a*d). */
+  function stopSpeed(gap) {
+    return gap <= 0 ? 0 : Math.sqrt(2 * BRAKE * gap);
   }
 
   function update(dt, walkObject) {
@@ -406,34 +480,42 @@ export async function createTraffic(scene, THREE, opts = {}) {
 
     for (let i = 0; i < cars.length; i++) {
       const car = cars[i];
+      const roadPath = paths[car.pathIndex];
       placeCar(car, paths, THREE);
-      let desire = car.speed;
-      let lateralNudge = 0;
 
-      for (let j = 0; j < cars.length; j++) {
-        if (i === j) continue;
-        const other = cars[j];
-        const dx = other.pos.x - car.pos.x;
-        const dz = other.pos.z - car.pos.z;
-        const distSq = dx * dx + dz * dz;
-        if (distSq > FOLLOW_DIST * FOLLOW_DIST * 3) continue;
-        const heading = other.tan.x * car.tan.x + other.tan.z * car.tan.z;
-        // Only follow leaders on a similar heading (same corridor / same way).
-        if (heading < 0.35) continue;
-        const ahead = dx * car.tan.x + dz * car.tan.z;
-        const side = dx * car.tan.z + dz * -car.tan.x;
-        if (ahead > 0.5 && ahead < FOLLOW_DIST + 5 && Math.abs(side) < 2.8) {
-          const gap = ahead - MIN_GAP;
-          if (gap < FOLLOW_DIST) {
-            if (gap < 0.6) {
-              desire = 0;
-            } else {
-              const factor = Math.max(0.08, gap / FOLLOW_DIST);
-              desire = Math.min(desire, car.speed * factor);
+      const ghosting = simTime < car.ghostUntil;
+      const cruise = roadPath.speedLimit * car.driver;
+      car.speed = cruise;
+      let desire = cruise;
+      let lateralNudge = 0;
+      let reason = "";
+      let leader = null;
+
+      if (!ghosting) {
+        for (let j = 0; j < cars.length; j++) {
+          if (i === j) continue;
+          const other = cars[j];
+          const dx = other.pos.x - car.pos.x;
+          const dz = other.pos.z - car.pos.z;
+          const distSq = dx * dx + dz * dz;
+          if (distSq > (FOLLOW_DIST + 14) ** 2) continue;
+          const heading = other.tan.x * car.tan.x + other.tan.z * car.tan.z;
+          // Only follow leaders on a similar heading (same corridor / same way).
+          if (heading < 0.35) continue;
+          const ahead = dx * car.tan.x + dz * car.tan.z;
+          const side = dx * car.tan.z + dz * -car.tan.x;
+          if (ahead > 0.5 && Math.abs(side) < 2.8) {
+            const gap = ahead - CAR_LEN - STANDSTILL_GAP;
+            // Match the leader's speed plus whatever braking distance remains.
+            const safe = other.velocity * 0.95 + stopSpeed(gap);
+            if (safe < desire) {
+              desire = Math.max(0, safe);
+              reason = "car";
+              leader = other;
             }
-          }
-          if (Math.abs(side) < 1.6 && ahead < 5) {
-            lateralNudge += side > 0 ? -0.25 : 0.25;
+            if (Math.abs(side) < 1.6 && ahead < 6) {
+              lateralNudge += side > 0 ? -0.3 : 0.3;
+            }
           }
         }
       }
@@ -442,55 +524,134 @@ export async function createTraffic(scene, THREE, opts = {}) {
         const dx = playerPos.x - car.pos.x;
         const dz = playerPos.z - car.pos.z;
         const distSq = dx * dx + dz * dz;
-        if (distSq < (PLAYER_STOP_DIST + 6) ** 2) {
+        if (distSq < (PLAYER_STOP_DIST + 14) ** 2) {
           const ahead = dx * car.tan.x + dz * car.tan.z;
           const side = Math.abs(dx * car.tan.z + dz * -car.tan.x);
-          if (ahead > 0.2 && ahead < PLAYER_STOP_DIST + 5 && side < 2.4) {
-            const gap = ahead - 1.2;
-            const factor = Math.max(0, gap / PLAYER_STOP_DIST);
-            desire = Math.min(desire, car.speed * factor * factor);
+          if (ahead > 0.2 && side < 2.4) {
+            const safe = stopSpeed(ahead - CAR_LEN * 0.5 - PLAYER_STOP_DIST * 0.5);
+            if (safe < desire) {
+              desire = safe;
+              reason = "player";
+            }
           }
         }
       }
 
+      // Queueing behind a car that is itself waiting at a red / for the player is fine.
+      if (reason === "car" && leader && (leader.wait === "red" || leader.wait === "queue" || leader.wait === "player")) {
+        reason = "queue";
+      }
+
       // Stop-line red lights (shared 30s NS/EW phases).
-      for (let s = 0; s < signals.length; s++) {
-        const sig = signals[s];
-        const dx = sig.stop.x - car.pos.x;
-        const dz = sig.stop.z - car.pos.z;
-        const distSq = dx * dx + dz * dz;
-        if (distSq > 22 * 22) continue;
-        const ahead = dx * car.tan.x + dz * car.tan.z;
-        const side = Math.abs(dx * car.tan.z + dz * -car.tan.x);
-        const approachDot = car.tan.x * sig.tan.x + car.tan.z * sig.tan.z;
-        if (ahead < 0.4 || ahead > 16 || side > Math.max(3.2, sig.width * 0.55)) continue;
-        if (approachDot < 0.35) continue;
-        if (!signalIsGreen(sig, simTime, cycleSec)) {
-          if (ahead < 4.5) desire = 0;
-          else desire = Math.min(desire, car.speed * Math.max(0.05, (ahead - 3.5) / 10));
+      let facingRed = false;
+      if (simTime >= car.ignoreSignalsUntil) {
+        for (let s = 0; s < signals.length; s++) {
+          const sig = signals[s];
+          const dx = sig.stop.x - car.pos.x;
+          const dz = sig.stop.z - car.pos.z;
+          const distSq = dx * dx + dz * dz;
+          if (distSq > 40 * 40) continue;
+          const ahead = dx * car.tan.x + dz * car.tan.z;
+          const side = Math.abs(dx * car.tan.z + dz * -car.tan.x);
+          const approachDot = car.tan.x * sig.tan.x + car.tan.z * sig.tan.z;
+          if (ahead < 0.4 || ahead > 34 || side > Math.max(3.2, sig.width * 0.55)) continue;
+          if (approachDot < 0.35) continue;
+          if (signalIsGreen(sig, simTime, cycleSec)) continue;
+          const gap = ahead - STOP_LINE_SETBACK;
+          // Already too close to stop comfortably (light just turned): clear the box.
+          if (gap < 0 && car.velocity * car.velocity > 2 * BRAKE * 1.6 * Math.max(0.1, ahead)) continue;
+          facingRed = true;
+          const safe = stopSpeed(gap);
+          if (safe < desire) {
+            desire = safe;
+            reason = "red";
+          }
         }
       }
 
-      car.velocity += (desire - car.velocity) * Math.min(1, step * 3.2);
-      if (car.velocity < 0.12) car.velocity = 0;
+      // Escalating recovery when not waiting for a legitimate reason.
+      if (ghosting) desire = Math.max(desire, Math.min(cruise, CREEP_SPEED));
+
+      // Kinematic follow: accelerate gently, brake as hard as needed.
+      if (desire > car.velocity) {
+        car.velocity = Math.min(desire, car.velocity + ACCEL * step);
+      } else {
+        car.velocity = Math.max(desire, car.velocity - BRAKE * 2.2 * step);
+      }
+      if (car.velocity < 0.05) car.velocity = 0;
       car.lateral += (lateralNudge - car.lateral) * Math.min(1, step * 3);
       car.lateral = Math.max(-0.7, Math.min(0.7, car.lateral));
 
-      if (car.velocity < 0.2) car.stuck += step;
-      else car.stuck = Math.max(0, car.stuck - step * 0.5);
+      const crawling = car.velocity < 0.3 && cruise > 1;
+      // A queue should clear within a light cycle; a circular "queue" is gridlock.
+      if (crawling && reason === "queue") {
+        car.queued += step;
+        if (car.queued > RED_QUEUE_PATIENCE_SEC) reason = "car";
+      } else {
+        car.queued = 0;
+      }
+      car.wait = crawling ? reason || "?" : "";
 
-      if (car.stuck > STUCK_SEC) {
-        respawnCar(car);
-        continue;
+      if (crawling && reason === "red" && facingRed) {
+        // Legitimate wait: never respawn. If a light is somehow stuck red,
+        // stop obeying it after a long patience window.
+        car.redWait += step;
+        car.blocked = 0;
+        car.stuck = 0;
+        if (car.redWait > RED_PATIENCE_SEC) {
+          car.ignoreSignalsUntil = simTime + 8;
+          car.redWait = 0;
+        }
+      } else if (crawling && reason === "queue") {
+        car.redWait = 0;
+        car.blocked = 0;
+        car.stuck = 0;
+      } else if (crawling && (reason === "car" || reason === "player")) {
+        car.redWait = 0;
+        car.blocked += step;
+        if (car.blocked > BLOCK_GHOST_SEC && reason === "car") {
+          // Soft push: slide through the blocker at a crawl, then flow on.
+          car.ghostUntil = simTime + GHOST_SEC;
+          car.blocked = BLOCK_NUDGE_SEC;
+        }
+        if (car.blocked > BLOCK_RESPAWN_SEC) {
+          respawnCar(car);
+          continue;
+        }
+      } else if (crawling) {
+        // Stopped with no explanation (bad data, zero-speed road): recover fast.
+        car.redWait = 0;
+        car.stuck += step;
+        if (car.stuck > STUCK_SEC) {
+          respawnCar(car);
+          continue;
+        }
+      } else {
+        car.redWait = 0;
+        car.stuck = Math.max(0, car.stuck - step);
+        car.blocked = Math.max(0, car.blocked - step * 2);
       }
 
       car.s += car.velocity * step;
       const path = paths[car.pathIndex];
       if (car.s >= path.length - 0.5) {
-        advanceJunction(car);
+        advanceJunction(car, car.s - (path.length - 0.5));
       }
       placeCar(car, paths, THREE);
     }
+  }
+
+  /** Debug / test helper. */
+  function stats() {
+    let moving = 0;
+    let sum = 0;
+    const waits = { red: 0, queue: 0, car: 0, player: 0, "?": 0 };
+    for (const c of cars) {
+      if (c.velocity > 0.5) moving++;
+      sum += c.velocity;
+      if (c.wait) waits[c.wait] = (waits[c.wait] || 0) + 1;
+    }
+    return { moving, total: cars.length, avgKmh: (sum / Math.max(1, cars.length)) * 3.6, waits };
   }
 
   function dispose() {
@@ -506,6 +667,9 @@ export async function createTraffic(scene, THREE, opts = {}) {
   return {
     update,
     dispose,
+    stats,
+    cars,
+    paths,
     count: cars.length,
     pathCount: paths.length,
     signalCount: signals.length,
