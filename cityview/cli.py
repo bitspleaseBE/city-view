@@ -21,8 +21,10 @@ from cityview.paths import (
     OSM_CACHE,
     OUTPUT,
     ROOT,
+    TREES_CACHE,
     VIEWER,
 )
+from cityview.trees import attach_trees, summarize as summarize_trees
 from cityview.streetscape import (
     export_roads_near_spawn,
     export_transit_near_spawn,
@@ -134,6 +136,10 @@ def city_command(args: argparse.Namespace) -> int:
         gtfs_cache,
         refresh=bool(args.refresh),
     )
+    # Surveyed trees (Stad Antwerpen Groeninventaris + OSM); cached under assets/trees.
+    trees_cache = TREES_CACHE / f"{cache_key or place_name}.json"
+    tree_plan = attach_trees(layout, bbox, origin, trees_cache, refresh=bool(args.refresh))
+    print("trees: " + summarize_trees(tree_plan["stats"]))
     # Prefer committed photo-remix JSON (CI has no macOS sips / may lack Pillow).
     if BUILDING_TYPES_PATH.exists():
         types_path = BUILDING_TYPES_PATH

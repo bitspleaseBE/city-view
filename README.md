@@ -30,6 +30,8 @@ Alias: `--place harmonie` uses the same bbox, spawn, and historic style policy. 
 
 **Transit:** tram/premetro tracks and bus/tram stops come from OpenStreetMap; De Lijn line numbers come from the official [GTFS static feed](https://data.belgianmobility.io/en/data.html?agency=delijn) (cached under `assets/gtfs/`). Antwerp’s underground service is De Lijn **premetro** (tram in tunnel), not a separate metro. The walk viewer loads `transit.json` for moving trams/buses with line labels. Use `--refresh` to re-download OSM + GTFS.
 
+**Trees:** planted at surveyed positions, not on a procedural grid. [`cityview/trees.py`](cityview/trees.py) merges the **Stad Antwerpen Groeninventaris** `boom` layer (municipal tree inventory: one point per managed tree with Latin species and trunk girth; public ArcGIS service, [open data licence](https://www.antwerpen.be/info/gratis-open-data-licentie), © Stad Antwerpen) with OpenStreetMap `natural=tree` / `natural=tree_row` (ODbL). Height, crown width and conifer/columnar shape come from species and girth. Trees inside buildings, on carriageways or on a tram bed (`railclear`) are dropped, and crowns are trimmed back from the tracks. Only parks the survey barely covers get a seeded Poisson-disc fill (`parks_filled` in the build log); shrubs use the same blue-noise sampler. The raw download is cached and committed under [`assets/trees/`](assets/trees/) so CI builds offline; `--refresh` re-downloads it.
+
 ```bash
 python3 -m cityview city --place centrum
 python3 -m cityview city --place eilandje
