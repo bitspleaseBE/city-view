@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- Dev probe (not deployed): renders the district GLB top-down with the SAME lights, tone
+     mapping and fog as viewer/index.html, so roof colours can be compared with the aerial.
+     Serve the repo root (python3 -m http.server) and open
+       /scripts/topdown_probe.html?glb=../viewer/klein_antwerpen.glb
+     When done, window.__probe = { ok, jpeg (data URL), w, h, bounds }.
+     scripts/compare_roofs.py turns that into a before/after comparison. -->
+<meta charset="utf-8" />
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+  import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+  const q = new URLSearchParams(location.search);
+  const glb = q.get("glb") || "../viewer/klein_antwerpen.glb";
+  // Local metres (east, north) of the aerial bbox, from cityview.aerial (override via URL).
+  const [xw, xe, ys, yn] = (q.get("bounds") || "-516.157,564.983,-519.538,641.132").split(",").map(Number);
+  const W = Number(q.get("w") || 1080);
+  const H = Math.round((W * (yn - ys)) / (xe - xw));
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(1);
+  renderer.setSize(W, H);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.18;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x6eb6ff);
+  scene.fog = new THREE.FogExp2(0xb8d4ea, 0.00055);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.add(new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85));
+  const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
+  sun.position.set(220, 320, -160);
+  scene.add(sun, sun.target);
+  const fill = new THREE.DirectionalLight(0xcfe4ff, 0.35);
+  fill.position.set(-160, 120, 200);
+  scene.add(fill);
+
+  const cx = (xw + xe) / 2;
+  const cz = -(ys + yn) / 2;
+  const cam = new THREE.OrthographicCamera(-(xe - xw) / 2, (xe - xw) / 2, (yn - ys) / 2, -(yn - ys) / 2, 1, 1500);
+  cam.position.set(cx, 320, cz) // ~free-view height, so fog matches the viewer;
+  cam.up.set(0, 0, -1); // north is up in the image
+  cam.lookAt(cx, 0, cz);
+
+  new GLTFLoader().load(
+    glb,
+    (gltf) => {
+      scene.add(gltf.scene);
+      renderer.render(scene, cam);
+      window.__probe = {
+        ok: true,
+        w: W,
+        h: H,
+        bounds: [xw, xe, ys, yn],
+        jpeg: renderer.domElement.toDataURL("image/jpeg", 0.92),
+      };
+    },
+    undefined,
+    (err) => {
+      window.__probe = { ok: false, error: String(err) };
+    },
+  );
+</script>

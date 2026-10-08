@@ -1,6 +1,7 @@
 """Render the procedural surface kit (needs Pillow + numpy): ``python -m cityview.surface_textures``.
 
-Writes seamless 256 px tiles (roof slate / clay pantiles / zinc / flat bitumen,
+Writes seamless 256 px tiles (roof slate / clay pantiles / zinc / flat bitumen - the four
+roof maps are bright neutral detail maps, coloured by the aerial-measured tints,
 pavement slabs, asphalt, park grass, granite kerb, courtyard gravel) to
 assets/surfaces/. Outputs are committed; CI (Blender only) never re-renders them.
 All patterns are periodic, so they tile without seams.
@@ -228,6 +229,19 @@ def courtyard_gravel():
     return arr
 
 
+ROOF_KEYS = ("roof_slate", "roof_clay", "roof_zinc", "roof_flat")
+ROOF_NEUTRAL_MEAN = 0.80  # sRGB mean of the neutral roof detail maps (linear ~0.60)
+
+
+def neutral_detail(arr, mean: float = ROOF_NEUTRAL_MEAN):
+    """Strip a roof texture's base hue: per-channel mean -> ``mean`` (courses, seams, moss
+    and weathering survive as relative variation). The colour of each roof then comes from
+    the aerial-measured Base Color tint (glTF factors are <= 1, so the maps must be bright)."""
+    np = _np()
+    ch = arr.reshape(-1, 3).mean(axis=0)
+    return arr / np.maximum(ch, 1e-4)[None, None, :] * mean
+
+
 GENERATORS = {
     "roof_slate": roof_slate,
     "roof_clay": roof_clay,
@@ -250,7 +264,10 @@ def render_all(out_dir: Path = TEXTURES_DIR) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for key, fn in GENERATORS.items():
-        arr = np.clip(fn(), 0.0, 1.0)
+        arr = fn()
+        if key in ROOF_KEYS:
+            arr = neutral_detail(arr)
+        arr = np.clip(arr, 0.0, 1.0)
         img = Image.fromarray((arr * 255.0 + 0.5).astype("uint8"), "RGB")
         path = out_dir / kit.surface_file(key)
         img.save(path, quality=88, optimize=True)
