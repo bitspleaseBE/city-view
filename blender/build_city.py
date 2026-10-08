@@ -1018,10 +1018,93 @@ def bounds(layout: dict) -> tuple[float, float, float, float]:
         for x, y in road.get("points") or []:
             xs.append(x)
             ys.append(y)
+    for line in layout.get("transit_lines") or []:
+        for x, y in line.get("points") or []:
+            xs.append(x)
+            ys.append(y)
+    for stop in layout.get("transit_stops") or []:
+        if stop.get("x") is not None and stop.get("y") is not None:
+            xs.append(float(stop["x"]))
+            ys.append(float(stop["y"]))
     if not xs:
         return (-200, -200, 200, 200)
     pad = 40.0
     return (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
+
+
+Z_TRAM = 0.045
+
+
+def add_transit_stop(
+    name: str,
+    x: float,
+    y: float,
+    mode: str,
+    lines: list,
+    pole_mat,
+    shelter_mat,
+    sign_mat,
+) -> None:
+    """Simple pole + shelter plate; line numbers baked into object names."""
+    line_tag = "-".join(str(v) for v in (lines or [])[:4]) or "na"
+    pole = add_box(f"{name}_pole_{line_tag}", (0.1, 0.1, 2.6), (x, y, 1.3), 0.0)
+    assign(pole, pole_mat)
+    # Colour cue: tram yellow-ish sign, bus cream.
+    roof = add_box(f"{name}_roof", (1.4, 0.7, 0.06), (x, y + 0.15, 2.55), 0.0)
+    assign(roof, shelter_mat)
+    panel = add_box(f"{name}_sign_{mode}_{line_tag}", (0.55, 0.05, 0.4), (x, y + 0.28, 2.15), 0.0)
+    assign(panel, sign_mat)
+
+
+def add_transit_layer(layout: dict, spawn_xy: tuple[float, float] | None) -> tuple[int, int]:
+    """Draw tram/premetro ribbons and stop shelters. Returns (tracks, stops)."""
+    track_mat = principled("tram_track", (0.12, 0.12, 0.13, 1.0), 0.55, metallic=0.35)
+    bed_mat = principled("tram_bed", (0.22, 0.22, 0.2, 1.0), 0.9)
+    pole_mat = principled("transit_pole", (0.2, 0.2, 0.22, 1.0), 0.45, metallic=0.4)
+    shelter_mat = principled("transit_shelter", (0.55, 0.55, 0.52, 1.0), 0.55, metallic=0.25)
+    tram_sign = principled("tram_sign", (0.85, 0.55, 0.12, 1.0), 0.4)
+    bus_sign = principled("bus_sign", (0.15, 0.45, 0.7, 1.0), 0.4)
+    tracks = 0
+    for i, line in enumerate(layout.get("transit_lines") or []):
+        mode = line.get("mode") or "bus"
+        if mode not in {"tram", "subway"}:
+            continue
+        if line.get("source") == "gtfs":
+            # Prefer OSM track geometry for static rails.
+            continue
+        pts = line.get("points") or []
+        if len(pts) < 2:
+            continue
+        wid = 2.4 if mode == "tram" else 2.8
+        if add_road(f"tram_{line.get('id', i)}", pts, wid, bed_mat, z=Z_TRAM):
+            tracks += 1
+        # Twin rails as thinner overlays.
+        left = offset_polyline(pts, 0.55)
+        right = offset_polyline(pts, -0.55)
+        add_road(f"rail_l_{line.get('id', i)}", left, 0.18, track_mat, z=Z_TRAM + 0.01)
+        add_road(f"rail_r_{line.get('id', i)}", right, 0.18, track_mat, z=Z_TRAM + 0.01)
+
+    stops_n = 0
+    for i, stop in enumerate(layout.get("transit_stops") or []):
+        x = float(stop.get("x") or 0.0)
+        y = float(stop.get("y") or 0.0)
+        if spawn_xy is not None and math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 320.0:
+            continue
+        mode = stop.get("mode") or "bus"
+        lines = stop.get("lines") or stop.get("refs") or []
+        sign_mat = tram_sign if mode in {"tram", "subway"} else bus_sign
+        add_transit_stop(
+            f"stop_{stop.get('id', i)}",
+            x,
+            y,
+            mode,
+            lines,
+            pole_mat,
+            shelter_mat,
+            sign_mat,
+        )
+        stops_n += 1
+    return tracks, stops_n
 
 
 def setup_world() -> None:
@@ -1573,6 +1656,9 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         add_ring(f"park_{park.get('id', i)}", park["ring"], 0.0, 0.02, park_mat)
     for i, road in enumerate(layout.get("roads") or []):
         add_road(f"road_{road.get('id', i)}", road["points"], float(road["width"]), road_mat, z=Z_ROAD)
+
+    tram_n, stop_n = add_transit_layer(layout, spawn_xy)
+    print(f"Transit: {tram_n} tram tracks, {stop_n} stops")
 
     walks = add_sidewalks_and_curbs(layout.get("roads") or [], sidewalk_mat, curb_mat, spawn_xy)
     print(f"Sidewalk/curb strips: {walks}")
