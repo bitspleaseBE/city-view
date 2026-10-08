@@ -605,6 +605,8 @@ def layout_from_osm(
                 "points": pts,
                 "width": width,
                 "kind": tags.get("highway", "residential"),
+                # Street name: lets the builder group OSM ways into one street.
+                "name": tags.get("name") or "",
             }
             limit = parse_maxspeed_kmh(tags)
             if limit is not None:
