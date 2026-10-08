@@ -123,6 +123,9 @@
       const btnFree = document.getElementById("btn-free");
 
       const SKY = 0x6eb6ff;
+      // Horizon haze: soft blue-grey so FogExp2 fades to sky, never black.
+      const FOG_COLOR = 0xb8d4ea;
+      const GROUND_SKIRT = 0xc4b59a;
       const scene = new THREE.Scene();
       // Soft zenith→horizon gradient so pedestrian POV feels like a real clear day.
       const skyCanvas = document.createElement("canvas");
@@ -136,20 +139,24 @@
       grad.addColorStop(1, "#d8e8f4");
       skyCtx.fillStyle = grad;
       skyCtx.fillRect(0, 0, 2, 256);
-      scene.background = new THREE.CanvasTexture(skyCanvas);
-      scene.fog = new THREE.FogExp2(0x9ec9ef, 0.00105);
+      const skyTex = new THREE.CanvasTexture(skyCanvas);
+      skyTex.colorSpace = THREE.SRGBColorSpace;
+      scene.background = skyTex;
+      // Light haze toward horizon — density retuned after city bounds load.
+      scene.fog = new THREE.FogExp2(FOG_COLOR, 0.00055);
 
       const camera = new THREE.PerspectiveCamera(
         68,
         window.innerWidth / window.innerHeight,
         0.2,
-        3500,
+        4500,
       );
       camera.position.set(-218.5, 1.7, -432.1);
 
       const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
       renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setClearColor(SKY, 1);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.18;
@@ -206,6 +213,68 @@
       let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
       let traffic = { update() {}, dispose() {} };
       let transit = { update() {}, dispose() {} };
+      // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
+      let playBounds = null;
+      const _clampTmp = new THREE.Vector3();
+
+      function softClampXZ(pos, bounds) {
+        if (!bounds) return;
+        const { minX, maxX, minZ, maxZ } = bounds;
+        // Slide along edges: clamp each axis independently (no hard bounce).
+        if (pos.x < minX) pos.x = minX;
+        else if (pos.x > maxX) pos.x = maxX;
+        if (pos.z < minZ) pos.z = minZ;
+        else if (pos.z > maxZ) pos.z = maxZ;
+      }
+
+      function setupDistrictBounds(root) {
+        const box = new THREE.Box3().setFromObject(root);
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        // Inset so the walker never stands on the absolute mesh rim / void.
+        const inset = Math.max(18, Math.min(size.x, size.z) * 0.04);
+        let minX = box.min.x + inset;
+        let maxX = box.max.x - inset;
+        let minZ = box.min.z + inset;
+        let maxZ = box.max.z - inset;
+        if (minX >= maxX) {
+          const mid = (box.min.x + box.max.x) * 0.5;
+          minX = mid - 20;
+          maxX = mid + 20;
+        }
+        if (minZ >= maxZ) {
+          const mid = (box.min.z + box.max.z) * 0.5;
+          minZ = mid - 20;
+          maxZ = mid + 20;
+        }
+        playBounds = { minX, maxX, minZ, maxZ };
+        softClampXZ(walkControls.getObject().position, playBounds);
+        softClampXZ(spawnPos, playBounds);
+
+        // One cheap skirt plane so looking past the GLB ground isn't a black hole.
+        const skirtSpan = Math.max(size.x, size.z) * 2.8;
+        const skirt = new THREE.Mesh(
+          new THREE.CircleGeometry(skirtSpan * 0.5, 48),
+          new THREE.MeshLambertMaterial({
+            color: GROUND_SKIRT,
+            fog: true,
+            depthWrite: true,
+          }),
+        );
+        skirt.rotation.x = -Math.PI / 2;
+        skirt.position.set(center.x, box.min.y - 0.35, center.z);
+        skirt.receiveShadow = false;
+        skirt.castShadow = false;
+        skirt.renderOrder = -1;
+        scene.add(skirt);
+
+        // Soft haze: fade distant district edge into sky, not black void.
+        const diag = size.length();
+        scene.fog.color.setHex(FOG_COLOR);
+        scene.fog.density = Math.max(0.00035, Math.min(0.00085, 1.15 / diag));
+        // Free view can orbit the district but not fly into deep void.
+        orbitControls.maxDistance = Math.min(900, Math.max(180, Math.max(size.x, size.z) * 0.85));
+      }
 
       const walkControls = new PointerLockControls(camera, document.body);
       scene.add(walkControls.getObject());
@@ -236,12 +305,14 @@
           orbitControls.enabled = false;
           avatar.visible = false;
           walkControls.getObject().position.y = eyeHeight;
+          softClampXZ(walkControls.getObject().position, playBounds);
           hint.textContent = "Walk: click + WASD · Esc release · V free view";
           status.textContent = "Walking — Gounodstraat 13";
         } else {
           if (walkControls.isLocked) walkControls.unlock();
           orbitControls.enabled = true;
           const p = walkControls.getObject().position;
+          softClampXZ(p, playBounds);
           avatar.position.set(p.x, 0, p.z);
           avatar.rotation.y = walkControls.getObject().rotation.y;
           avatar.visible = true;
@@ -380,10 +451,7 @@
             bits.length > 0
               ? `Sunny day — ${bits.join(" · ")} · click to walk`
               : "Sunny day — click to walk";
-          // Soften fog once city bounds known
-          const box = new THREE.Box3().setFromObject(cityRoot);
-          const size = box.getSize(new THREE.Vector3()).length();
-          scene.fog.density = Math.max(0.0007, Math.min(0.0016, 2.2 / size));
+          setupDistrictBounds(cityRoot);
         },
         undefined,
         (err) => {
@@ -410,8 +478,24 @@
           if (keys.a) walkControls.moveRight(-step);
           if (keys.d) walkControls.moveRight(step);
           walkControls.getObject().position.y = eyeHeight;
+          softClampXZ(walkControls.getObject().position, playBounds);
         }
-        if (mode === "free") orbitControls.update();
+        if (mode === "free") {
+          orbitControls.update();
+          if (playBounds) {
+            softClampXZ(orbitControls.target, playBounds);
+            // Keep camera horizontally near the district; allow height for overview.
+            _clampTmp.copy(camera.position);
+            softClampXZ(_clampTmp, {
+              minX: playBounds.minX - 40,
+              maxX: playBounds.maxX + 40,
+              minZ: playBounds.minZ - 40,
+              maxZ: playBounds.maxZ + 40,
+            });
+            camera.position.x = _clampTmp.x;
+            camera.position.z = _clampTmp.z;
+          }
+        }
 
         const walker =
           mode === "walk" ? walkControls.getObject() : avatar.visible ? avatar : walkControls.getObject();
