@@ -59,12 +59,17 @@ STYLE_WEIGHT = {
     "eclectic": 1.0,
     "neoclassical": 1.0,
     "neo-gothic": 1.0,
+    "church": 0.8,
     "red-brick": 0.9,
     "yellow-brick": 0.8,
     "cream-tile": 0.5,
+    "restaurant": 0.4,
+    "school": 0.3,
     "art-deco": 0.35,
     "international": 0.0,
     "modern-infill": 0.0,
+    "supermarket": 0.0,
+    "hospital": 0.0,
 }
 
 MIN_EDGE_LENGTH = 6.0

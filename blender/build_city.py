@@ -19,7 +19,9 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from cityview import facade_kit, surface_kit  # noqa: E402
 from cityview import climbers, kerbs, railclear  # noqa: E402
+from cityview.landmarks import LANDMARKS_DIR, resolve_landmark_photo  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
+from cityview.shop_brands import fascia_for_brand  # noqa: E402
 
 _BLENDER_DIR = str(Path(__file__).resolve().parent)
 if _BLENDER_DIR not in sys.path:
@@ -49,7 +51,7 @@ SURFACES_DIR = Path(_REPO_ROOT) / "assets" / surface_kit.TEXTURES_DIRNAME  # pro
 PHOTO_MAT_SLOT = 7  # material slot of the atlas on façade meshes
 DOORSTEP_MAT = None  # shared granite doorstep material, set in build()
 DOORSTEP_MAT_SLOT = 8  # right after the atlas slot
-STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0}
+STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0, "awnings": 0}
 
 
 # Century-old Harmonie palette: stylish but lived-in, not showroom clean.
@@ -189,6 +191,51 @@ STYLES = {
         "trim": (0.86, 0.80, 0.68, 1.0),
         "window": "rect",
     },
+    "school": {
+        "wall": (0.76, 0.72, 0.64, 1.0),
+        "roof": (0.22, 0.20, 0.18, 1.0),
+        "frame": (0.18, 0.14, 0.10, 1.0),
+        "glass": (0.24, 0.30, 0.34, 1.0),
+        "plinth": (0.42, 0.40, 0.36, 1.0),
+        "trim": (0.82, 0.78, 0.70, 1.0),
+        "window": "rect",
+    },
+    "restaurant": {
+        "wall": (0.80, 0.72, 0.58, 1.0),
+        "roof": (0.20, 0.18, 0.16, 1.0),
+        "frame": (0.22, 0.14, 0.10, 1.0),
+        "glass": (0.22, 0.28, 0.30, 1.0),
+        "plinth": (0.70, 0.62, 0.48, 1.0),
+        "trim": (0.88, 0.82, 0.70, 1.0),
+        "window": "rect",
+    },
+    "supermarket": {
+        "wall": (0.78, 0.78, 0.74, 1.0),
+        "roof": (0.18, 0.18, 0.19, 1.0),
+        "frame": (0.08, 0.08, 0.09, 1.0),
+        "glass": (0.30, 0.36, 0.40, 1.0),
+        "plinth": (0.50, 0.50, 0.48, 1.0),
+        "trim": (0.85, 0.85, 0.82, 1.0),
+        "window": "ribbon",
+    },
+    "church": {
+        "wall": (0.36, 0.32, 0.28, 1.0),
+        "roof": (0.12, 0.11, 0.10, 1.0),
+        "frame": (0.08, 0.07, 0.06, 1.0),
+        "glass": (0.18, 0.22, 0.24, 1.0),
+        "plinth": (0.26, 0.24, 0.22, 1.0),
+        "trim": (0.58, 0.54, 0.48, 1.0),
+        "window": "arch",
+    },
+    "hospital": {
+        "wall": (0.84, 0.82, 0.76, 1.0),
+        "roof": (0.20, 0.20, 0.21, 1.0),
+        "frame": (0.08, 0.08, 0.09, 1.0),
+        "glass": (0.32, 0.38, 0.42, 1.0),
+        "plinth": (0.55, 0.54, 0.50, 1.0),
+        "trim": (0.90, 0.88, 0.84, 1.0),
+        "window": "ribbon",
+    },
 }
 
 
@@ -296,6 +343,41 @@ def textured(
         links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
     links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
     return mat
+
+
+NORMAL_MAP_STRENGTH = 1.0  # glTF normalTexture.scale (1 = as baked)
+
+
+def add_normal_map(mat, path: Path, strength: float = 1.0) -> bool:
+    """Plug a tangent-space normal map (same UVs as Base Color) into a Principled material.
+
+    Exports as glTF ``normalTexture``; gives the photo façades window reveals, brick
+    courses and sills that catch the sun without any extra geometry.
+    """
+    img = load_texture(path)
+    if img is None or mat is None or not mat.use_nodes:
+        return False
+    try:
+        img.colorspace_settings.name = "Non-Color"
+    except Exception:  # pragma: no cover - older Blender colour-space names
+        pass
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    bsdf = next((n for n in nodes if n.type == "BSDF_PRINCIPLED"), None)
+    base_tex = next((n for n in nodes if n.type == "TEX_IMAGE"), None)
+    if bsdf is None:
+        return False
+    tex = nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    tex.interpolation = "Linear"
+    tex.extension = "EXTEND"
+    nmap = nodes.new("ShaderNodeNormalMap")
+    nmap.inputs["Strength"].default_value = float(strength)
+    links.new(tex.outputs["Color"], nmap.inputs["Color"])
+    links.new(nmap.outputs["Normal"], bsdf.inputs["Normal"])
+    if base_tex is not None and base_tex.inputs["Vector"].is_linked:
+        links.new(base_tex.inputs["Vector"].links[0].from_socket, tex.inputs["Vector"])
+    return True
 
 
 def wall_tint(wall_rgba, avg_rgb) -> tuple[float, float, float]:
@@ -868,6 +950,25 @@ def _append_doorstep(bm, ox, oy, ux, uy, nx, ny, a, door_w, off, variant: int) -
     return 1
 
 
+def _append_shop_awning(bm, ox, oy, ux, uy, nx, ny, a, w, z_top, off, variant: int) -> int:
+    """Fabric awning (slot 6) over a shop window: sloped slab built from two steps + valance.
+
+    ``z_top`` is the lintel height; the awning rail sits just above it. A trim rail
+    (slot 2) carries it, so it reads as hardware, not a floating box.
+    """
+    yaw = math.atan2(uy, ux)
+    cx, cy = ox + ux * a, oy + uy * a
+    w = max(1.2, min(6.0, w * 1.08))
+    z = z_top + 0.35
+    proj = 0.95 if variant == 0 else 0.75
+    # Wall rail + upper canopy (near the wall, higher) + lower canopy (outer, lower) + valance.
+    _append_box(bm, cx + nx * (off + 0.05), cy + ny * (off + 0.05), z + 0.1, w * 1.02, 0.10, 0.12, yaw, 2)
+    _append_box(bm, cx + nx * (off + proj * 0.30), cy + ny * (off + proj * 0.30), z + 0.04, w, proj * 0.62, 0.05, yaw, 6)
+    _append_box(bm, cx + nx * (off + proj * 0.72), cy + ny * (off + proj * 0.72), z - 0.10, w, proj * 0.50, 0.05, yaw, 6)
+    _append_box(bm, cx + nx * (off + proj), cy + ny * (off + proj), z - 0.24, w, 0.05, 0.26, yaw, 6)
+    return 1
+
+
 def add_photo_facade(
     name: str,
     p0: list[float],
@@ -950,13 +1051,22 @@ def add_photo_facade(
     # Doorsteps: stone treads in front of every front door in the elevations, so
     # entrances stand proud of the pavement (pavement top is Z_SIDEWALK ~ 12 cm).
     first_step_face = len(bm.faces)
-    for door in facade_kit.door_steps(quads, rightwards=rightwards):
+    # LOD: distant ("simple") edges keep only the photo + cornice; stoops are spawn-district detail.
+    for door in facade_kit.door_steps(quads, rightwards=rightwards) if detail == "full" else ():
         STATS["door_steps"] += _append_doorstep(
             bm, ox, oy, ux, uy, nx, ny, door["a"] - half, door["w"], off, int(door["side"])
         )
     if len(bm.faces) > first_step_face:
         bm.normal_update()
         apply_planar_uvs(list(bm.faces)[first_step_face:], uv_layer, surface_kit.surface_tile_m("curb"))
+
+    # Shopfront awnings (ground-floor shop windows read off the elevations): a fabric
+    # canopy projecting over the pavement with a valance, on a trim bracket rail.
+    if detail == "full":
+        for shop in facade_kit.shop_awnings(quads, rightwards=rightwards):
+            STATS["awnings"] += _append_shop_awning(
+                bm, ox, oy, ux, uy, nx, ny, shop["a"] - half, shop["w"], shop["z"], off, int(shop["side"])
+            )
 
     # Rare climbing plant (planned per street in build(); most façades have none).
     if climber_base is not None and climber is not None and detail == "full":
@@ -1367,6 +1477,260 @@ def add_dormers(
     return placed
 
 
+def photo_material_cropped(name: str, image_path: Path, crop: list[float], rough: float = 0.86):
+    """Image material with UV crop (same idea as street-mode photo heroes)."""
+    img = load_texture(image_path)
+    if img is None:
+        return principled(name, (0.45, 0.42, 0.38, 1.0), rough)
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    out = nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    tex = nodes.new("ShaderNodeTexImage")
+    mapping = nodes.new("ShaderNodeMapping")
+    uv = nodes.new("ShaderNodeTexCoord")
+    tex.image = img
+    tex.extension = "CLIP"
+    u0, v0, u1, v1 = [float(c) for c in (crop or [0.0, 0.0, 1.0, 1.0])]
+    mapping.inputs["Location"].default_value = (u0, v0, 0.0)
+    mapping.inputs["Scale"].default_value = (max(u1 - u0, 0.001), max(v1 - v0, 0.001), 1.0)
+    bsdf.inputs["Roughness"].default_value = rough
+    links.new(uv.outputs["UV"], mapping.inputs["Vector"])
+    links.new(mapping.outputs["Vector"], tex.inputs["Vector"])
+    links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
+def add_landmark_photo_quad(
+    name: str,
+    p0: list[float],
+    p1: list[float],
+    outward: list[float],
+    eaves_z: float,
+    photo_path: Path,
+    crop: list[float],
+) -> None:
+    """Full-height photo elevation on one street edge."""
+    x0, y0 = p0
+    x1, y1 = p1
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 2.0 or eaves_z < 4.0:
+        return
+    nx, ny = outward
+    yaw = math.atan2(y1 - y0, x1 - x0)
+    ux, uy = math.cos(yaw), math.sin(yaw)
+    mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    ox, oy = mx + nx * 0.14, my + ny * 0.14
+    mat = photo_material_cropped(f"{name}_photo", photo_path, crop)
+    mesh = bpy.data.meshes.new(name)
+    mesh.materials.append(mat)
+    bm = bmesh.new()
+    uv_layer = bm.loops.layers.uv.verify()
+    half = length * 0.98 * 0.5
+    rightwards = (uy * nx - ux * ny) > 0
+
+    def corner(a, z):
+        return (ox + ux * a, oy + uy * a, z)
+
+    pts = [corner(-half, 0.0), corner(half, 0.0), corner(half, eaves_z), corner(-half, eaves_z)]
+    uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+    if not rightwards:
+        pts = [pts[1], pts[0], pts[3], pts[2]]
+        uvs = [(1.0, 0.0), (0.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+    _append_photo_quad(bm, uv_layer, pts, uvs, 0)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(name, mesh))
+
+
+def _primary_street_edge(bldg: dict, ring: list[list[float]]) -> dict | None:
+    edges = bldg.get("street_edges") or []
+    if not edges:
+        return None
+    best = None
+    best_len = -1.0
+    for edge in edges:
+        i0, i1 = int(edge["i0"]), int(edge["i1"])
+        if i0 >= len(ring) or i1 >= len(ring):
+            continue
+        length = math.hypot(ring[i1][0] - ring[i0][0], ring[i1][1] - ring[i0][1])
+        if length > best_len:
+            best_len = length
+            best = edge
+    return best
+
+
+def add_church_tower(
+    name: str,
+    ring: list[list[float]],
+    eaves: float,
+    massing: str,
+    wall,
+    roof,
+    street_edge: dict | None,
+) -> None:
+    """Parametric tower/turret placement matched to landmark massing presets."""
+    cx = sum(p[0] for p in ring) / len(ring)
+    cy = sum(p[1] for p in ring) / len(ring)
+    # Footprint scale for tower size.
+    xs = [p[0] for p in ring]
+    ys = [p[1] for p in ring]
+    span = max(max(xs) - min(xs), max(ys) - min(ys), 8.0)
+    tw = min(7.5, max(3.8, span * 0.18))
+    tower_h = eaves * (1.55 if "gothic" in massing or massing == "church_default" else 1.35)
+    # Default: street-left corner of primary edge.
+    tx, ty = cx, cy
+    yaw = 0.0
+    if street_edge is not None:
+        i0, i1 = int(street_edge["i0"]), int(street_edge["i1"])
+        p0, p1 = ring[i0], ring[i1]
+        ux, uy = p1[0] - p0[0], p1[1] - p0[1]
+        elen = math.hypot(ux, uy) or 1.0
+        ux, uy = ux / elen, uy / elen
+        nx, ny = street_edge.get("outward") or [0.0, 1.0]
+        yaw = math.atan2(uy, ux)
+        # Left of façade as seen from the street (u direction, then -right).
+        along = 0.18 if massing in {"neo_gothic_tower_left", "neo_romanesque_twin"} else 0.5
+        if massing == "church_default":
+            along = 0.5
+        tx = p0[0] + ux * (elen * along) - nx * (tw * 0.15)
+        ty = p0[1] + uy * (elen * along) - ny * (tw * 0.15)
+        if massing == "neo_romanesque_twin":
+            # Square tower toward NW-ish (left), thinner round turret toward right.
+            rtx = p0[0] + ux * (elen * 0.82) - nx * (tw * 0.1)
+            rty = p0[1] + uy * (elen * 0.82) - ny * (tw * 0.1)
+            mesh = bpy.data.meshes.new(f"{name}_turret")
+            mesh.materials.append(wall)
+            mesh.materials.append(roof)
+            bm = bmesh.new()
+            _append_box(bm, rtx, rty, tower_h * 0.55, tw * 0.55, tw * 0.55, tower_h * 1.05, yaw, 0)
+            _append_box(bm, rtx, rty, tower_h * 1.12, tw * 0.35, tw * 0.35, tw * 0.55, yaw, 1)
+            bm.to_mesh(mesh)
+            bm.free()
+            mesh.update()
+            link(bpy.data.objects.new(f"{name}_turret", mesh))
+
+    mesh = bpy.data.meshes.new(f"{name}_tower")
+    mesh.materials.append(wall)
+    mesh.materials.append(roof)
+    bm = bmesh.new()
+    _append_box(bm, tx, ty, tower_h * 0.5, tw, tw, tower_h, yaw, 0)
+    # Spire / pinnacle cap
+    if "gothic" in massing or massing == "church_default":
+        _append_box(bm, tx, ty, tower_h + tw * 0.55, tw * 0.55, tw * 0.55, tw * 1.1, yaw, 1)
+        _append_box(bm, tx, ty, tower_h + tw * 1.25, tw * 0.18, tw * 0.18, tw * 0.7, yaw, 1)
+    else:
+        _append_box(bm, tx, ty, tower_h + 0.35, tw * 1.05, tw * 1.05, 0.7, yaw, 1)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(f"{name}_tower", mesh))
+
+
+def add_hospital_extras(
+    name: str,
+    ring: list[list[float]],
+    eaves: float,
+    wall,
+    trim,
+    street_edge: dict | None,
+) -> None:
+    """Rooftop plant + street-edge entrance canopy for hospitals."""
+    cx = sum(p[0] for p in ring) / len(ring)
+    cy = sum(p[1] for p in ring) / len(ring)
+    mesh = bpy.data.meshes.new(f"{name}_hospital")
+    mesh.materials.append(wall)
+    mesh.materials.append(trim)
+    bm = bmesh.new()
+    _append_box(bm, cx, cy, eaves + 1.1, 6.5, 4.2, 2.2, 0.0, 0)
+    if street_edge is not None:
+        i0, i1 = int(street_edge["i0"]), int(street_edge["i1"])
+        p0, p1 = ring[i0], ring[i1]
+        mx, my = (p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5
+        nx, ny = street_edge.get("outward") or [0.0, 1.0]
+        yaw = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
+        length = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+        canopy_w = min(12.0, max(4.0, length * 0.35))
+        _append_box(
+            bm,
+            mx + nx * 1.4,
+            my + ny * 1.4,
+            3.2,
+            canopy_w,
+            2.4,
+            0.28,
+            yaw,
+            1,
+        )
+        # Canopy posts
+        for side in (-0.35, 0.35):
+            ux, uy = math.cos(yaw), math.sin(yaw)
+            _append_box(
+                bm,
+                mx + ux * canopy_w * side + nx * 2.2,
+                my + uy * canopy_w * side + ny * 2.2,
+                1.55,
+                0.22,
+                0.22,
+                3.1,
+                yaw,
+                1,
+            )
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(f"{name}_hospital", mesh))
+
+
+def add_supermarket_fascia(
+    name: str,
+    p0: list[float],
+    p1: list[float],
+    outward: list[float],
+    brand_key: str | None,
+) -> None:
+    """Ground-floor brand fascia strip + accent (no trademark logos)."""
+    spec = fascia_for_brand(brand_key)
+    x0, y0 = p0
+    x1, y1 = p1
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 3.0:
+        return
+    nx, ny = outward
+    yaw = math.atan2(y1 - y0, x1 - x0)
+    mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    fascia_mat = principled(f"{name}_fascia", tuple(spec["fascia"]), 0.55)
+    accent_mat = principled(f"{name}_accent", tuple(spec["accent"]), 0.45)
+    mesh = bpy.data.meshes.new(name)
+    mesh.materials.append(fascia_mat)
+    mesh.materials.append(accent_mat)
+    bm = bmesh.new()
+    ox, oy = mx + nx * 0.22, my + ny * 0.22
+    _append_box(bm, ox, oy, 3.15, length * 0.92, 0.28, 1.15, yaw, 0)
+    _append_box(bm, ox + nx * 0.04, oy + ny * 0.04, 2.45, length * 0.92, 0.16, 0.18, yaw, 1)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(name, mesh))
+    label = str(spec.get("label") or "")
+    if label:
+        curve = bpy.data.curves.new(name=f"{name}_txt", type="FONT")
+        curve.body = label
+        curve.size = min(1.05, max(0.55, length * 0.08))
+        curve.align_x = "CENTER"
+        curve.align_y = "CENTER"
+        obj = bpy.data.objects.new(f"{name}_label", curve)
+        obj.location = (ox + nx * 0.2, oy + ny * 0.2, 3.15)
+        obj.rotation_euler = (math.pi / 2.0, 0.0, yaw)
+        obj.data.materials.append(accent_mat)
+        link(obj)
+
+
 def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = None) -> None:
     style_name = style_key_for(bldg)
     type_id = bldg.get("building_type") or bldg.get("style") or "eclectic"
@@ -1426,6 +1790,73 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             # Far LOD1 colour blocks only — still keep roofs.
             return
 
+    landmark = bldg.get("landmark") or {}
+    massing = str(landmark.get("massing") or f"{type_id}_default")
+    primary = _primary_street_edge(bldg, ring)
+
+    if type_id in {"church", "hospital"} and detail in {"full", "simple"}:
+        if type_id == "church":
+            add_church_tower(name, ring, max(2.5, eaves), massing, wall, roof, primary)
+        else:
+            trim = mats["trim"].get(style_name) or mats["trim"].get(type_id) or mats["trim"]["eclectic"]
+            add_hospital_extras(name, ring, max(2.5, eaves), wall, trim, primary)
+        photo_path = None
+        if landmark.get("photo"):
+            photo_path = resolve_landmark_photo(landmark, LANDMARKS_DIR)
+        if photo_path is not None and primary is not None and detail == "full":
+            i0, i1 = int(primary["i0"]), int(primary["i1"])
+            add_landmark_photo_quad(
+                f"{name}_landmark",
+                ring[i0],
+                ring[i1],
+                primary.get("outward") or [0.0, 1.0],
+                max(2.5, eaves),
+                photo_path,
+                landmark.get("crop") or [0.0, 0.0, 1.0, 1.0],
+            )
+            # Other street edges keep ordinary façades.
+            for ei, edge in enumerate(bldg.get("street_edges") or []):
+                if edge is primary:
+                    continue
+                i0 = int(edge["i0"])
+                i1 = int(edge["i1"])
+                if i0 >= len(ring) or i1 >= len(ring):
+                    continue
+                add_street_facade(
+                    f"{name}_facade{ei}",
+                    ring[i0],
+                    ring[i1],
+                    edge.get("outward") or [0.0, 1.0],
+                    max(2.5, eaves),
+                    floors,
+                    style_name,
+                    mats,
+                    detail=detail,
+                    window_kind=window_kind,
+                    near_spawn=near_spawn,
+                )
+            return
+        # No photo: institutional façades on all street edges.
+        for ei, edge in enumerate(bldg.get("street_edges") or []):
+            i0 = int(edge["i0"])
+            i1 = int(edge["i1"])
+            if i0 >= len(ring) or i1 >= len(ring):
+                continue
+            add_street_facade(
+                f"{name}_facade{ei}",
+                ring[i0],
+                ring[i1],
+                edge.get("outward") or [0.0, 1.0],
+                max(2.5, eaves),
+                floors,
+                style_name,
+                mats,
+                detail=detail,
+                window_kind=window_kind,
+                near_spawn=near_spawn,
+            )
+        return
+
     if detail == "full" and shape != "flat" and int(bid) % 2 == 0:
         chimney_mat = mats.get("chimney") or roof
         add_chimneys(name, ring, max(2.5, eaves), roof_h, chimney_mat, int(bid) if bid else 1)
@@ -1463,6 +1894,14 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             near_spawn=near_spawn,
             climber=CLIMBERS.get((int(bid), ei)) if detail == "full" else None,
         )
+        if type_id == "supermarket" and detail == "full" and edge is primary:
+            add_supermarket_fascia(
+                f"{name}_fascia{ei}",
+                ring[i0],
+                ring[i1],
+                edge.get("outward") or [0.0, 1.0],
+                bldg.get("brand_key") or (bldg.get("use") or {}).get("brand_key"),
+            )
 
 
 # Vertical layer stack (metres). Strictly increasing, >= 2 cm between layers that
@@ -2492,6 +2931,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     TYPES_DOC = types_doc
     STATS["photo_quads"] = 0
     STATS["door_steps"] = 0
+    STATS["awnings"] = 0
     STATS["photo_edges"] = 0
     atlas_img = load_texture(TEXTURES_DIR / facade_kit.ATLAS_FILE)
     FACADE_PHOTO_MAT = (
@@ -2499,6 +2939,8 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         if atlas_img is not None
         else None
     )
+    if FACADE_PHOTO_MAT is not None:
+        add_normal_map(FACADE_PHOTO_MAT, TEXTURES_DIR / facade_kit.NORMAL_FILE, strength=NORMAL_MAP_STRENGTH)
     print(f"Facade photo atlas: {'loaded' if atlas_img is not None else 'MISSING'}")
     RAILS = RailIndex.from_layout(layout)
     print(f"Surface rail segments: {len(RAILS.segments)}")
@@ -2763,7 +3205,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Aerial-matched roofs: {ROOF_STATS}")
     print(
         f"Photo facades: {STATS['photo_edges']} street edges, {STATS['photo_quads']} textured quads "
-        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'}); doorsteps: {STATS['door_steps']}"
+        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'}); doorsteps: {STATS['door_steps']}; awnings: {STATS['awnings']}"
     )
 
     setup_world()

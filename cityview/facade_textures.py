@@ -186,6 +186,65 @@ def build_atlas(src_dir: Path = FACADES_DIR, out_dir: Path = TEXTURES_DIR) -> Pa
     return path
 
 
+NORMAL_FILE = kit.NORMAL_FILE
+NORMAL_STRENGTH = 2.4  # slope scale: larger = deeper-looking reveals
+
+
+def height_from_elevation(arr):
+    """Relief height field (float32 0..1, y down) read off one weathered elevation.
+
+    No geometry is known for the generated photos, so depth is inferred:
+    * dark, low-saturation panes that are darker than their surround are
+      *recessed* (window glass / door panels sit behind the masonry),
+    * a thin high-pass of the luminance carries brick courses, mortar, stone
+      joints, frames and sills as fine relief.
+    """
+    import numpy as np
+
+    lum = arr @ np.array([0.299, 0.587, 0.114], dtype="float32")
+    fine = lum - _blur(lum, 2.2)
+    local = _blur(lum, 14.0)
+    dark = np.clip((local - lum) / 0.20, 0.0, 1.0)  # 1 where much darker than the neighbourhood
+    recess = _blur(dark, 1.6) * 0.8 + _blur(dark, 5.0) * 0.5  # soft chamfer around every opening
+    return np.clip(0.5 + 0.9 * fine - recess * 0.55, 0.0, 1.0).astype("float32")
+
+
+def normals_from_height(height, strength: float = NORMAL_STRENGTH):
+    """Tangent-space normal map (glTF/OpenGL +Y up) from a y-down height field."""
+    import numpy as np
+
+    gx = (np.roll(height, -1, axis=1) - np.roll(height, 1, axis=1)) * 0.5
+    gy_down = (np.roll(height, -1, axis=0) - np.roll(height, 1, axis=0)) * 0.5
+    nx = -gx * strength * 6.0
+    ny = gy_down * strength * 6.0  # image-down height gain => +Y(up) slope sign flips
+    nz = np.ones_like(nx)
+    inv = 1.0 / np.sqrt(nx * nx + ny * ny + nz * nz)
+    return np.stack([nx * inv, ny * inv, nz * inv], axis=-1)
+
+
+def build_normal_atlas(atlas_path: Path | None = None, out_dir: Path = TEXTURES_DIR) -> Path:
+    """facade_normal.jpg: normal map aligned 1:1 with facade_atlas.jpg (same UVs)."""
+    _need_pillow()
+    import numpy as np
+    from PIL import Image
+
+    atlas_path = atlas_path or (out_dir / kit.ATLAS_FILE)
+    atlas = np.asarray(Image.open(atlas_path).convert("RGB")).astype("float32") / 255.0
+    normal = np.zeros_like(atlas)
+    normal[..., 2] = 1.0
+    for fid in kit.FACADES:
+        x0, y0, x1, y1 = kit.cell_pixel_rect(fid)
+        pad = kit.PAD
+        cell = atlas[y0 - pad : y1 + pad, x0 - pad : x1 + pad]
+        n = normals_from_height(height_from_elevation(cell))
+        # The gutter repeats the edge pixels, so the relief fades out there by itself.
+        normal[y0 - pad : y1 + pad, x0 - pad : x1 + pad] = n
+    rgb = np.clip((normal * 0.5 + 0.5) * 255.0 + 0.5, 0, 255).astype("uint8")
+    path = out_dir / NORMAL_FILE
+    Image.fromarray(rgb).save(path, quality=76, optimize=True)
+    return path
+
+
 def build_wall_tiles(src_dir: Path = WALLS_DIR, out_dir: Path = TEXTURES_DIR) -> list[Path]:
     _need_pillow()
     import numpy as np
@@ -210,9 +269,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--facades", default=str(FACADES_DIR))
     parser.add_argument("--walls", default=str(WALLS_DIR))
     parser.add_argument("--out", default=str(TEXTURES_DIR))
+    parser.add_argument("--normal-only", action="store_true", help="only rebuild facade_normal.jpg from the committed atlas")
     args = parser.parse_args(argv)
+    if args.normal_only:
+        normal = build_normal_atlas(None, Path(args.out))
+        print(f"Wrote {normal} ({normal.stat().st_size // 1024} KiB normal atlas)")
+        return 0
     atlas = build_atlas(Path(args.facades), Path(args.out))
     tiles = build_wall_tiles(Path(args.walls), Path(args.out))
+    normal = build_normal_atlas(atlas, Path(args.out))
+    print(f"Wrote {normal} ({normal.stat().st_size // 1024} KiB normal atlas)")
     print(
         f"Wrote {atlas} ({atlas.stat().st_size // 1024} KiB, {kit.FACADE_COUNT} facades) "
         f"+ {len(tiles)} wall tiles"

@@ -1,0 +1,106 @@
+{
+  "by_id": {
+    "453577567": {
+      "id": "453577567",
+      "name": "Sint-Bonifaciuskerk",
+      "kind": "church",
+      "photo": "sint_bonifaciuskerk.jpg",
+      "crop": [0.05, 0.02, 0.95, 0.98],
+      "massing": "neo_gothic_tower_left",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Gr%C3%A9trystraat_-_103291_-_onroerenderfgoed.jpg",
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
+    },
+    "501410385": {
+      "id": "501410385",
+      "name": "Heilige Geestkerk",
+      "kind": "church",
+      "photo": "heilige_geestkerk.jpg",
+      "crop": [0.08, 0.02, 0.92, 0.98],
+      "massing": "neo_romanesque_twin",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Heilige_Geestkerk_buiten.jpg",
+      "attribution": "Wikimedia Commons"
+    },
+    "353285592": {
+      "id": "353285592",
+      "name": "Basiliek van het Heilig Hart",
+      "kind": "church",
+      "photo": "heilig_hart_basiliek.jpg",
+      "crop": [0.1, 0.02, 0.9, 0.98],
+      "massing": "church_default",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Basiliek_van_het_Heilig_Hart_te_Berchem_(Antwerpen)_-_Gebouwd_door_Jules_Bilmeyer_en_Joseph_van_Riel_(10902).jpg",
+      "attribution": "Wikimedia Commons"
+    },
+    "9715814": {
+      "id": "9715814",
+      "name": "ZAS Vincentius",
+      "kind": "hospital",
+      "photo": "zas_vincentius.jpg",
+      "crop": [0.05, 0.05, 0.95, 0.95],
+      "massing": "hospital_historic_front",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusziekenhuis1.JPG",
+      "attribution": "Wikimedia Commons"
+    },
+    "780448684": {
+      "id": "780448684",
+      "name": "AZ Monica Antwerpen",
+      "kind": "hospital",
+      "photo": "az_monica.jpg",
+      "crop": [0.15, 0.1, 0.85, 0.85],
+      "massing": "hospital_default",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Coronaspandoek_AZ_Monica,_Florent_Pauwelslei_1,_2100_Deurne,_asset_fJROMEXcufwhRMSHimnvVERN.jpg",
+      "attribution": "Wikimedia Commons"
+    }
+  },
+  "by_name": {
+    "sint bonifaciuskerk": {
+      "id": "453577567",
+      "name": "Sint-Bonifaciuskerk",
+      "kind": "church",
+      "photo": "sint_bonifaciuskerk.jpg",
+      "crop": [0.05, 0.02, 0.95, 0.98],
+      "massing": "neo_gothic_tower_left",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Gr%C3%A9trystraat_-_103291_-_onroerenderfgoed.jpg",
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
+    },
+    "heilige geestkerk": {
+      "id": "501410385",
+      "name": "Heilige Geestkerk",
+      "kind": "church",
+      "photo": "heilige_geestkerk.jpg",
+      "crop": [0.08, 0.02, 0.92, 0.98],
+      "massing": "neo_romanesque_twin",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Heilige_Geestkerk_buiten.jpg",
+      "attribution": "Wikimedia Commons"
+    },
+    "basiliek van het heilig hart": {
+      "id": "353285592",
+      "name": "Basiliek van het Heilig Hart",
+      "kind": "church",
+      "photo": "heilig_hart_basiliek.jpg",
+      "crop": [0.1, 0.02, 0.9, 0.98],
+      "massing": "church_default",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Basiliek_van_het_Heilig_Hart_te_Berchem_(Antwerpen)_-_Gebouwd_door_Jules_Bilmeyer_en_Joseph_van_Riel_(10902).jpg",
+      "attribution": "Wikimedia Commons"
+    },
+    "zas vincentius": {
+      "id": "9715814",
+      "name": "ZAS Vincentius",
+      "kind": "hospital",
+      "photo": "zas_vincentius.jpg",
+      "crop": [0.05, 0.05, 0.95, 0.95],
+      "massing": "hospital_historic_front",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusziekenhuis1.JPG",
+      "attribution": "Wikimedia Commons"
+    },
+    "az monica antwerpen": {
+      "id": "780448684",
+      "name": "AZ Monica Antwerpen",
+      "kind": "hospital",
+      "photo": "az_monica.jpg",
+      "crop": [0.15, 0.1, 0.85, 0.85],
+      "massing": "hospital_default",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Coronaspandoek_AZ_Monica,_Florent_Pauwelslei_1,_2100_Deurne,_asset_fJROMEXcufwhRMSHimnvVERN.jpg",
+      "attribution": "Wikimedia Commons"
+    }
+  }
+}
