@@ -108,17 +108,26 @@ def load_pixels(path: Path, size: int = 48) -> list[RGB]:
         img.thumbnail((size, size))
         return [_rgb8_to_f(r, g, b) for r, g, b in img.getdata()]
     except Exception:
-        with tempfile.TemporaryDirectory(prefix="cityview-palette-") as tmp:
-            out = Path(tmp) / "thumb.png"
-            proc = subprocess.run(
-                ["sips", "-s", "format", "png", "-z", str(size), str(size), str(path), "--out", str(out)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if proc.returncode != 0 or not out.exists():
-                raise RuntimeError(f"sips failed for {path}: {proc.stderr.strip()}")
-            return _decode_png_scanlines(out)
+        pass
+    if not shutil_which("sips"):
+        raise RuntimeError(f"no Pillow and no sips — cannot sample {path}")
+    with tempfile.TemporaryDirectory(prefix="cityview-palette-") as tmp:
+        out = Path(tmp) / "thumb.png"
+        proc = subprocess.run(
+            ["sips", "-s", "format", "png", "-z", str(size), str(size), str(path), "--out", str(out)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0 or not out.exists():
+            raise RuntimeError(f"sips failed for {path}: {proc.stderr.strip()}")
+        return _decode_png_scanlines(out)
+
+
+def shutil_which(cmd: str) -> str | None:
+    from shutil import which
+
+    return which(cmd)
 
 
 def quantize_key(rgb: RGB, bins: int = 12) -> tuple[int, int, int]:

@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from cityview.building_types import attach_palettes, write_building_types
+from cityview.building_types import BUILDING_TYPES_PATH, attach_palettes, load_building_types, write_building_types
 from cityview.gtfs_delijn import enrich_layout_transit
 from cityview.jobs import add_photo_building, load_scene, resolve_photo, write_job
 from cityview.osm import fetch_osm, layout_from_osm
@@ -134,8 +134,14 @@ def city_command(args: argparse.Namespace) -> int:
         gtfs_cache,
         refresh=bool(args.refresh),
     )
-    types_path = write_building_types()
-    attach_palettes(layout)
+    # Prefer committed photo-remix JSON (CI has no macOS sips / may lack Pillow).
+    if BUILDING_TYPES_PATH.exists():
+        types_path = BUILDING_TYPES_PATH
+        types_doc = load_building_types(types_path)
+    else:
+        types_path = write_building_types()
+        types_doc = load_building_types(types_path)
+    attach_palettes(layout, types_doc)
     spawn = spawn_from_place(place, origin, layout) if place else None
     if spawn:
         layout["spawn"] = spawn
