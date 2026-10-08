@@ -1,0 +1,17 @@
+[project]
+name = "city-view"
+version = "0.1.0"
+description = "Generate Antwerp 70s-80s 3D streets from facade photos in Blender"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+cityview = "cityview.cli:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cityview*"]

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>City View — Antwerp side street</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #e8e2d4;
+        --muted: #9a9386;
+        --panel: rgba(16, 16, 18, 0.72);
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1a1c1f;
+        font-family: "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+        color: var(--ink);
+      }
+      canvas {
+        display: block;
+      }
+      #hud {
+        position: fixed;
+        left: 20px;
+        bottom: 20px;
+        max-width: 28rem;
+        padding: 14px 16px;
+        background: var(--panel);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(10px);
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 1.05rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      p {
+        margin: 0;
+        font-size: 0.88rem;
+        line-height: 1.4;
+        color: var(--muted);
+      }
+      #status {
+        position: fixed;
+        top: 18px;
+        right: 20px;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">Loading street…</div>
+    <div id="hud">
+      <h1>Antwerp, late 70s / early 80s</h1>
+      <p>
+        Drag to look around, scroll to walk the block. The cream shopfront is
+        built from the R. Maes facade photo; the neighbors are period
+        procedural rijhuizen.
+      </p>
+    </div>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      const status = document.getElementById("status");
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x8a9198);
+      scene.fog = new THREE.Fog(0x8a9198, 28, 90);
+
+      const camera = new THREE.PerspectiveCamera(
+        50,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        250,
+      );
+      camera.position.set(1.6, 1.7, 8.8);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      document.body.appendChild(renderer.domElement);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 4.2, -8);
+      controls.enableDamping = true;
+      controls.maxPolarAngle = Math.PI * 0.49;
+      controls.minDistance = 3;
+      controls.maxDistance = 48;
+
+      scene.add(new THREE.AmbientLight(0xc8d0d8, 0.85));
+      const sun = new THREE.DirectionalLight(0xf2f4f8, 1.15);
+      sun.position.set(12, 22, 8);
+      scene.add(sun);
+
+      const loader = new GLTFLoader();
+      loader.load(
+        "./antwerp_street.glb",
+        (gltf) => {
+          scene.add(gltf.scene);
+          status.textContent = "Street ready";
+        },
+        undefined,
+        (err) => {
+          status.textContent = "Missing GLB — run python3 -m cityview build";
+          console.error(err);
+        },
+      );
+
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      function tick() {
+        controls.update();
+        renderer.render(scene, camera);
+        requestAnimationFrame(tick);
+      }
+      tick();
+    </script>
+  </body>
+</html>
