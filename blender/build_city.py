@@ -466,6 +466,32 @@ def add_street_facade(
                 yaw,
                 4,
             )
+            # Weathered lintel / sill shelf — century grit, not showroom clean.
+            if detail == "full":
+                _append_box(
+                    bm,
+                    px + nx * 0.05,
+                    py + ny * 0.05,
+                    sill + wh + 0.06,
+                    ww + 0.18,
+                    0.14,
+                    0.1,
+                    yaw,
+                    2,
+                )
+                if fi >= 1 and bi % 2 == 0 and kind != "ribbon":
+                    # Tiny balcony rail stubs on upper floors.
+                    _append_box(
+                        bm,
+                        px + nx * 0.28,
+                        py + ny * 0.28,
+                        sill - 0.08,
+                        ww * 0.9,
+                        0.08,
+                        0.55,
+                        yaw,
+                        3,
+                    )
 
     bm.to_mesh(mesh)
     bm.free()
@@ -791,6 +817,116 @@ def add_traffic_light(name: str, x: float, y: float, pole_mat, housing_mat, lamp
         assign(lamp, mat)
 
 
+def add_crosswalks(signal_pts: list[tuple[float, float]], stripe_mat, spawn_xy) -> int:
+    """Zebra stripes near OSM traffic signals (and spawn-proximate junctions)."""
+    count = 0
+    for i, (sx, sy) in enumerate(signal_pts):
+        if spawn_xy is not None and math.hypot(sx - spawn_xy[0], sy - spawn_xy[1]) > 280.0:
+            continue
+        # Orient stripes roughly along local cardinal — reads fine from POV.
+        yaw = (i % 2) * (math.pi * 0.5)
+        for s in range(6):
+            along = -2.4 + s * 0.85
+            cx = sx + math.cos(yaw) * along
+            cy = sy + math.sin(yaw) * along
+            stripe = add_box(f"zebra_{i}_{s}", (0.45, 3.2, 0.04), (cx, cy, 0.07), yaw)
+            assign(stripe, stripe_mat)
+            count += 1
+    return count
+
+
+def add_street_furniture(
+    roads: list,
+    spawn_xy: tuple[float, float],
+    metal_mat,
+    wood_mat,
+    bin_mat,
+    lamp_head_mat,
+    trunk_mat,
+    canopy_mat,
+) -> dict:
+    """Lamp posts, bollards, bins, benches, and sidewalk trees near the spawn."""
+    stats = {"lamps": 0, "bollards": 0, "bins": 0, "benches": 0, "street_trees": 0}
+    max_lamps, max_bollards, max_bins, max_benches, max_trees = 48, 80, 28, 18, 40
+    for ri, road in enumerate(roads):
+        kind = road.get("kind") or "residential"
+        if kind in {"footway", "path", "cycleway", "steps"}:
+            continue
+        pts = road.get("points") or []
+        if len(pts) < 2:
+            continue
+        mid = pts[len(pts) // 2]
+        if math.hypot(mid[0] - spawn_xy[0], mid[1] - spawn_xy[1]) > 160.0:
+            continue
+        half = float(road.get("width") or 6.0) * 0.5
+        # Furniture on the left sidewalk band.
+        band = offset_polyline(pts, half + 1.1)
+        dist = 0.0
+        for i in range(len(band) - 1):
+            x0, y0 = band[i]
+            x1, y1 = band[i + 1]
+            seg = math.hypot(x1 - x0, y1 - y0)
+            yaw = math.atan2(y1 - y0, x1 - x0)
+            t = 2.0
+            while t < seg:
+                x = x0 + (x1 - x0) * (t / seg if seg else 0)
+                y = y0 + (y1 - y0) * (t / seg if seg else 0)
+                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 150.0:
+                    t += 12.0
+                    continue
+                slot = int(dist + t + ri * 3)
+                if slot % 17 == 0 and stats["lamps"] < max_lamps:
+                    pole = add_box(f"lamp_{stats['lamps']}", (0.1, 0.1, 4.6), (x, y, 2.3), 0.0)
+                    assign(pole, metal_mat)
+                    head = add_box(
+                        f"lamp_h_{stats['lamps']}",
+                        (0.55, 0.35, 0.2),
+                        (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 4.55),
+                        yaw,
+                    )
+                    assign(head, lamp_head_mat)
+                    stats["lamps"] += 1
+                elif slot % 11 == 0 and stats["bollards"] < max_bollards:
+                    boll = add_box(f"bollard_{stats['bollards']}", (0.18, 0.18, 0.75), (x, y, 0.38), 0.0)
+                    assign(boll, metal_mat)
+                    stats["bollards"] += 1
+                elif slot % 23 == 0 and stats["bins"] < max_bins:
+                    bin_obj = add_box(f"bin_{stats['bins']}", (0.45, 0.45, 0.85), (x, y, 0.42), yaw)
+                    assign(bin_obj, bin_mat)
+                    stats["bins"] += 1
+                elif slot % 29 == 0 and stats["benches"] < max_benches:
+                    seat = add_box(f"bench_{stats['benches']}", (1.6, 0.42, 0.12), (x, y, 0.42), yaw)
+                    assign(seat, wood_mat)
+                    back = add_box(
+                        f"bench_b_{stats['benches']}",
+                        (1.6, 0.08, 0.55),
+                        (x - math.sin(yaw) * 0.18, y + math.cos(yaw) * 0.18, 0.72),
+                        yaw,
+                    )
+                    assign(back, wood_mat)
+                    stats["benches"] += 1
+                elif slot % 19 == 0 and stats["street_trees"] < max_trees and kind in {
+                    "residential",
+                    "living_street",
+                    "tertiary",
+                    "unclassified",
+                }:
+                    h = 4.8 + (slot % 5) * 0.35
+                    trunk = add_box(f"stree_t_{stats['street_trees']}", (0.22, 0.22, h * 0.4), (x, y, h * 0.2), 0.0)
+                    assign(trunk, trunk_mat)
+                    canopy = add_box(
+                        f"stree_c_{stats['street_trees']}",
+                        (2.2, 2.1, 2.4),
+                        (x, y, h * 0.55),
+                        yaw * 0.2,
+                    )
+                    assign(canopy, canopy_mat)
+                    stats["street_trees"] += 1
+                t += 5.5 + (slot % 4) * 0.7
+            dist += seg
+    return stats
+
+
 def collect_signal_points(layout: dict) -> list[tuple[float, float]]:
     pts: list[tuple[float, float]] = []
     for s in layout.get("signals") or []:
@@ -893,6 +1029,10 @@ def build(layout: dict) -> None:
         principled("car_cream", (0.72, 0.68, 0.55, 1.0), 0.4, metallic=0.25),
     ]
     car_glass = principled("car_glass", (0.35, 0.42, 0.48, 1.0), 0.12, metallic=0.1)
+    stripe_mat = principled("zebra", (0.88, 0.86, 0.78, 1.0), 0.92)
+    wood_mat = principled("bench_wood", (0.32, 0.22, 0.12, 1.0), 0.88)
+    bin_mat = principled("bin_green", (0.14, 0.28, 0.16, 1.0), 0.65, metallic=0.2)
+    lamp_head_mat = principled("lamp_head", (0.75, 0.72, 0.55, 1.0), 0.35)
 
     mats = {
         "wall": {n: principled(f"wall_{n}", s["wall"], 0.92) for n, s in STYLES.items()},
@@ -923,10 +1063,23 @@ def build(layout: dict) -> None:
     for i, (sx, sy) in enumerate(signal_pts):
         add_traffic_light(f"signal_{i}", sx, sy, pole_mat, housing_mat, lamp_mats)
     print(f"Traffic lights: {len(signal_pts)}")
+    zebras = add_crosswalks(signal_pts, stripe_mat, spawn_xy)
+    print(f"Crosswalk stripes: {zebras}")
 
     if spawn_xy is not None:
         cars = add_parked_cars(layout.get("roads") or [], spawn_xy, car_mats, car_glass)
         print(f"Parked cars near spawn: {cars}")
+        furniture = add_street_furniture(
+            layout.get("roads") or [],
+            spawn_xy,
+            pole_mat,
+            wood_mat,
+            bin_mat,
+            lamp_head_mat,
+            trunk_mat,
+            canopy_mat,
+        )
+        print(f"Street furniture: {furniture}")
 
     for bldg in layout.get("buildings") or []:
         add_building(bldg, mats, spawn_xy=spawn_xy)
