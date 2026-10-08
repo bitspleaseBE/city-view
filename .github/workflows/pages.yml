@@ -1,0 +1,68 @@
+name: Deploy Klein Antwerpen to GitHub Pages
+
+on:
+  push:
+    branches: [main, klein-antwerpen-2018]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Blender
+        run: |
+          set -euo pipefail
+          BLENDER_VERSION=4.2.13
+          ARCHIVE="blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          BASE="https://download.blender.org/release/Blender4.2"
+          EXPECTED_SHA256="ed0c872742d590b42fbe3b91286f60f6f18e0f69f6314fd47db9ff419c7ce2f6"
+          curl -L --fail --retry 3 -o "/tmp/${ARCHIVE}" "${BASE}/${ARCHIVE}"
+          curl -L --fail --retry 3 -o "/tmp/blender.sha256" "${BASE}/blender-${BLENDER_VERSION}.sha256"
+          grep " ${ARCHIVE}\$" /tmp/blender.sha256 | sha256sum -c -
+          echo "${EXPECTED_SHA256}  /tmp/${ARCHIVE}" | sha256sum -c -
+          sudo mkdir -p /opt/blender
+          sudo tar -xJf "/tmp/${ARCHIVE}" -C /opt/blender --strip-components=1
+          echo "BLENDER_BIN=/opt/blender/blender" >> "$GITHUB_ENV"
+          /opt/blender/blender --version
+
+      - name: Build Klein Antwerpen district
+        run: |
+          test -f assets/osm/harmonie.json
+          python3 -m cityview city --place klein-antwerpen --no-render
+          test -f viewer/klein_antwerpen.glb
+          ls -lh viewer/klein_antwerpen.glb output/antwerp_harmonie.glb
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: viewer
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -3,20 +3,19 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>City View — Antwerp side street</title>
+    <title>City View — Klein Antwerpen · Gounodstraat 13</title>
     <style>
       :root {
-        color-scheme: dark;
-        --ink: #e8e2d4;
-        --muted: #9a9386;
-        --panel: rgba(16, 16, 18, 0.72);
+        --ink: #1a2430;
+        --muted: #3d4a5c;
+        --panel: rgba(255, 255, 255, 0.72);
       }
       html,
       body {
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background: #1a1c1f;
+        background: #6eb6ff;
         font-family: "Iowan Old Style", "Palatino Linotype", Palatino, serif;
         color: var(--ink);
       }
@@ -30,14 +29,14 @@
         max-width: 28rem;
         padding: 14px 16px;
         background: var(--panel);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(20, 40, 60, 0.12);
         backdrop-filter: blur(10px);
+        pointer-events: none;
       }
       h1 {
         margin: 0 0 6px;
         font-size: 1.05rem;
         font-weight: 600;
-        letter-spacing: 0.02em;
       }
       p {
         margin: 0;
@@ -51,17 +50,54 @@
         right: 20px;
         font-size: 0.8rem;
         color: var(--muted);
+        background: var(--panel);
+        padding: 8px 12px;
+        border: 1px solid rgba(20, 40, 60, 0.12);
+      }
+      #hint {
+        position: fixed;
+        top: 18px;
+        left: 20px;
+        font-size: 0.8rem;
+        color: var(--muted);
+        background: var(--panel);
+        padding: 8px 12px;
+        border: 1px solid rgba(20, 40, 60, 0.12);
+      }
+      #modes {
+        position: fixed;
+        top: 56px;
+        left: 20px;
+        display: flex;
+        gap: 8px;
+      }
+      #modes button {
+        font: inherit;
+        font-size: 0.8rem;
+        padding: 8px 12px;
+        border: 1px solid rgba(20, 40, 60, 0.16);
+        background: var(--panel);
+        color: var(--ink);
+        cursor: pointer;
+      }
+      #modes button.active {
+        background: #1a2430;
+        color: #f4efe6;
       }
     </style>
   </head>
   <body>
-    <div id="status">Loading street…</div>
+    <div id="hint">Walk: click + WASD · Free: drag orbit · V toggles</div>
+    <div id="modes">
+      <button type="button" id="btn-walk" class="active">Walk</button>
+      <button type="button" id="btn-free">Free view</button>
+    </div>
+    <div id="status">Loading sunny Klein Antwerpen…</div>
     <div id="hud">
-      <h1>Antwerp, late 70s / early 80s</h1>
+      <h1>Gounodstraat 13 · Klein Antwerpen · 2018</h1>
       <p>
-        Drag to look around, scroll to walk the block. The cream shopfront is
-        built from the R. Maes facade photo; the neighbors are period
-        procedural rijhuizen.
+        A bright day over century-old façades — stylish, a little grudgy.
+        Parks with trees, street signals, human-scale streets.
       </p>
     </div>
     <script type="importmap">
@@ -75,51 +111,178 @@
     <script type="module">
       import * as THREE from "three";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
       const status = document.getElementById("status");
+      const hint = document.getElementById("hint");
+      const btnWalk = document.getElementById("btn-walk");
+      const btnFree = document.getElementById("btn-free");
+
+      const SKY = 0x6eb6ff;
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x8a9198);
-      scene.fog = new THREE.Fog(0x8a9198, 28, 90);
+      scene.background = new THREE.Color(SKY);
+      scene.fog = new THREE.Fog(SKY, 90, 780);
 
       const camera = new THREE.PerspectiveCamera(
-        50,
+        68,
         window.innerWidth / window.innerHeight,
-        0.1,
-        250,
+        0.12,
+        3500,
       );
-      camera.position.set(1.6, 1.7, 8.8);
+      camera.position.set(-218.5, 1.7, -432.1);
 
-      const renderer = new THREE.WebGLRenderer({ antialias: true });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.05;
+      renderer.toneMappingExposure = 1.2;
       document.body.appendChild(renderer.domElement);
 
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.target.set(0, 4.2, -8);
-      controls.enableDamping = true;
-      controls.maxPolarAngle = Math.PI * 0.49;
-      controls.minDistance = 3;
-      controls.maxDistance = 48;
-
-      scene.add(new THREE.AmbientLight(0xc8d0d8, 0.85));
-      const sun = new THREE.DirectionalLight(0xf2f4f8, 1.15);
-      sun.position.set(12, 22, 8);
+      // Hemisphere = blue sky + warm ground bounce
+      scene.add(new THREE.HemisphereLight(0x9ec9ff, 0xc4b49a, 0.95));
+      const sun = new THREE.DirectionalLight(0xfff2d6, 1.55);
+      sun.position.set(220, 320, -160);
       scene.add(sun);
+      scene.add(sun.target);
+
+      // Visible sun disc
+      const sunMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(28, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xffe7a0 }),
+      );
+      sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
+      scene.add(sunMesh);
+
+      let mode = "walk"; // walk | free
+      const eyeHeight = 1.7;
+      const walkSpeed = 7.5;
+      const keys = { w: false, a: false, s: false, d: false };
+      let prevTime = performance.now();
+      let cityRoot = null;
+      let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
+
+      const walkControls = new PointerLockControls(camera, document.body);
+      scene.add(walkControls.getObject());
+
+      const orbitControls = new OrbitControls(camera, renderer.domElement);
+      orbitControls.enableDamping = true;
+      orbitControls.maxPolarAngle = Math.PI * 0.49;
+      orbitControls.minDistance = 2;
+      orbitControls.maxDistance = 1400;
+      orbitControls.enabled = false;
+
+      function setMode(next) {
+        mode = next;
+        btnWalk.classList.toggle("active", mode === "walk");
+        btnFree.classList.toggle("active", mode === "free");
+        if (mode === "walk") {
+          orbitControls.enabled = false;
+          walkControls.getObject().position.y = eyeHeight;
+          hint.textContent = "Walk: click + WASD · Esc release · V free view";
+          status.textContent = "Walking — Gounodstraat 13";
+        } else {
+          if (walkControls.isLocked) walkControls.unlock();
+          orbitControls.enabled = true;
+          const p = walkControls.getObject().position;
+          orbitControls.target.set(p.x, 6, p.z);
+          camera.position.set(p.x - 40, 28, p.z - 40);
+          hint.textContent = "Free view: drag orbit · scroll zoom · V walk";
+          status.textContent = "Free view";
+        }
+      }
+
+      btnWalk.addEventListener("click", () => setMode("walk"));
+      btnFree.addEventListener("click", () => setMode("free"));
+
+      document.body.addEventListener("click", (e) => {
+        if (mode !== "walk") return;
+        if (e.target.closest("#modes")) return;
+        if (!walkControls.isLocked) walkControls.lock();
+      });
+      walkControls.addEventListener("lock", () => {
+        hint.textContent = "WASD · mouse look · Esc · V free view";
+      });
+      walkControls.addEventListener("unlock", () => {
+        if (mode === "walk") hint.textContent = "Walk: click + WASD · V free view";
+      });
+
+      window.addEventListener("keydown", (e) => {
+        if (e.code === "KeyV") {
+          setMode(mode === "walk" ? "free" : "walk");
+          return;
+        }
+        if (e.code === "KeyW") keys.w = true;
+        if (e.code === "KeyA") keys.a = true;
+        if (e.code === "KeyS") keys.s = true;
+        if (e.code === "KeyD") keys.d = true;
+      });
+      window.addEventListener("keyup", (e) => {
+        if (e.code === "KeyW") keys.w = false;
+        if (e.code === "KeyA") keys.a = false;
+        if (e.code === "KeyS") keys.s = false;
+        if (e.code === "KeyD") keys.d = false;
+      });
+
+      function applySpawnFromNode(node) {
+        const p = new THREE.Vector3();
+        node.getWorldPosition(p);
+        spawnPos.copy(p);
+        if (Math.abs(p.y - eyeHeight) > 3) spawnPos.y = eyeHeight;
+        walkControls.getObject().position.copy(spawnPos);
+        const e = new THREE.Euler().setFromQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
+        walkControls.getObject().rotation.y = e.y;
+      }
+
+      function applySpawnJson(spawn) {
+        spawnPos.set(spawn.x, spawn.z, -spawn.y);
+        walkControls.getObject().position.copy(spawnPos);
+        walkControls.getObject().rotation.y = spawn.yaw ?? 0;
+      }
+
+      async function loadSpawnJson() {
+        try {
+          const res = await fetch("./spawn.json");
+          if (!res.ok) return null;
+          return await res.json();
+        } catch {
+          return null;
+        }
+      }
 
       const loader = new GLTFLoader();
       loader.load(
-        "./antwerp_street.glb",
-        (gltf) => {
-          scene.add(gltf.scene);
-          status.textContent = "Street ready";
+        "./klein_antwerpen.glb",
+        async (gltf) => {
+          cityRoot = gltf.scene;
+          // Cheap: disable expensive features for FPS
+          cityRoot.traverse((obj) => {
+            if (obj.isMesh) {
+              obj.castShadow = false;
+              obj.receiveShadow = false;
+              if (obj.material) {
+                const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                for (const m of mats) {
+                  if (m) {
+                    m.flatShading = true;
+                    m.needsUpdate = true;
+                  }
+                }
+              }
+            }
+          });
+          scene.add(cityRoot);
+          const spawnNode = cityRoot.getObjectByName("HumanSpawn");
+          const spawnJson = await loadSpawnJson();
+          if (spawnNode) applySpawnFromNode(spawnNode);
+          else if (spawnJson) applySpawnJson(spawnJson);
+          setMode("walk");
+          status.textContent = "Sunny day — click to walk";
         },
         undefined,
         (err) => {
-          status.textContent = "Missing GLB — run python3 -m cityview build";
+          status.textContent = "Missing GLB — CI/build pending";
           console.error(err);
         },
       );
@@ -131,7 +294,20 @@
       });
 
       function tick() {
-        controls.update();
+        const time = performance.now();
+        const dt = Math.min(0.05, (time - prevTime) / 1000);
+        prevTime = time;
+
+        if (mode === "walk" && walkControls.isLocked) {
+          const step = walkSpeed * dt;
+          if (keys.w) walkControls.moveForward(step);
+          if (keys.s) walkControls.moveForward(-step);
+          if (keys.a) walkControls.moveRight(-step);
+          if (keys.d) walkControls.moveRight(step);
+          walkControls.getObject().position.y = eyeHeight;
+        }
+        if (mode === "free") orbitControls.update();
+
         renderer.render(scene, camera);
         requestAnimationFrame(tick);
       }

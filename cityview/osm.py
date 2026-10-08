@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from cityview.geo import project
+from cityview.streetscape import annotate_layout, floors_from_height, height_truth, roof_shape_for
 
 OVERPASS_URLS = (
     "https://overpass.private.coffee/api/interpreter",
@@ -41,6 +42,7 @@ ROAD_WIDTHS = {
 
 SKIP_HIGHWAYS = {"corridor", "proposed", "construction", "raceway", "bus_guideway"}
 
+# Late-70s / early-80s palette (centrum / eilandje default).
 BUILDING_STYLES = [
     "cream-tile",
     "yellow-brick",
@@ -48,6 +50,17 @@ BUILDING_STYLES = [
     "white-modern",
     "antwerp-70s",
     "brown-tile",
+]
+
+# Klein Antwerpen / Harmonie 2018 historic LOD1 mix (stable weighted hash).
+HISTORIC_STYLES = [
+    ("eclectic", 40),
+    ("neoclassical", 25),
+    ("neo-flemish", 12),
+    ("art-nouveau", 8),
+    ("art-deco", 7),
+    ("international", 5),
+    ("modern-infill", 3),
 ]
 
 
@@ -66,6 +79,8 @@ def overpass_query(south: float, west: float, north: float, east: float) -> str:
   way["waterway"="dock"]({bbox});
   way["landuse"="basin"]({bbox});
   way["water"]({bbox});
+  node["highway"="traffic_signals"]({bbox});
+  node["highway"="crossing"]["crossing"="traffic_signals"]({bbox});
   relation["natural"="water"]({bbox});
   relation["water"]({bbox});
   relation["landuse"="basin"]({bbox});
@@ -206,38 +221,53 @@ def _area(ring: list[list[float]]) -> float:
 
 
 def height_for(tags: dict[str, str]) -> float:
-    raw = tags.get("height")
-    if raw:
-        try:
-            return max(4.0, min(80.0, float(raw.replace("m", "").split()[0])))
-        except ValueError:
-            pass
-    levels = tags.get("building:levels")
-    if levels:
-        try:
-            return max(6.0, min(80.0, float(levels.split(";")[0]) * 3.15))
-        except ValueError:
-            pass
-    kind = tags.get("building", "yes")
-    defaults = {
-        "house": 11.2,
-        "terrace": 12.0,
-        "residential": 12.4,
-        "apartments": 16.5,
-        "commercial": 14.0,
-        "retail": 11.0,
-        "industrial": 10.0,
-        "warehouse": 9.0,
-        "church": 28.0,
-        "cathedral": 42.0,
-        "garage": 4.5,
-        "shed": 3.5,
-    }
-    return defaults.get(kind, 12.0)
+    eaves, roof_h, _floors = height_truth(tags)
+    return eaves + max(0.0, roof_h) * 0.5
 
 
-def style_for(osm_id: int, tags: dict[str, str]) -> str:
+def _stable_unit(osm_id: int) -> float:
+    """Deterministic 0..1 from OSM id (not Python's randomized hash)."""
+    x = (osm_id * 1103515245 + 12345) & 0x7FFFFFFF
+    return x / 0x7FFFFFFF
+
+
+def _weighted_historic(osm_id: int) -> str:
+    roll = _stable_unit(osm_id) * 100.0
+    acc = 0.0
+    for name, weight in HISTORIC_STYLES:
+        acc += weight
+        if roll < acc:
+            return name
+    return HISTORIC_STYLES[-1][0]
+
+
+def _levels(tags: dict[str, str]) -> float | None:
+    raw = tags.get("building:levels")
+    if not raw:
+        return None
+    try:
+        return float(raw.split(";")[0])
+    except ValueError:
+        return None
+
+
+def style_for(osm_id: int, tags: dict[str, str], policy: str = "default") -> str:
+    """Assign a facade palette. policy: 'default' (70s) or 'historic' (Klein Antwerpen)."""
     kind = tags.get("building", "")
+    amenity = tags.get("amenity", "")
+    levels = _levels(tags)
+
+    if policy == "historic":
+        if kind in {"church", "cathedral", "chapel"} or amenity == "place_of_worship":
+            return "neo-gothic" if _stable_unit(osm_id) < 0.55 else "neoclassical"
+        if kind in {"industrial", "warehouse", "manufacture"}:
+            return "international"
+        if kind in {"apartments", "office"} or (levels is not None and levels >= 6):
+            return "art-deco" if _stable_unit(osm_id + 17) < 0.55 else "international"
+        if kind in {"garage", "garages", "shed", "service"}:
+            return "modern-infill"
+        return _weighted_historic(osm_id)
+
     if kind in {"industrial", "warehouse", "manufacture"}:
         return "prefab-70s"
     if kind in {"apartments", "office"}:
@@ -245,6 +275,13 @@ def style_for(osm_id: int, tags: dict[str, str]) -> str:
     if kind in {"church", "cathedral", "chapel"}:
         return "cream-tile"
     return BUILDING_STYLES[osm_id % len(BUILDING_STYLES)]
+
+
+def height_jitter(osm_id: int, height: float, amount: float = 0.05) -> float:
+    """±amount relative height variation from a stable id hash."""
+    unit = _stable_unit(osm_id ^ 0xA5A5)
+    factor = 1.0 + (unit * 2.0 - 1.0) * amount
+    return max(3.0, height * factor)
 
 
 def road_width(tags: dict[str, str]) -> float | None:
@@ -280,6 +317,7 @@ def _is_park(tags: dict[str, str]) -> bool:
 def layout_from_osm(
     osm: dict[str, Any],
     origin: tuple[float, float],
+    style_policy: str = "default",
 ) -> dict[str, Any]:
     nodes, ways, rels = _index(osm.get("elements") or [])
     buildings: list[dict[str, Any]] = []
@@ -296,12 +334,25 @@ def layout_from_osm(
             ring = _closed(pts)
             area = _area(ring)
             if len(ring) >= 3 and 20.0 <= area <= 12000.0:
+                osm_id = int(way["id"])
+                style = style_for(osm_id, tags, style_policy)
+                eaves, roof_h, floors = height_truth(tags)
+                if style_policy == "historic":
+                    eaves = height_jitter(osm_id, eaves, amount=0.04)
+                    if roof_h <= 0.0:
+                        roof_h = min(3.8, max(1.3, eaves * 0.15))
+                roof_shape = roof_shape_for(tags, style, osm_id)
+                if roof_shape == "flat":
+                    roof_h = max(0.35, min(roof_h, 0.6)) if roof_h else 0.4
                 buildings.append(
                     {
-                        "id": int(way["id"]),
+                        "id": osm_id,
                         "ring": ring,
-                        "height": height_for(tags),
-                        "style": style_for(int(way["id"]), tags),
+                        "height": eaves,
+                        "roof_height": roof_h,
+                        "floors": floors or floors_from_height(eaves, tags),
+                        "roof_shape": roof_shape,
+                        "style": style,
                         "name": tags.get("name") or tags.get("addr:housenumber") or "",
                     }
                 )
@@ -351,10 +402,23 @@ def layout_from_osm(
                 if _area(ring) >= 80.0:
                     parks.append({"id": int(rel["id"]) * 100 + i, "ring": ring, "name": tags.get("name") or ""})
 
-    return {
+    signals: list[dict[str, Any]] = []
+    for node in nodes.values():
+        tags = node.get("tags") or {}
+        if tags.get("highway") == "traffic_signals" or (
+            tags.get("highway") == "crossing" and tags.get("crossing") == "traffic_signals"
+        ):
+            lat = float(node["lat"])
+            lon = float(node["lon"])
+            x, y = project(lat, lon, origin[0], origin[1])
+            signals.append({"id": int(node["id"]), "x": x, "y": y, "kind": "traffic_signals"})
+
+    layout = {
         "origin": list(origin),
         "buildings": buildings,
         "roads": roads,
         "water": water,
         "parks": parks,
+        "signals": signals,
     }
+    return annotate_layout(layout)
