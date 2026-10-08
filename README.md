@@ -8,7 +8,7 @@ Generation can run headless through the local Blender binary, or live through th
 
 - **District orbit** — Harmonie / Klein Antwerpen from OSM, with neoclassical, eclectic, neo-Flemish, Art Nouveau, Art Deco, International Style, and modern-infill colours
 - A photo-textured hero building street mode (late 70s / early 80s rijhuizen)
-- Procedural neighbors, sidewalks, asphalt, lamps
+- Procedural neighbors, lamps, and textured surfaces: slate / red-clay / zinc roofs with mansard dormers, paving slabs, asphalt, granite kerbs, park grass (`python -m cityview.surface_textures` re-renders `assets/surfaces/`)
 - `.blend`, `.glb`, preview renders, and a Three.js viewer
 - GitHub Pages deploy of the Klein Antwerpen orbit viewer
 
