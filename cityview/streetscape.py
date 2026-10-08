@@ -228,6 +228,58 @@ def nearest_road_yaw(x: float, y: float, roads: list[dict[str, Any]]) -> float:
     return yaw
 
 
+DRIVEABLE_ROAD_KINDS = frozenset(
+    {
+        "residential",
+        "living_street",
+        "tertiary",
+        "unclassified",
+        "secondary",
+        "secondary_link",
+    }
+)
+
+
+def export_roads_near_spawn(
+    layout: dict[str, Any],
+    spawn: dict[str, Any] | None,
+    *,
+    radius: float = 280.0,
+    max_roads: int = 60,
+) -> dict[str, Any]:
+    """Lightweight road centreline sample for runtime traffic near spawn."""
+    sx = float(spawn["x"]) if spawn else 0.0
+    sy = float(spawn["y"]) if spawn else 0.0
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for road in layout.get("roads") or []:
+        kind = road.get("kind") or "residential"
+        if kind not in DRIVEABLE_ROAD_KINDS:
+            continue
+        pts = road.get("points") or []
+        if len(pts) < 2:
+            continue
+        dmin = min(_dist(sx, sy, float(p[0]), float(p[1])) for p in pts)
+        if dmin > radius:
+            continue
+        scored.append(
+            (
+                dmin,
+                {
+                    "id": road.get("id"),
+                    "kind": kind,
+                    "width": float(road.get("width") or 6.0),
+                    "points": [[float(p[0]), float(p[1])] for p in pts],
+                },
+            )
+        )
+    scored.sort(key=lambda item: item[0])
+    return {
+        "spawn": {"x": sx, "y": sy},
+        "radius": radius,
+        "roads": [item[1] for item in scored[:max_roads]],
+    }
+
+
 def spawn_from_place(
     place: dict[str, Any],
     origin: tuple[float, float],

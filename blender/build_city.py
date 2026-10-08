@@ -618,7 +618,17 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         )
 
 
-def polyline_mesh(name: str, points: list[list[float]], width: float, z: float = 0.04) -> bpy.types.Mesh | None:
+# Vertical layer stack — enough separation to avoid WebGL Z-fighting at street scale.
+Z_GROUND = -0.15
+Z_ROAD = 0.03
+Z_DASH = 0.055
+Z_ZEBRA = 0.068
+Z_SIDEWALK = 0.09
+Z_CURB = 0.13
+Z_PARK_PATH = 0.045
+
+
+def polyline_mesh(name: str, points: list[list[float]], width: float, z: float = Z_ROAD) -> bpy.types.Mesh | None:
     if len(points) < 2:
         return None
     half = width / 2.0
@@ -644,8 +654,14 @@ def polyline_mesh(name: str, points: list[list[float]], width: float, z: float =
     return mesh
 
 
-def add_road(name: str, points: list[list[float]], width: float, mat: bpy.types.Material) -> bpy.types.Object | None:
-    mesh = polyline_mesh(name, points, width)
+def add_road(
+    name: str,
+    points: list[list[float]],
+    width: float,
+    mat: bpy.types.Material,
+    z: float = Z_ROAD,
+) -> bpy.types.Object | None:
+    mesh = polyline_mesh(name, points, width, z=z)
     if mesh is None:
         return None
     obj = bpy.data.objects.new(name, mesh)
@@ -695,11 +711,9 @@ def add_sidewalks_and_curbs(
         for side, sign in (("L", 1.0), ("R", -1.0)):
             walk = offset_polyline(pts, sign * (half + sidewalk_w * 0.5))
             curb = offset_polyline(pts, sign * (half + 0.12))
-            if add_road(f"sidewalk_{i}_{side}", walk, sidewalk_w, sidewalk_mat):
+            if add_road(f"sidewalk_{i}_{side}", walk, sidewalk_w, sidewalk_mat, z=Z_SIDEWALK):
                 count += 1
-            curb_obj = add_road(f"curb_{i}_{side}", curb, 0.28, curb_mat)
-            if curb_obj:
-                curb_obj.location.z = 0.06
+            if add_road(f"curb_{i}_{side}", curb, 0.28, curb_mat, z=Z_CURB):
                 count += 1
     return count
 
@@ -919,7 +933,7 @@ def add_crosswalks(signal_pts: list[tuple[float, float]], stripe_mat, spawn_xy) 
             along = -2.4 + s * 0.85
             cx = sx + math.cos(yaw) * along
             cy = sy + math.sin(yaw) * along
-            stripe = add_box(f"zebra_{i}_{s}", (0.45, 3.2, 0.04), (cx, cy, 0.07), yaw)
+            stripe = add_box(f"zebra_{i}_{s}", (0.45, 3.2, 0.02), (cx, cy, Z_ZEBRA), yaw)
             assign(stripe, stripe_mat)
             count += 1
     return count
@@ -1089,7 +1103,7 @@ def add_park_amenities(
             [cx, cy],
             [cx + 8.0, cy + 1.5],
         ]
-        if add_road(f"park_path_{park.get('id')}", path_pts, 1.6, path_mat):
+        if add_road(f"park_path_{park.get('id')}", path_pts, 1.6, path_mat, z=Z_PARK_PATH):
             stats["paths"] += 1
         # Hedge segments along every other park edge.
         for ei in range(0, len(ring), 2):
@@ -1158,7 +1172,7 @@ def add_road_dashes(roads: list, spawn_xy: tuple[float, float], dash_mat, max_da
                 x = x0 + (x1 - x0) * (t / seg)
                 y = y0 + (y1 - y0) * (t / seg)
                 if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) <= 160.0:
-                    dash = add_box(f"dash_{placed}", (1.6, 0.14, 0.03), (x, y, 0.055), yaw)
+                    dash = add_box(f"dash_{placed}", (1.6, 0.14, 0.02), (x, y, Z_DASH), yaw)
                     assign(dash, dash_mat)
                     placed += 1
                 t += 7.5
@@ -1235,10 +1249,10 @@ def build(layout: dict) -> None:
     ground = bpy.data.meshes.new("ground")
     ground.from_pydata(
         [
-            (xmin, ymin, -0.15),
-            (xmax, ymin, -0.15),
-            (xmax, ymax, -0.15),
-            (xmin, ymax, -0.15),
+            (xmin, ymin, Z_GROUND),
+            (xmax, ymin, Z_GROUND),
+            (xmax, ymax, Z_GROUND),
+            (xmin, ymax, Z_GROUND),
         ],
         [],
         [(0, 1, 2, 3)],
@@ -1304,7 +1318,7 @@ def build(layout: dict) -> None:
     for i, park in enumerate(layout.get("parks") or []):
         add_ring(f"park_{park.get('id', i)}", park["ring"], 0.0, 0.02, park_mat)
     for i, road in enumerate(layout.get("roads") or []):
-        add_road(f"road_{road.get('id', i)}", road["points"], float(road["width"]), road_mat)
+        add_road(f"road_{road.get('id', i)}", road["points"], float(road["width"]), road_mat, z=Z_ROAD)
 
     walks = add_sidewalks_and_curbs(layout.get("roads") or [], sidewalk_mat, curb_mat, spawn_xy)
     print(f"Sidewalk/curb strips: {walks}")

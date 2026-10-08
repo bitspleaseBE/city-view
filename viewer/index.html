@@ -113,6 +113,7 @@
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { createTraffic } from "./traffic.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -139,7 +140,7 @@
       const camera = new THREE.PerspectiveCamera(
         68,
         window.innerWidth / window.innerHeight,
-        0.12,
+        0.2,
         3500,
       );
       camera.position.set(-218.5, 1.7, -432.1);
@@ -194,6 +195,7 @@
       let prevTime = performance.now();
       let cityRoot = null;
       let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
+      let traffic = { update() {}, dispose() {} };
 
       const walkControls = new PointerLockControls(camera, document.body);
       scene.add(walkControls.getObject());
@@ -306,16 +308,32 @@
         async (gltf) => {
           cityRoot = gltf.scene;
           // Cheap: disable expensive features for FPS; freeze static transforms.
+          // Bias coplanar street layers so markings win without Z-fighting.
+          const layerBias = (name) => {
+            const n = (name || "").toLowerCase();
+            if (n.startsWith("zebra") || n.startsWith("dash")) return { factor: -2, units: 2 };
+            if (n.startsWith("curb")) return { factor: -1, units: 2 };
+            if (n.startsWith("sidewalk")) return { factor: -1, units: 1 };
+            if (n.startsWith("road_") || n === "ground" || n.startsWith("park_path"))
+              return { factor: 1, units: 1 };
+            return null;
+          };
           cityRoot.traverse((obj) => {
             if (obj.isMesh) {
               obj.castShadow = false;
               obj.receiveShadow = false;
               obj.frustumCulled = true;
               if (obj.material) {
+                const bias = layerBias(obj.name);
                 const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
                 for (const m of mats) {
                   if (m) {
                     m.flatShading = true;
+                    if (bias) {
+                      m.polygonOffset = true;
+                      m.polygonOffsetFactor = bias.factor;
+                      m.polygonOffsetUnits = bias.units;
+                    }
                     m.needsUpdate = true;
                   }
                 }
@@ -332,7 +350,12 @@
           if (spawnNode) applySpawnFromNode(spawnNode);
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
-          status.textContent = "Sunny day — click to walk";
+          traffic = await createTraffic(scene, THREE, { count: 18 });
+          const nCars = traffic.count ?? 0;
+          status.textContent =
+            nCars > 0
+              ? `Sunny day — ${nCars} cars on the road · click to walk`
+              : "Sunny day — click to walk";
           // Soften fog once city bounds known
           const box = new THREE.Box3().setFromObject(cityRoot);
           const size = box.getSize(new THREE.Vector3()).length();
@@ -365,6 +388,10 @@
           walkControls.getObject().position.y = eyeHeight;
         }
         if (mode === "free") orbitControls.update();
+
+        const walker =
+          mode === "walk" ? walkControls.getObject() : avatar.visible ? avatar : walkControls.getObject();
+        traffic.update(dt, walker);
 
         renderer.render(scene, camera);
         requestAnimationFrame(tick);
