@@ -2,7 +2,9 @@ name: Deploy Klein Antwerpen to GitHub Pages
 
 on:
   push:
-    branches: [main, klein-antwerpen-2018]
+    # Only main publishes the live site. Feature-branch pushes were cancelling
+    # in-progress main deploys via the shared concurrency group.
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +14,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
