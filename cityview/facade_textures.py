@@ -45,6 +45,128 @@ def _paste_cell(atlas, img, rect):
     atlas.paste(bottom, (x0 - pad, y1))
 
 
+def _seeded_rng(fid: str):
+    import numpy as np
+
+    return np.random.default_rng(kit._stable(f"weather:{fid}"))
+
+
+def _blur(arr, sigma: float):
+    """Separable gaussian blur of a float32 2-D/3-D array (axes 0 and 1)."""
+    import numpy as np
+
+    radius = max(1, int(sigma * 3))
+    xs = np.arange(-radius, radius + 1, dtype="float32")
+    k = np.exp(-(xs**2) / (2 * sigma * sigma))
+    k /= k.sum()
+    out = np.apply_along_axis(lambda m: np.convolve(np.pad(m, radius, mode="edge"), k, mode="valid"), 0, arr)
+    return np.apply_along_axis(lambda m: np.convolve(np.pad(m, radius, mode="edge"), k, mode="valid"), 1, out)
+
+
+def clean_sky(img, fid: str):  # noqa: D401 - see docstring
+    """Replace pale sky wedges beside stepped / curved gables with a slate backdrop.
+
+    The façade quad is a rectangle up to the eaves, so any light sky pixel in the
+    source would render as a white patch. Flood-fill (from the top edge) every
+    low-saturation light pixel in the upper fifth and repaint it as a soft slate
+    gradient, so the gable reads against a neighbouring roof instead of a hole.
+    """
+    import numpy as np
+    from collections import deque
+
+    if fid not in kit.SKY_FACADES:
+        return img, 0.0  # pale flat-roofed / white-render walls must keep their top rows
+    arr = np.asarray(img).astype("float32")
+    h, w, _ = arr.shape
+    mx, mn = arr.max(axis=2), arr.min(axis=2)
+    sat = (mx - mn) / np.maximum(mx, 1.0)
+    sky = (mx > 170) & (sat < 0.10)
+    limit = int(h * 0.22)
+    seen = np.zeros((h, w), dtype=bool)
+    dq = deque((0, x) for x in range(w) if sky[0, x])
+    for _, x in dq:
+        seen[0, x] = True
+    while dq:
+        y, x = dq.popleft()
+        for ny, nx in ((y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)):
+            if 0 <= ny < limit and 0 <= nx < w and sky[ny, nx] and not seen[ny, nx]:
+                seen[ny, nx] = True
+                dq.append((ny, nx))
+    if seen.sum() < 0.004 * h * w:
+        return img, 0.0
+    # Grow one pixel so the anti-aliased gable edge does not keep a pale halo.
+    grown = seen.copy()
+    grown[1:, :] |= seen[:-1, :]
+    grown[:-1, :] |= seen[1:, :]
+    grown[:, 1:] |= seen[:, :-1]
+    grown[:, :-1] |= seen[:, 1:]
+    grown &= (mx > 120) & (sat < 0.2)
+    top = np.array([104.0, 108.0, 116.0], dtype="float32")
+    low = np.array([78.0, 80.0, 88.0], dtype="float32")
+    t = np.clip(np.arange(h, dtype="float32") / max(1, limit), 0, 1)[:, None, None]
+    backdrop = top * (1 - t) + low * t
+    soft = _blur(grown.astype("float32"), 0.8)[..., None]
+    out = arr * (1 - soft) + backdrop * soft
+    from PIL import Image
+
+    return Image.fromarray(np.clip(out, 0, 255).astype("uint8")), float(seen.mean())
+
+
+def weather_facade(img, fid: str):
+    """Bake a century of Antwerp grime into one elevation (seeded per façade).
+
+    * damp / splash-back darkening and warm soot along the plinth,
+    * soot under the cornice, blotchy low-frequency tonal variation,
+    * rain streaks falling from sills and string courses.
+    Everything is multiplicative and subtle: the photo-real elevation stays
+    readable, it just stops looking freshly rendered.
+    """
+    import numpy as np
+    from PIL import Image
+
+    rng = _seeded_rng(fid)
+    arr = np.asarray(img).astype("float32") / 255.0
+    h, w, _ = arr.shape
+    yy = np.linspace(0.0, 1.0, h, dtype="float32")[:, None]
+
+    shade = np.ones((h, w), dtype="float32")
+    # Ground grime: rising damp + splash-back fades out over the lowest ~16 %.
+    grime_h = 0.16
+    g = np.clip((yy - (1.0 - grime_h)) / grime_h, 0.0, 1.0)
+    shade *= 1.0 - 0.34 * g * g
+    # Wet line: a crisp tide mark where splash-back stops (varies along the wall).
+    tide = (1.0 - 0.055 - 0.02 * _blur(rng.random((1, w)).astype("float32"), 6.0)[0] * 8.0)[None, :]
+    shade *= 1.0 - 0.07 * np.exp(-(((yy - tide) / 0.006) ** 2))
+    # Soot under the cornice.
+    soot = np.clip((0.06 - yy) / 0.06, 0.0, 1.0)
+    shade *= 1.0 - 0.14 * soot
+
+    # Low-frequency blotches (two octaves) so repeated houses never look identical.
+    blot = np.zeros((h, w), dtype="float32")
+    for sigma, amp in ((26.0, 0.10), (9.0, 0.05)):
+        n = _blur(rng.standard_normal((h, w)).astype("float32"), sigma)
+        n /= max(float(np.abs(n).max()), 1e-6)
+        blot += n * amp
+    shade *= 1.0 + blot
+
+    # Rain streaks: narrow, long, blurred, fading downward.
+    streaks = np.zeros((h, w), dtype="float32")
+    for _ in range(max(6, w // 14)):
+        x = int(rng.integers(3, w - 3))
+        y0 = int(rng.integers(int(h * 0.05), int(h * 0.75)))
+        ln = int(rng.integers(int(h * 0.08), int(h * 0.30)))
+        wd = int(rng.integers(1, 4))
+        fade = np.linspace(1.0, 0.15, min(ln, h - y0), dtype="float32")
+        streaks[y0 : y0 + len(fade), max(0, x - wd // 2) : x + wd // 2 + 1] += fade[:, None] * rng.uniform(0.05, 0.14)
+    streaks = _blur(streaks, 1.1)
+    shade *= 1.0 - np.clip(streaks, 0.0, 0.22)
+
+    # Warm soot tint grows with the same grime field (browner near the ground).
+    tint = np.stack([1.0 + 0.0 * g, 1.0 - 0.05 * g, 1.0 - 0.14 * g], axis=-1)
+    out = arr * shade[..., None] * tint
+    return Image.fromarray(np.clip(out * 255.0, 0, 255).astype("uint8"))
+
+
 def build_atlas(src_dir: Path = FACADES_DIR, out_dir: Path = TEXTURES_DIR) -> Path:
     _need_pillow()
     from PIL import Image, ImageEnhance
@@ -56,6 +178,8 @@ def build_atlas(src_dir: Path = FACADES_DIR, out_dir: Path = TEXTURES_DIR) -> Pa
         img = Image.open(src_dir / facade["file"]).convert("RGB")
         img = img.resize((kit.CELL_INNER_W, kit.CELL_INNER_H), Image.LANCZOS)
         img = ImageEnhance.Contrast(img).enhance(1.05)
+        img, _sky = clean_sky(img, fid)
+        img = weather_facade(img, fid)
         _paste_cell(atlas, img, kit.cell_pixel_rect(fid))
     path = out_dir / kit.ATLAS_FILE
     atlas.save(path, quality=86, optimize=True, progressive=False)

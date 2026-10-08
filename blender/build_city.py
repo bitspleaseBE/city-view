@@ -18,7 +18,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from cityview import facade_kit, surface_kit  # noqa: E402
-from cityview import climbers, railclear  # noqa: E402
+from cityview import climbers, kerbs, railclear  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 
 _BLENDER_DIR = str(Path(__file__).resolve().parent)
@@ -47,7 +47,9 @@ PARK_TINT = (0.42, 0.36, 0.46)
 ROOF_AERIAL = surface_kit.load_roof_aerial()  # per-building roof family + tint measured from the orthophoto
 SURFACES_DIR = Path(_REPO_ROOT) / "assets" / surface_kit.TEXTURES_DIRNAME  # procedural roofs / paving / grass
 PHOTO_MAT_SLOT = 7  # material slot of the atlas on façade meshes
-STATS = {"photo_quads": 0, "photo_edges": 0}
+DOORSTEP_MAT = None  # shared granite doorstep material, set in build()
+DOORSTEP_MAT_SLOT = 8  # right after the atlas slot
+STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0}
 
 
 # Century-old Harmonie palette: stylish but lived-in, not showroom clean.
@@ -846,6 +848,26 @@ def _append_climber(
     return len(plant["leaves"])
 
 
+def _append_doorstep(bm, ox, oy, ux, uy, nx, ny, a, door_w, off, variant: int) -> int:
+    """Stone doorstep in front of a photo-façade door (slot DOORSTEP_MAT_SLOT = granite).
+
+    ``a`` is the door centre along the edge (metres from the edge midpoint),
+    ``off`` the distance of the photo plane from the skin centre line.
+    variant 0: two treads (wide lower step + narrower upper step);
+    variant 1: one deep block step with a worn threshold slab on top.
+    """
+    yaw = math.atan2(uy, ux)
+    cx, cy = ox + ux * a, oy + uy * a
+    w = max(0.8, min(2.0, door_w))
+    if variant == 0:
+        _append_box(bm, cx + nx * (off + 0.30), cy + ny * (off + 0.30), 0.13, w * 1.45, 0.52, 0.26, yaw, DOORSTEP_MAT_SLOT)
+        _append_box(bm, cx + nx * (off + 0.15), cy + ny * (off + 0.15), 0.19, w * 1.22, 0.28, 0.38, yaw, DOORSTEP_MAT_SLOT)
+    else:
+        _append_box(bm, cx + nx * (off + 0.28), cy + ny * (off + 0.28), 0.15, w * 1.35, 0.5, 0.30, yaw, DOORSTEP_MAT_SLOT)
+        _append_box(bm, cx + nx * (off + 0.12), cy + ny * (off + 0.12), 0.315, w * 1.1, 0.24, 0.03, yaw, DOORSTEP_MAT_SLOT)
+    return 1
+
+
 def add_photo_facade(
     name: str,
     p0: list[float],
@@ -889,6 +911,7 @@ def add_photo_facade(
     mesh.materials.append(ivy_mats[accent_seed % len(ivy_mats)] if ivy_mats else mats["plinth"][mat_key])
     mesh.materials.append(shutter_mats[accent_seed % len(shutter_mats)] if shutter_mats else mats["frame"][mat_key])
     mesh.materials.append(FACADE_PHOTO_MAT)  # slot PHOTO_MAT_SLOT
+    mesh.materials.append(DOORSTEP_MAT or mats["plinth"][mat_key])  # slot DOORSTEP_MAT_SLOT
     climber_base = _climber_mat_base(mesh, mats, climber)
 
     bm = bmesh.new()
@@ -923,6 +946,17 @@ def add_photo_facade(
             uvs = [uvs[1], uvs[0], uvs[3], uvs[2]]
         _append_photo_quad(bm, uv_layer, pts, uvs, PHOTO_MAT_SLOT)
         STATS["photo_quads"] += 1
+
+    # Doorsteps: stone treads in front of every front door in the elevations, so
+    # entrances stand proud of the pavement (pavement top is Z_SIDEWALK ~ 12 cm).
+    first_step_face = len(bm.faces)
+    for door in facade_kit.door_steps(quads, rightwards=rightwards):
+        STATS["door_steps"] += _append_doorstep(
+            bm, ox, oy, ux, uy, nx, ny, door["a"] - half, door["w"], off, int(door["side"])
+        )
+    if len(bm.faces) > first_step_face:
+        bm.normal_update()
+        apply_planar_uvs(list(bm.faces)[first_step_face:], uv_layer, surface_kit.surface_tile_m("curb"))
 
     # Rare climbing plant (planned per street in build(); most façades have none).
     if climber_base is not None and climber is not None and detail == "full":
@@ -1442,8 +1476,8 @@ Z_ROAD = 0.04
 Z_PARK_PATH = 0.05
 Z_DASH = 0.07  # box centre; 2 cm thick
 Z_ZEBRA = 0.07  # box centre; 2 cm thick
-Z_SIDEWALK = 0.09
-Z_CURB = 0.12
+Z_SIDEWALK = kerbs.PAVEMENT_TOP  # raised pavement, a hair below the kerb top
+Z_CURB = 0.12  # legacy flat-ribbon height (unused by the 3-D kerb)
 Z_TRAM_BED = 0.14
 Z_TRAM_RAIL = 0.18
 Z_ZEBRA_ON_RAIL = 0.22  # zebra stripe pieces that cross a rail corridor
@@ -1527,6 +1561,38 @@ def offset_polyline(points: list[list[float]], offset: float) -> list[list[float
     return out
 
 
+def add_kerb_prism(
+    name: str,
+    run: list[list[float]],
+    mat,
+    road_edge_is_left: bool,
+    uv_tile_m: float | None,
+) -> bpy.types.Object | None:
+    """A real stone kerb: top, road-facing riser, pavement face and end caps."""
+    if len(run) < 2:
+        return None
+    verts, faces, uvs, _kinds = kerbs.kerb_profile(
+        run,
+        kerbs.KERB_WIDTH,
+        kerbs.Z_ROAD_SURFACE - 0.005,
+        kerbs.KERB_TOP,
+        road_edge_is_left,
+        uv_tile_m or 1.6,
+    )
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    li = 0
+    for poly in mesh.polygons:
+        for loop in poly.loop_indices:
+            uv_layer.data[loop].uv = uvs[li]
+            li += 1
+    obj = bpy.data.objects.new(name, mesh)
+    assign(link(obj), mat)
+    return obj
+
+
 def add_sidewalks_and_curbs(
     roads: list,
     sidewalk_mat,
@@ -1535,9 +1601,14 @@ def add_sidewalks_and_curbs(
     sidewalk_tile_m: float | None = None,
     curb_tile_m: float | None = None,
 ) -> int:
-    """Sidewalk ribbons + low curbs. Prefer roads near the human spawn for FPS."""
+    """Raised pavement ribbons + stone kerbs. Prefer roads near the human spawn for FPS.
+
+    Kerbs and pavements are cut where another carriageway joins (a dropped-kerb
+    mouth) so a side street is never walled off by the main road's kerb.
+    """
     count = 0
     sidewalk_w = 2.0
+    carriageways = kerbs.CarriagewayIndex(roads)
     for i, road in enumerate(roads):
         kind = road.get("kind") or "residential"
         if kind in {"footway", "path", "cycleway", "steps"}:
@@ -1554,16 +1625,24 @@ def add_sidewalks_and_curbs(
             walk = offset_polyline(pts, sign * (half + sidewalk_w * 0.5))
             curb = offset_polyline(pts, sign * (half + 0.12))
             # Never lay pavement/kerb over a tram bed (shared tram streets).
-            for ri, run in enumerate(railclear.clear_runs(walk, RAILS, railclear.CLEAR_SIDEWALK)):
-                if add_road(
-                    f"sidewalk_{i}_{side}_{ri}", run, sidewalk_w, sidewalk_mat, z=Z_SIDEWALK, uv_tile_m=sidewalk_tile_m
-                ):
-                    count += 1
-            for ri, run in enumerate(railclear.clear_runs(curb, RAILS, railclear.CLEAR_CURB)):
-                if add_road(
-                    f"curb_{i}_{side}_{ri}", run, 0.28, curb_mat, z=Z_CURB, uv_tile_m=curb_tile_m
-                ):
-                    count += 1
+            for ri, rail_run in enumerate(railclear.clear_runs(walk, RAILS, railclear.CLEAR_SIDEWALK)):
+                for ji, run in enumerate(kerbs.split_at_carriageways(rail_run, carriageways, i, 0.0)):
+                    if add_road(
+                        f"sidewalk_{i}_{side}_{ri}_{ji}",
+                        run,
+                        sidewalk_w,
+                        sidewalk_mat,
+                        z=Z_SIDEWALK,
+                        uv_tile_m=sidewalk_tile_m,
+                    ):
+                        count += 1
+            # Road lies to the right of a ribbon offset to the left (sign +1), and vice versa.
+            for ri, rail_run in enumerate(railclear.clear_runs(curb, RAILS, railclear.CLEAR_CURB)):
+                for ji, run in enumerate(kerbs.split_at_carriageways(rail_run, carriageways, i, -0.1)):
+                    if add_kerb_prism(
+                        f"curb_{i}_{side}_{ri}_{ji}", run, curb_mat, sign < 0, curb_tile_m
+                    ):
+                        count += 1
     return count
 
 
@@ -2409,9 +2488,10 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     merge_building_types(types_doc)
     if types_doc:
         print(f"Building types loaded: {len(types_doc.get('types') or {})}")
-    global RAILS, TYPES_DOC, FACADE_PHOTO_MAT
+    global RAILS, TYPES_DOC, FACADE_PHOTO_MAT, DOORSTEP_MAT
     TYPES_DOC = types_doc
     STATS["photo_quads"] = 0
+    STATS["door_steps"] = 0
     STATS["photo_edges"] = 0
     atlas_img = load_texture(TEXTURES_DIR / facade_kit.ATLAS_FILE)
     FACADE_PHOTO_MAT = (
@@ -2461,6 +2541,8 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     road_mat = surface_mat("asphalt", "asphalt", (0.08, 0.08, 0.09, 1.0), 0.96)
     sidewalk_mat = surface_mat("sidewalk", "sidewalk", (0.55, 0.54, 0.50, 1.0), 0.95)
     curb_mat = surface_mat("curb", "curb", (0.42, 0.41, 0.38, 1.0), 0.9)
+    # Doorsteps: the same granite, a touch bluer and darker (arduin) so they read against the plinth.
+    DOORSTEP_MAT = surface_mat("curb", "doorstep", (0.36, 0.36, 0.38, 1.0), 0.88, tint=(0.82, 0.84, 0.88))
     # Roof families: slate / clay pantiles / zinc / bitumen. Each family gets one material per
     # aerial-measured tint cluster (roof_aerial.json); fallback tints if the file is missing.
     roof_tex: dict[str, list] = {}
@@ -2681,7 +2763,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Aerial-matched roofs: {ROOF_STATS}")
     print(
         f"Photo facades: {STATS['photo_edges']} street edges, {STATS['photo_quads']} textured quads "
-        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'})"
+        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'}); doorsteps: {STATS['door_steps']}"
     )
 
     setup_world()

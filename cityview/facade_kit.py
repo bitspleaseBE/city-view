@@ -144,6 +144,31 @@ TYPE_WALL_TILE: dict[str, str] = {
 }
 DEFAULT_TYPE = "eclectic"
 
+# Elevations whose source image shows pale sky beside a stepped / curved gable
+# (the quad is rectangular, so the atlas repaints that sky as a slate backdrop).
+SKY_FACADES = frozenset({"facade_06", "facade_16", "facade_50"})
+
+# Front doors read off the 50 elevations: (centre, width) as fractions of the
+# image width, left to right. Elevations without a street-level entrance (upper
+# storeys only, roller-shutter garages, shop fronts) are simply absent. The
+# builder puts stone doorsteps in front of these so entrances stand proud of the
+# pavement instead of being a flat picture.
+DOORS: dict[str, tuple[float, float]] = {
+    "facade_01": (0.11, 0.12), "facade_02": (0.30, 0.13), "facade_03": (0.50, 0.14),
+    "facade_04": (0.20, 0.10), "facade_05": (0.41, 0.14), "facade_06": (0.28, 0.14),
+    "facade_10": (0.28, 0.15), "facade_13": (0.80, 0.13), "facade_17": (0.62, 0.15),
+    "facade_19": (0.78, 0.15), "facade_20": (0.62, 0.15), "facade_21": (0.10, 0.12),
+    "facade_22": (0.52, 0.10), "facade_23": (0.38, 0.13), "facade_24": (0.23, 0.15),
+    "facade_25": (0.64, 0.16), "facade_26": (0.27, 0.17), "facade_27": (0.65, 0.12),
+    "facade_28": (0.47, 0.10), "facade_30": (0.63, 0.12), "facade_31": (0.77, 0.10),
+    "facade_32": (0.50, 0.14), "facade_33": (0.30, 0.14), "facade_34": (0.62, 0.15),
+    "facade_35": (0.70, 0.15), "facade_36": (0.78, 0.12), "facade_37": (0.50, 0.15),
+    "facade_39": (0.56, 0.14), "facade_40": (0.55, 0.13), "facade_41": (0.63, 0.10),
+    "facade_42": (0.20, 0.14), "facade_43": (0.55, 0.12), "facade_44": (0.58, 0.14),
+    "facade_45": (0.78, 0.15), "facade_46": (0.78, 0.12), "facade_47": (0.45, 0.14),
+    "facade_48": (0.20, 0.12), "facade_49": (0.50, 0.14), "facade_50": (0.92, 0.12),
+}
+
 # Terrace width target: a long edge is cut into houses about this wide.
 TARGET_HOUSE_M = 6.4
 MIN_CROP_FRAC = 0.5
@@ -286,6 +311,40 @@ def plan_facade_quads(
             }
         )
     return quads
+
+
+def door_steps(
+    quads: list[dict[str, Any]], rightwards: bool = True, min_edge_frac: float = 0.06
+) -> list[dict[str, float]]:
+    """Doorstep placements for planned façade quads.
+
+    Returns ``[{"a": metres along the edge from its start, "w": door width in
+    metres, "side": 0/1 (which of two stoop styles)}]``. Positions follow the
+    image mapping (never mirrored; ``rightwards`` says whether ``u`` grows with
+    ``a`` for this edge's orientation), including the cropped slice shown on
+    narrow edges.
+    """
+    out: list[dict[str, float]] = []
+    for q in quads:
+        door = DOORS.get(q["cell"])
+        if not door:
+            continue
+        centre, width_frac = door
+        cu0, _cv0, cu1, _cv1 = cell_uv_rect(q["cell"])
+        u0, _v0, u1, _v1 = q["uv"]
+        span = cu1 - cu0
+        if span <= 0:
+            continue
+        f0, f1 = (u0 - cu0) / span, (u1 - cu0) / span  # visible slice of the elevation
+        if not (f0 + min_edge_frac <= centre <= f1 - min_edge_frac):
+            continue  # door is cropped out of view on this narrow edge
+        t = (centre - f0) / max(1e-6, f1 - f0)
+        # ``rightwards`` False: the quad is drawn with u falling as ``a`` grows.
+        a = q["a0"] + (t if rightwards else 1.0 - t) * (q["a1"] - q["a0"])
+        # metres per unit of image width on this quad (the slice may be a crop)
+        width_m = width_frac * (q["a1"] - q["a0"]) / max(1e-6, f1 - f0)
+        out.append({"a": a, "w": width_m, "side": float(_stable(f"{q['cell']}:{q['a0']:.2f}") % 2)})
+    return out
 
 
 def annotate_types_document(doc: dict[str, Any]) -> dict[str, Any]:
