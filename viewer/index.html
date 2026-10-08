@@ -374,14 +374,20 @@
         async (gltf) => {
           cityRoot = gltf.scene;
           // Cheap: disable expensive features for FPS; freeze static transforms.
-          // Bias coplanar street layers so markings win without Z-fighting.
+          // Coplanar street layers: bias is monotone with the Blender height stack
+          // (Z_GROUND < Z_PARK < Z_ROAD < markings < sidewalk < curb < tram bed < rails
+          // < zebra-on-rails), so the offset can never invert the stack at distance.
           const layerBias = (name) => {
             const n = (name || "").toLowerCase();
-            if (n.startsWith("zebra") || n.startsWith("dash")) return { factor: -2, units: 2 };
-            if (n.startsWith("curb")) return { factor: -1, units: 2 };
-            if (n.startsWith("sidewalk")) return { factor: -1, units: 1 };
-            if (n.startsWith("road_") || n === "ground" || n.startsWith("park_path"))
-              return { factor: 1, units: 1 };
+            if (n.startsWith("zebra_rail")) return { factor: -5, units: -5 };
+            if (n.startsWith("rail_")) return { factor: -4, units: -4 };
+            if (n.startsWith("tram_")) return { factor: -3, units: -3 };
+            if (n.startsWith("curb")) return { factor: -2, units: -2 };
+            if (n.startsWith("sidewalk")) return { factor: -1, units: -1 };
+            if (n.startsWith("zebra") || n.startsWith("dash")) return { factor: 0, units: 0 };
+            if (n.startsWith("road_") || n.startsWith("park_path")) return { factor: 1, units: 1 };
+            if (n.startsWith("park_")) return { factor: 2, units: 2 };
+            if (n === "ground") return { factor: 3, units: 3 };
             return null;
           };
           cityRoot.traverse((obj) => {
@@ -391,6 +397,13 @@
               obj.frustumCulled = true;
               if (obj.material) {
                 const bias = layerBias(obj.name);
+                // zebra_rail pieces share the stripe material with plain zebras but need a
+                // different bias, so give them a private copy.
+                if (bias && (obj.name || "").toLowerCase().startsWith("zebra_rail")) {
+                  obj.material = Array.isArray(obj.material)
+                    ? obj.material.map((m) => m.clone())
+                    : obj.material.clone();
+                }
                 const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
                 const n = (obj.name || "").toLowerCase();
                 const isFacade =

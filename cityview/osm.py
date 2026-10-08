@@ -134,6 +134,27 @@ ROUTE_MODES = {
 }
 
 
+def _is_underground(tags: dict[str, str]) -> bool:
+    """Tunnelled / sub-surface ways (Antwerp premetro) must not be drawn at grade."""
+    if tags.get("tunnel") in {"yes", "building_passage", "culvert"}:
+        return True
+    try:
+        return int(str(tags.get("layer", "0")).split(";")[0]) < 0
+    except ValueError:
+        return False
+
+
+def _pedestrian_crossing_kind(tags: dict[str, str]) -> str | None:
+    """OSM node tags for a marked pedestrian crossing (or tram/rail level crossing)."""
+    if tags.get("highway") == "crossing":
+        if tags.get("crossing") in {"unmarked", "no"}:
+            return None
+        return "signals" if tags.get("crossing") == "traffic_signals" else "marked"
+    if tags.get("railway") in {"crossing", "tram_crossing", "level_crossing"}:
+        return "rail"
+    return None
+
+
 def _split_refs(raw: str | None) -> list[str]:
     if not raw:
         return []
@@ -522,6 +543,7 @@ def layout_from_osm(
                     "refs": refs,
                     "name": tags.get("name") or "",
                     "source": "osm",
+                    "tunnel": _is_underground(tags),
                 }
             )
             # Tram tracks are not roads; continue so they are not double-counted.
@@ -607,6 +629,7 @@ def layout_from_osm(
                     parks.append({"id": int(rel["id"]) * 100 + i, "ring": ring, "name": tags.get("name") or ""})
 
     signals: list[dict[str, Any]] = []
+    crossings: list[dict[str, Any]] = []
     for node in nodes.values():
         tags = node.get("tags") or {}
         lat = float(node["lat"])
@@ -616,6 +639,11 @@ def layout_from_osm(
             tags.get("highway") == "crossing" and tags.get("crossing") == "traffic_signals"
         ):
             signals.append({"id": int(node["id"]), "x": x, "y": y, "kind": "traffic_signals"})
+        crossing_kind = _pedestrian_crossing_kind(tags)
+        if crossing_kind:
+            crossings.append(
+                {"id": int(node["id"]), "x": round(x, 3), "y": round(y, 3), "kind": crossing_kind}
+            )
         mode = _stop_mode(tags)
         if mode:
             role = "platform" if tags.get("public_transport") == "platform" else "stop"
@@ -639,6 +667,7 @@ def layout_from_osm(
         "water": water,
         "parks": parks,
         "signals": signals,
+        "crossings": crossings,
         "transit_lines": transit_lines,
         "transit_stops": _dedupe_stops(transit_stops_raw),
     }

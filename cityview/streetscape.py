@@ -719,6 +719,10 @@ def export_transit_near_spawn(
         pts = line.get("points") or []
         if len(pts) < 2:
             continue
+        # Premetro/tunnel ways are underground: runtime vehicles must not
+        # drive them at street level.
+        if line.get("tunnel"):
+            continue
         dmin = min(_dist(sx, sy, float(p[0]), float(p[1])) for p in pts)
         if dmin > radius:
             continue

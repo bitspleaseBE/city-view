@@ -198,7 +198,8 @@ function placeVehicle(v, paths, THREE) {
     v.pos.x += v.tan.z * 1.1;
     v.pos.z += -v.tan.x * 1.1;
   }
-  v.pos.y = v.mode === "tram" ? 1.15 : 1.35;
+  // Tram body (2.2 m tall) rides on top of the rails (Z_TRAM_RAIL = 0.18 in build_city.py).
+  v.pos.y = v.mode === "tram" ? 1.3 : 1.35;
   v.mesh.position.copy(v.pos);
   v.mesh.rotation.y = Math.atan2(v.tan.x, v.tan.z);
 }
