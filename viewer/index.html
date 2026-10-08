@@ -126,10 +126,11 @@
     </style>
   </head>
   <body>
-    <div id="hint">Walk: click + WASD · Shift sprint · E tram · V free</div>
+    <div id="hint">Walk: click + WASD · Shift sprint · E tram · V free · N day/night</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Walk</button>
       <button type="button" id="btn-free">Free view</button>
+      <button type="button" id="btn-night" aria-pressed="false">Night</button>
     </div>
     <div id="status">Loading sunny Klein Antwerpen…</div>
     <div id="ride">
@@ -163,6 +164,7 @@
       const hint = document.getElementById("hint");
       const btnWalk = document.getElementById("btn-walk");
       const btnFree = document.getElementById("btn-free");
+      const btnNight = document.getElementById("btn-night");
       const rideEl = document.getElementById("ride");
       const rideLine = document.getElementById("ride-line");
       const rideNext = document.getElementById("ride-next");
@@ -180,13 +182,27 @@
       skyCanvas.width = 2;
       skyCanvas.height = 256;
       const skyCtx = skyCanvas.getContext("2d");
-      const grad = skyCtx.createLinearGradient(0, 0, 0, 256);
-      grad.addColorStop(0, "#4aa0ff");
-      grad.addColorStop(0.45, "#6eb6ff");
-      grad.addColorStop(0.78, "#a8d4ff");
-      grad.addColorStop(1, "#d8e8f4");
-      skyCtx.fillStyle = grad;
-      skyCtx.fillRect(0, 0, 2, 256);
+      // Zenith → horizon stops for day, dusk (horizon glow) and night; blended by paintSky().
+      const SKY_DAY = ["#4aa0ff", "#6eb6ff", "#a8d4ff", "#d8e8f4"];
+      const SKY_DUSK = ["#2b3a6e", "#7a5a8c", "#e8935c", "#ffc98a"];
+      const SKY_NIGHT = ["#03060f", "#08101f", "#101c34", "#1d2c46"];
+      const _c0 = new THREE.Color();
+      const _c1 = new THREE.Color();
+      function skyStop(i, t) {
+        // t: 0 day → 1 night, passing through a dusk band around t ≈ 0.5.
+        if (t < 0.5) return _c0.set(SKY_DAY[i]).lerp(_c1.set(SKY_DUSK[i]), t * 2).getStyle();
+        return _c0.set(SKY_DUSK[i]).lerp(_c1.set(SKY_NIGHT[i]), (t - 0.5) * 2).getStyle();
+      }
+      function paintSky(t) {
+        const grad = skyCtx.createLinearGradient(0, 0, 0, 256);
+        grad.addColorStop(0, skyStop(0, t));
+        grad.addColorStop(0.45, skyStop(1, t));
+        grad.addColorStop(0.78, skyStop(2, t));
+        grad.addColorStop(1, skyStop(3, t));
+        skyCtx.fillStyle = grad;
+        skyCtx.fillRect(0, 0, 2, 256);
+      }
+      paintSky(0);
       const skyTex = new THREE.CanvasTexture(skyCanvas);
       skyTex.colorSpace = THREE.SRGBColorSpace;
       scene.background = skyTex;
@@ -215,7 +231,8 @@
       scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
       pmrem.dispose();
 
-      scene.add(new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85));
+      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85);
+      scene.add(hemi);
       const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
       sun.position.set(220, 320, -160);
       scene.add(sun);
@@ -237,6 +254,154 @@
       );
       sunHaze.position.copy(sunMesh.position);
       scene.add(sunHaze);
+      // ---- Day / night -------------------------------------------------------------
+      // `tod` eases 0 (sunny day) → 1 (night). Everything below is a pure function of it:
+      // sky, fog, sun/moon + ambient light, façade window glow, street lamps (emissive heads
+      // plus a few pooled point lights that follow the walker), car lamps and tram windows.
+      const SUN_COL = new THREE.Color(0xfff2d6);
+      const SUN_DUSK = new THREE.Color(0xff9a52);
+      const MOON_COL = new THREE.Color(0x8fa6d8);
+      const HEMI_SKY_DAY = new THREE.Color(0xb8d8ff);
+      const HEMI_SKY_NIGHT = new THREE.Color(0x3a4f86);
+      const HEMI_GND_DAY = new THREE.Color(0xb8a48a);
+      const HEMI_GND_NIGHT = new THREE.Color(0x1a1c26);
+      const FOG_NIGHT = new THREE.Color(0x0d1527);
+      const FOG_DUSK = new THREE.Color(0xd9a07c);
+      const CLEAR_DAY = new THREE.Color(SKY);
+      const SUN_DAY_POS = new THREE.Vector3(220, 320, -160);
+      const MOON_POS = new THREE.Vector3(-260, 300, 180);
+      const _tmpCol = new THREE.Color();
+      const smooth = (a, b, x) => {
+        const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+        return u * u * (3 - 2 * u);
+      };
+      let tod = new URLSearchParams(location.search).has("night") ? 1 : 0;
+      let todTarget = tod;
+      let todApplied = -1;
+      let baseFogDensity = 0.00055; // retuned to the district size after the GLB loads
+      let skirtMat = null;
+      const glowMats = []; // { mat, scale }: emissive intensity = scale * glow(t)
+      const lampHeads = []; // world positions of street-lamp heads
+      const LAMP_LIGHTS = 4;
+      const lampLights = [];
+      for (let i = 0; i < LAMP_LIGHTS; i++) {
+        const l = new THREE.PointLight(0xffc27a, 0, 24, 1.6);
+        l.visible = false;
+        scene.add(l);
+        lampLights.push(l);
+      }
+      // Stars: a sparse dome that rides with the camera and fades in with the night.
+      const starGeo = new THREE.BufferGeometry();
+      {
+        const n = 700;
+        const pos = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+          const u = Math.random() * 2 - 1;
+          const a = Math.random() * Math.PI * 2;
+          const r = Math.sqrt(1 - u * u);
+          const y = Math.abs(u) * 0.9 + 0.1; // upper hemisphere only
+          pos[i * 3] = Math.cos(a) * r * 2200;
+          pos[i * 3 + 1] = y * 2200;
+          pos[i * 3 + 2] = Math.sin(a) * r * 2200;
+        }
+        starGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      }
+      const starMat = new THREE.PointsMaterial({
+        color: 0xdfe8ff,
+        size: 3.2,
+        sizeAttenuation: false,
+        transparent: true,
+        opacity: 0,
+        fog: false,
+        depthWrite: false,
+      });
+      const stars = new THREE.Points(starGeo, starMat);
+      stars.frustumCulled = false;
+      stars.visible = false;
+      scene.add(stars);
+
+      // Debug / screenshot hook (no behaviour): window.__cityview.setNight(true), .camera, .walk
+      window.__cityview = { camera, setNight: setTimeOfDay, get tod() { return tod; }, get walk() { return walkControls; } };
+
+      function applyTimeOfDay(t) {
+        const night = smooth(0.35, 0.95, t); // lights come on a little after the sun is down
+        const dayAmt = 1 - smooth(0.0, 0.7, t);
+        const dusk = Math.max(0, 1 - Math.abs(t - 0.45) / 0.45); // warm band mid-transition
+        paintSky(t);
+        skyTex.needsUpdate = true;
+
+        // Fog + clear colour follow the horizon.
+        _tmpCol.set(FOG_COLOR).lerp(FOG_DUSK, dusk * 0.6).lerp(FOG_NIGHT, smooth(0.3, 0.9, t));
+        scene.fog.color.copy(_tmpCol);
+        renderer.setClearColor(_tmpCol, 1);
+        scene.fog.density = baseFogDensity * (1 + 0.5 * night);
+
+        renderer.toneMappingExposure = 1.18 - 0.1 * night;
+        scene.environmentIntensity = 1 - 0.86 * smooth(0.05, 0.8, t);
+
+        hemi.color.copy(HEMI_SKY_DAY).lerp(HEMI_SKY_NIGHT, night);
+        hemi.groundColor.copy(HEMI_GND_DAY).lerp(HEMI_GND_NIGHT, night);
+        hemi.intensity = 0.85 - 0.62 * night;
+
+        // One directional light plays the sun by day and the moon by night.
+        sun.color.copy(SUN_COL).lerp(SUN_DUSK, dusk).lerp(MOON_COL, smooth(0.5, 0.9, t));
+        sun.intensity = 1.35 * dayAmt + 0.3 * smooth(0.5, 1.0, t);
+        sun.position.lerpVectors(SUN_DAY_POS, MOON_POS, smooth(0.2, 0.8, t));
+        sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
+        sunHaze.position.copy(sunMesh.position);
+        sunMesh.material.color.set(0xffe7a0).lerp(_tmpCol.set(0xdfe6f5), smooth(0.4, 0.9, t));
+        sunMesh.scale.setScalar(1 - 0.45 * smooth(0.4, 0.9, t));
+        sunHaze.material.color.set(0xffe8b0).lerp(_tmpCol.set(0x8fa6d8), smooth(0.4, 0.9, t));
+        sunHaze.material.opacity = 0.18 + 0.1 * dusk;
+        fill.intensity = 0.35 - 0.2 * night;
+
+        // Façade windows + lamp heads glow; cars and trams follow.
+        const glow = smooth(0.4, 0.9, t);
+        for (const g of glowMats) g.mat.emissiveIntensity = g.scale * glow;
+        for (const l of lampLights) l.intensity = 38 * glow;
+        traffic.setNight && traffic.setNight(glow);
+        transit.setNight && transit.setNight(glow);
+
+        starMat.opacity = smooth(0.55, 1.0, t) * 0.9;
+        stars.visible = starMat.opacity > 0.01;
+        skirtMat && skirtMat.color.set(GROUND_SKIRT).lerp(_tmpCol.set(0x23252b), night);
+
+        const isNight = t > 0.5;
+        btnNight.textContent = isNight ? "Day" : "Night";
+        btnNight.setAttribute("aria-pressed", String(isNight));
+        btnNight.classList.toggle("active", isNight);
+        todApplied = t;
+      }
+      function setTimeOfDay(night) {
+        todTarget = night ? 1 : 0;
+      }
+      function toggleTimeOfDay() {
+        setTimeOfDay(todTarget < 0.5);
+      }
+      btnNight.addEventListener("click", toggleTimeOfDay);
+      const _lampSort = new THREE.Vector3();
+      let lampClock = 0;
+      function updateLampLights(dt, walker) {
+        if (todApplied < 0.4 || !lampHeads.length) {
+          for (const l of lampLights) l.visible = false;
+          return;
+        }
+        lampClock -= dt;
+        if (lampClock > 0) return;
+        lampClock = 0.35;
+        const p = walker.position;
+        // Nearest lamps to the walker get the real light; the rest stay glowing heads.
+        const near = lampHeads
+          .map((h) => ({ h, d: (h.x - p.x) ** 2 + (h.z - p.z) ** 2 }))
+          .sort((a, b) => a.d - b.d)
+          .slice(0, LAMP_LIGHTS);
+        lampLights.forEach((l, i) => {
+          const n = near[i];
+          l.visible = !!n && n.d < 70 * 70;
+          if (n) l.position.set(n.h.x, n.h.y - 0.25, n.h.z);
+        });
+      }
+
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;
       const walkSpeed = 7.5;
@@ -286,14 +451,12 @@
 
         // One cheap skirt plane so looking past the GLB ground isn't a black hole.
         const skirtSpan = Math.max(size.x, size.z) * 2.8;
-        const skirt = new THREE.Mesh(
-          new THREE.CircleGeometry(skirtSpan * 0.5, 48),
-          new THREE.MeshLambertMaterial({
-            color: GROUND_SKIRT,
-            fog: true,
-            depthWrite: true,
-          }),
-        );
+        skirtMat = new THREE.MeshLambertMaterial({
+          color: GROUND_SKIRT,
+          fog: true,
+          depthWrite: true,
+        });
+        const skirt = new THREE.Mesh(new THREE.CircleGeometry(skirtSpan * 0.5, 48), skirtMat);
         skirt.rotation.x = -Math.PI / 2;
         skirt.position.set(center.x, box.min.y - 0.35, center.z);
         skirt.receiveShadow = false;
@@ -304,7 +467,8 @@
         // Soft haze: fade distant district edge into sky, not black void.
         const diag = size.length();
         scene.fog.color.setHex(FOG_COLOR);
-        scene.fog.density = Math.max(0.00035, Math.min(0.00085, 1.15 / diag));
+        baseFogDensity = Math.max(0.00035, Math.min(0.00085, 1.15 / diag));
+        scene.fog.density = baseFogDensity;
         // Free view: top-down overview height that frames the whole district.
         const fitH = Math.max(size.z, size.x / Math.max(0.5, camera.aspect)) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
         freeCam.height = THREE.MathUtils.clamp(fitH * 0.85, 140, 1400);
@@ -392,7 +556,7 @@
           }
           walkControls.getObject().position.y = eyeHeight;
           softClampXZ(walkControls.getObject().position, playBounds);
-          hint.textContent = "Walk: click + WASD · E tram · Esc · V free";
+          hint.textContent = "Walk: click + WASD · E tram · Esc · V free · N night";
           status.textContent = "Walking — Gounod tram halt";
         } else {
           if (walkControls.isLocked) walkControls.unlock();
@@ -410,7 +574,7 @@
           freeCam.z = walkSaved.z;
           softClampXZ(freeCam, playBounds);
           applyFreeCamera();
-          hint.textContent = "Free view (top-down): WASD pan · Shift fast · scroll zoom · V walk";
+          hint.textContent = "Free view (top-down): WASD pan · Shift fast · scroll zoom · V walk · N night";
           status.textContent = "Free view";
         }
       }
@@ -421,7 +585,7 @@
         softClampXZ(walkControls.getObject().position, playBounds);
         rideEl.style.display = "none";
         promptEl.style.display = "none";
-        hint.textContent = "Walk: click + WASD · E tram · Esc · V free";
+        hint.textContent = "Walk: click + WASD · E tram · Esc · V free · N night";
         status.textContent = "Back on the street";
         if (mode === "walk" && !walkControls.isLocked) {
           // Keep unlocked until click — pointer lock after ride is flaky mid-frame.
@@ -482,16 +646,20 @@
         if (!walkControls.isLocked) walkControls.lock();
       });
       walkControls.addEventListener("lock", () => {
-        hint.textContent = "WASD · mouse look · Esc · V free view";
+        hint.textContent = "WASD · mouse look · Esc · V free view · N night";
       });
       walkControls.addEventListener("unlock", () => {
-        if (mode === "walk") hint.textContent = "Walk: click + WASD · V free view";
+        if (mode === "walk") hint.textContent = "Walk: click + WASD · V free view · N night";
       });
 
       window.addEventListener("keydown", (e) => {
         if (e.code === "KeyE") {
           e.preventDefault();
           handleTransitE();
+          return;
+        }
+        if (e.code === "KeyN") {
+          toggleTimeOfDay();
           return;
         }
         if (e.code === "KeyV") {
@@ -589,6 +757,8 @@
                   } else if (isFacade && m.roughness != null) {
                     m.envMapIntensity = 0.35;
                   }
+                  if (m.emissiveMap) glowMats.push({ mat: m, scale: 1.55 }); // lit windows
+                  else if (m.name === "lamp_head") glowMats.push({ mat: m, scale: 2.6 }); // street lamps
                   if (bias) {
                     m.polygonOffset = true;
                     m.polygonOffsetFactor = bias.factor;
@@ -603,6 +773,9 @@
           cityRoot.updateMatrixWorld(true);
           cityRoot.traverse((obj) => {
             obj.matrixAutoUpdate = false;
+            if (obj.isMesh && /^lamp_h_/i.test(obj.name || "")) {
+              lampHeads.push(new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld));
+            }
           });
           const spawnNode = cityRoot.getObjectByName("HumanSpawn");
           const spawnJson = await loadSpawnJson();
@@ -620,9 +793,10 @@
           if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
           status.textContent =
             bits.length > 0
-              ? `Sunny day — ${bits.join(" · ")} · E boards the tram`
+              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · E boards the tram`
               : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
+          applyTimeOfDay(tod);
         },
         undefined,
         (err) => {
@@ -662,6 +836,13 @@
 
         const walker =
           mode === "walk" ? walkControls.getObject() : avatar.visible ? avatar : walkControls.getObject();
+        if (Math.abs(tod - todTarget) > 1e-4) {
+          const step = dt / 2.4;
+          tod = tod < todTarget ? Math.min(todTarget, tod + step) : Math.max(todTarget, tod - step);
+          applyTimeOfDay(tod);
+        }
+        updateLampLights(dt, walker);
+        if (stars.visible) stars.position.copy(camera.position);
         traffic.update(dt, walker);
         transit.update(dt, walker);
 
