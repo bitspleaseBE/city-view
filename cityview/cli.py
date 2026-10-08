@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from cityview.building_types import attach_palettes, write_building_types
+from cityview.gtfs_delijn import enrich_layout_transit
 from cityview.jobs import add_photo_building, load_scene, resolve_photo, write_job
 from cityview.osm import fetch_osm, layout_from_osm
 from cityview.paths import (
@@ -15,12 +17,17 @@ from cityview.paths import (
     DEFAULT_BLENDER,
     DEFAULT_PLACES,
     DEFAULT_SCENE,
+    GTFS_CACHE,
     OSM_CACHE,
     OUTPUT,
     ROOT,
     VIEWER,
 )
-from cityview.streetscape import export_roads_near_spawn, spawn_from_place
+from cityview.streetscape import (
+    export_roads_near_spawn,
+    export_transit_near_spawn,
+    spawn_from_place,
+)
 
 
 def blender_bin() -> Path:
@@ -116,17 +123,44 @@ def city_command(args: argparse.Namespace) -> int:
         cache.unlink()
     osm = fetch_osm(bbox, cache)
     layout = layout_from_osm(osm, origin, style_policy=style_policy)
+    gtfs_key = (place.get("osm_cache") if place else None) or place_name
+    gtfs_cache = GTFS_CACHE / f"delijn_{gtfs_key}.json"
+    if args.refresh and gtfs_cache.exists():
+        gtfs_cache.unlink()
+    enrich_layout_transit(
+        layout,
+        origin,
+        bbox,
+        gtfs_cache,
+        refresh=bool(args.refresh),
+    )
+    types_path = write_building_types()
+    attach_palettes(layout)
     spawn = spawn_from_place(place, origin, layout) if place else None
     if spawn:
         layout["spawn"] = spawn
     edged = sum(1 for b in layout["buildings"] if b.get("street_edges"))
+    type_counts: dict[str, int] = {}
+    for b in layout["buildings"]:
+        tid = b.get("building_type") or b.get("style") or "?"
+        type_counts[tid] = type_counts.get(tid, 0) + 1
+    n_lines = len(layout.get("transit_lines") or [])
+    n_stops = len(layout.get("transit_stops") or [])
+    meta = layout.get("transit_meta") or {}
     print(
         f"{place_name}: {len(layout['buildings'])} buildings, "
         f"{len(layout['roads'])} roads, {len(layout['water'])} water, "
         f"{len(layout.get('parks') or [])} parks, "
-        f"{edged} with street facades "
+        f"{edged} with street facades, "
+        f"{n_lines} transit lines, {n_stops} stops "
         f"(style_policy={style_policy})"
     )
+    if meta:
+        print(
+            f"De Lijn: matched {meta.get('matched_stops', 0)}/{meta.get('gtfs_stops', 0)} stops, "
+            f"{meta.get('bus_paths_added', 0)} bus paths from GTFS"
+        )
+    print(f"building types: {types_path.name} — " + ", ".join(f"{k}={v}" for k, v in sorted(type_counts.items())))
     if spawn:
         print(
             f"spawn {spawn['label']}: "
@@ -148,6 +182,7 @@ def city_command(args: argparse.Namespace) -> int:
         "render": not args.no_render,
         "layout_path": str(layout_path),
         "style_policy": style_policy,
+        "building_types_path": str(types_path),
     }
     if spawn:
         job["spawn"] = spawn
@@ -171,6 +206,13 @@ def city_command(args: argparse.Namespace) -> int:
     roads_path = VIEWER / "roads.json"
     roads_path.write_text(json.dumps(roads_payload) + "\n")
     print(f"Wrote {roads_path} ({len(roads_payload['roads'])} roads near spawn)")
+    transit_payload = export_transit_near_spawn(layout, spawn)
+    transit_path = VIEWER / "transit.json"
+    transit_path.write_text(json.dumps(transit_payload) + "\n")
+    print(
+        f"Wrote {transit_path} "
+        f"({len(transit_payload['paths'])} paths, {len(transit_payload['stops'])} stops near spawn)"
+    )
     print(f"Outputs in {output_dir}")
     return 0
 

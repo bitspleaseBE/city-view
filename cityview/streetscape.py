@@ -59,12 +59,98 @@ def roof_shape_for(tags: dict[str, str], style: str, osm_id: int) -> str:
 
     if style in {"international", "art-deco", "modern-infill", "white-modern", "prefab-70s"}:
         return "flat"
-    if style in {"neo-flemish", "art-nouveau"}:
+    if style in {"neo-flemish", "art-nouveau", "red-brick"}:
         return "gable" if (osm_id % 3) else "mansard"
+    if style == "yellow-brick":
+        return "gable" if (osm_id % 2) else "mansard"
     if style == "neo-gothic":
         return "hip"
-    # neoclassical / eclectic default: mansard or gable
+    # neoclassical / eclectic / cream-tile default: mansard or gable
     return "mansard" if (osm_id % 5) < 3 else "gable"
+
+
+def ring_signed_area(ring: list[list[float]]) -> float:
+    n = len(ring)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        area += x1 * y2 - x2 * y1
+    return area * 0.5
+
+
+def point_in_ring(x: float, y: float, ring: list[list[float]]) -> bool:
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / ((y2 - y1) or 1e-12) + x1):
+            inside = not inside
+    return inside
+
+
+def footprint_supports_prism_roof(ring: list[list[float]], min_fill: float = 0.82) -> bool:
+    """True when an OBB gable/hip prism stays mostly inside the wall ring.
+
+    L-shaped / concave / highly irregular footprints fail — use mansard/flat instead.
+    """
+    if len(ring) < 3:
+        return False
+    cx, cy = _centroid(ring)
+    cov_xx = cov_xy = cov_yy = 0.0
+    for x, y in ring:
+        dx, dy = x - cx, y - cy
+        cov_xx += dx * dx
+        cov_xy += dx * dy
+        cov_yy += dy * dy
+    n = max(1, len(ring))
+    cov_xx /= n
+    cov_xy /= n
+    cov_yy /= n
+    trace = cov_xx + cov_yy
+    det = cov_xx * cov_yy - cov_xy * cov_xy
+    gap = math.sqrt(max(0.0, trace * trace * 0.25 - det))
+    l1 = trace * 0.5 + gap
+    if abs(cov_xy) > 1e-9:
+        ux, uy = l1 - cov_yy, cov_xy
+    else:
+        ux, uy = (1.0, 0.0) if cov_xx >= cov_yy else (0.0, 1.0)
+    ulen = math.hypot(ux, uy) or 1.0
+    ux, uy = ux / ulen, uy / ulen
+    vx, vy = -uy, ux
+    hu = hv = 0.0
+    for x, y in ring:
+        dx, dy = x - cx, y - cy
+        hu = max(hu, abs(dx * ux + dy * uy))
+        hv = max(hv, abs(dx * vx + dy * vy))
+    if hu < hv:
+        ux, uy, vx, vy = vx, vy, ux, uy
+        hu, hv = hv, hu
+    hu = max(hu, 0.8)
+    hv = max(hv, 0.8)
+    ring_area = abs(ring_signed_area(ring))
+    obb_area = 4.0 * hu * hv
+    if obb_area < 1e-3:
+        return False
+    if ring_area / obb_area < min_fill:
+        return False
+    # Near-corner samples of the OBB must lie inside the footprint.
+    for su, sv in ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)):
+        ix = cx + su * hu * 0.92 * ux + sv * hv * 0.92 * vx
+        iy = cy + su * hu * 0.92 * uy + sv * hv * 0.92 * vy
+        if not point_in_ring(ix, iy, ring):
+            return False
+    return True
+
+
+def safe_roof_shape(shape: str, ring: list[list[float]]) -> str:
+    """Demote gable/hip to mansard when the footprint cannot host an OBB prism."""
+    if shape in {"gable", "hip"} and not footprint_supports_prism_roof(ring):
+        return "mansard"
+    return shape
 
 
 def height_truth(tags: dict[str, str]) -> tuple[float, float, int]:
@@ -277,6 +363,68 @@ def export_roads_near_spawn(
         "spawn": {"x": sx, "y": sy},
         "radius": radius,
         "roads": [item[1] for item in scored[:max_roads]],
+    }
+
+
+def export_transit_near_spawn(
+    layout: dict[str, Any],
+    spawn: dict[str, Any] | None,
+    *,
+    radius: float = 280.0,
+    max_paths: int = 48,
+    max_stops: int = 40,
+) -> dict[str, Any]:
+    """Transit paths + stops near spawn for runtime trams/buses."""
+    sx = float(spawn["x"]) if spawn else 0.0
+    sy = float(spawn["y"]) if spawn else 0.0
+    path_scored: list[tuple[float, dict[str, Any]]] = []
+    for line in layout.get("transit_lines") or []:
+        pts = line.get("points") or []
+        if len(pts) < 2:
+            continue
+        dmin = min(_dist(sx, sy, float(p[0]), float(p[1])) for p in pts)
+        if dmin > radius:
+            continue
+        lines = list(line.get("lines") or line.get("refs") or [])
+        path_scored.append(
+            (
+                dmin,
+                {
+                    "id": line.get("id"),
+                    "mode": line.get("mode") or "bus",
+                    "lines": lines,
+                    "points": [[float(p[0]), float(p[1])] for p in pts],
+                },
+            )
+        )
+    path_scored.sort(key=lambda item: item[0])
+
+    stop_scored: list[tuple[float, dict[str, Any]]] = []
+    for stop in layout.get("transit_stops") or []:
+        x = float(stop.get("x") or 0.0)
+        y = float(stop.get("y") or 0.0)
+        d = _dist(sx, sy, x, y)
+        if d > radius:
+            continue
+        stop_scored.append(
+            (
+                d,
+                {
+                    "id": stop.get("id"),
+                    "mode": stop.get("mode") or "bus",
+                    "name": stop.get("name") or "",
+                    "lines": list(stop.get("lines") or stop.get("refs") or []),
+                    "x": x,
+                    "y": y,
+                },
+            )
+        )
+    stop_scored.sort(key=lambda item: item[0])
+    return {
+        "spawn": {"x": sx, "y": sy},
+        "radius": radius,
+        "paths": [item[1] for item in path_scored[:max_paths]],
+        "stops": [item[1] for item in stop_scored[:max_stops]],
     }
 
 
