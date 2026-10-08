@@ -112,7 +112,6 @@
       import * as THREE from "three";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
-      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
       import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
       import { createTraffic } from "./traffic.js";
       import { createTransit } from "./transit.js";
@@ -257,8 +256,11 @@
         const diag = size.length();
         scene.fog.color.setHex(FOG_COLOR);
         scene.fog.density = Math.max(0.00035, Math.min(0.00085, 1.15 / diag));
-        // Free view can orbit the district but not fly into deep void.
-        orbitControls.maxDistance = Math.min(900, Math.max(180, Math.max(size.x, size.z) * 0.85));
+        // Free view: top-down overview height that frames the whole district.
+        const fitH = Math.max(size.z, size.x / Math.max(0.5, camera.aspect)) / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
+        freeCam.height = THREE.MathUtils.clamp(fitH * 0.85, 140, 1400);
+        freeCam.maxH = THREE.MathUtils.clamp(fitH * 1.25, 220, 1800);
+        freeCam.minH = 35;
       }
 
       const walkControls = new PointerLockControls(camera, document.body);
@@ -275,35 +277,90 @@
       avatar.visible = false;
       scene.add(avatar);
 
-      const orbitControls = new OrbitControls(camera, renderer.domElement);
-      orbitControls.enableDamping = true;
-      orbitControls.maxPolarAngle = Math.PI * 0.49;
-      orbitControls.minDistance = 2;
-      orbitControls.maxDistance = 1400;
-      orbitControls.enabled = false;
+      // Free view: locked top-down (no pitch/orbit). WASD / drag pans on XZ, wheel zooms height.
+      const freeCam = { x: 0, z: 0, height: 320, minH: 35, maxH: 700 };
+      const walkSaved = { x: 0, z: 0, yaw: 0 };
+      const UP_WORLD = new THREE.Vector3(0, 1, 0);
+      const UP_TOPDOWN = new THREE.Vector3(0, 0, -1); // north (-Z) is screen-up
+
+      function applyFreeCamera() {
+        camera.up.copy(UP_TOPDOWN);
+        camera.position.set(freeCam.x, freeCam.height, freeCam.z);
+        camera.lookAt(freeCam.x, 0, freeCam.z);
+      }
+
+      function panFree(dx, dz) {
+        freeCam.x += dx;
+        freeCam.z += dz;
+        softClampXZ(freeCam, playBounds);
+      }
+
+      renderer.domElement.addEventListener(
+        "wheel",
+        (e) => {
+          if (mode !== "free") return;
+          e.preventDefault();
+          freeCam.height = THREE.MathUtils.clamp(
+            freeCam.height * Math.exp(e.deltaY * 0.001),
+            freeCam.minH,
+            freeCam.maxH,
+          );
+        },
+        { passive: false },
+      );
+      let freeDrag = null;
+      renderer.domElement.addEventListener("pointerdown", (e) => {
+        if (mode !== "free" || e.button !== 0) return;
+        freeDrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        renderer.domElement.setPointerCapture(e.pointerId);
+      });
+      renderer.domElement.addEventListener("pointermove", (e) => {
+        if (!freeDrag || e.pointerId !== freeDrag.id || mode !== "free") return;
+        const wpp = (2 * freeCam.height * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / window.innerHeight;
+        panFree(-(e.clientX - freeDrag.x) * wpp, -(e.clientY - freeDrag.y) * wpp);
+        freeDrag.x = e.clientX;
+        freeDrag.y = e.clientY;
+      });
+      const endFreeDrag = (e) => {
+        if (freeDrag && e.pointerId === freeDrag.id) freeDrag = null;
+      };
+      renderer.domElement.addEventListener("pointerup", endFreeDrag);
+      renderer.domElement.addEventListener("pointercancel", endFreeDrag);
 
       function setMode(next) {
+        const prevMode = mode;
         mode = next;
         btnWalk.classList.toggle("active", mode === "walk");
         btnFree.classList.toggle("active", mode === "free");
         if (mode === "walk") {
-          orbitControls.enabled = false;
           avatar.visible = false;
+          if (prevMode === "free") {
+            // Leave top-down: restore the walker's spot and an upright camera.
+            camera.up.copy(UP_WORLD);
+            camera.rotation.set(0, walkSaved.yaw, 0, "YXZ");
+            walkControls.getObject().position.set(walkSaved.x, eyeHeight, walkSaved.z);
+          }
           walkControls.getObject().position.y = eyeHeight;
           softClampXZ(walkControls.getObject().position, playBounds);
           hint.textContent = "Walk: click + WASD · Esc release · V free view";
           status.textContent = "Walking — Gounodstraat 13";
         } else {
           if (walkControls.isLocked) walkControls.unlock();
-          orbitControls.enabled = true;
           const p = walkControls.getObject().position;
           softClampXZ(p, playBounds);
-          avatar.position.set(p.x, 0, p.z);
-          avatar.rotation.y = walkControls.getObject().rotation.y;
+          if (prevMode !== "free") {
+            walkSaved.x = p.x;
+            walkSaved.z = p.z;
+            walkSaved.yaw = walkControls.getObject().rotation.y;
+          }
+          avatar.position.set(walkSaved.x, 0, walkSaved.z);
+          avatar.rotation.y = walkSaved.yaw;
           avatar.visible = true;
-          orbitControls.target.set(p.x, 1.2, p.z);
-          camera.position.set(p.x - 12, 8, p.z - 12);
-          hint.textContent = "Free view: drag orbit · scroll zoom · V walk";
+          freeCam.x = walkSaved.x;
+          freeCam.z = walkSaved.z;
+          softClampXZ(freeCam, playBounds);
+          applyFreeCamera();
+          hint.textContent = "Free view (top-down): WASD pan · Shift fast · scroll zoom · V walk";
           status.textContent = "Free view";
         }
       }
@@ -479,20 +536,10 @@
           softClampXZ(walkControls.getObject().position, playBounds);
         }
         if (mode === "free") {
-          orbitControls.update();
-          if (playBounds) {
-            softClampXZ(orbitControls.target, playBounds);
-            // Keep camera horizontally near the district; allow height for overview.
-            _clampTmp.copy(camera.position);
-            softClampXZ(_clampTmp, {
-              minX: playBounds.minX - 40,
-              maxX: playBounds.maxX + 40,
-              minZ: playBounds.minZ - 40,
-              maxZ: playBounds.maxZ + 40,
-            });
-            camera.position.x = _clampTmp.x;
-            camera.position.z = _clampTmp.z;
-          }
+          const panStep = freeCam.height * 0.9 * (keys.shift ? 2.2 : 1.0) * dt;
+          // Screen-up is north (-Z); W pans toward it.
+          panFree(((keys.d ? 1 : 0) - (keys.a ? 1 : 0)) * panStep, ((keys.s ? 1 : 0) - (keys.w ? 1 : 0)) * panStep);
+          applyFreeCamera();
         }
 
         const walker =
