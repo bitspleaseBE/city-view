@@ -119,10 +119,10 @@
       const btnWalk = document.getElementById("btn-walk");
       const btnFree = document.getElementById("btn-free");
 
-      const SKY = 0x6eb6ff;
+      const SKY = 0x5eb0ff;
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(SKY);
-      scene.fog = new THREE.Fog(SKY, 90, 780);
+      scene.fog = new THREE.FogExp2(SKY, 0.00115);
 
       const camera = new THREE.PerspectiveCamera(
         68,
@@ -133,11 +133,11 @@
       camera.position.set(-218.5, 1.7, -432.1);
 
       const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.2;
+      renderer.toneMappingExposure = 1.28;
       document.body.appendChild(renderer.domElement);
 
       // Hemisphere = blue sky + warm ground bounce
@@ -279,6 +279,10 @@
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
           status.textContent = "Sunny day — click to walk";
+          // Soften fog once city bounds known
+          const box = new THREE.Box3().setFromObject(cityRoot);
+          const size = box.getSize(new THREE.Vector3()).length();
+          scene.fog.density = Math.max(0.0007, Math.min(0.0016, 2.2 / size));
         },
         undefined,
         (err) => {

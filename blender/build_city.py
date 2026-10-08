@@ -495,9 +495,9 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     detail = "full"
     if spawn_xy is not None:
         dist = math.hypot(cx - spawn_xy[0], cy - spawn_xy[1])
-        if dist > 180.0:
+        if dist > 140.0:
             detail = "simple"
-        if dist > 420.0:
+        if dist > 360.0:
             # Far LOD1 colour blocks only — still keep roofs.
             return
 
@@ -552,6 +552,116 @@ def add_road(name: str, points: list[list[float]], width: float, mat: bpy.types.
     obj = bpy.data.objects.new(name, mesh)
     assign(link(obj), mat)
     return obj
+
+
+def offset_polyline(points: list[list[float]], offset: float) -> list[list[float]]:
+    """Offset a polyline to the left of travel direction by `offset` metres."""
+    if len(points) < 2:
+        return []
+    out: list[list[float]] = []
+    for i, (x, y) in enumerate(points):
+        if i == 0:
+            dx, dy = points[1][0] - x, points[1][1] - y
+        elif i == len(points) - 1:
+            dx, dy = x - points[i - 1][0], y - points[i - 1][1]
+        else:
+            dx, dy = points[i + 1][0] - points[i - 1][0], points[i + 1][1] - points[i - 1][1]
+        length = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / length, dx / length
+        out.append([x + nx * offset, y + ny * offset])
+    return out
+
+
+def add_sidewalks_and_curbs(
+    roads: list,
+    sidewalk_mat,
+    curb_mat,
+    spawn_xy: tuple[float, float] | None,
+) -> int:
+    """Sidewalk ribbons + low curbs. Prefer roads near the human spawn for FPS."""
+    count = 0
+    sidewalk_w = 2.0
+    for i, road in enumerate(roads):
+        kind = road.get("kind") or "residential"
+        if kind in {"footway", "path", "cycleway", "steps"}:
+            continue
+        pts = road.get("points") or []
+        if len(pts) < 2:
+            continue
+        if spawn_xy is not None:
+            mid = pts[len(pts) // 2]
+            if math.hypot(mid[0] - spawn_xy[0], mid[1] - spawn_xy[1]) > 320.0:
+                continue
+        half = float(road.get("width") or 6.0) * 0.5
+        for side, sign in (("L", 1.0), ("R", -1.0)):
+            walk = offset_polyline(pts, sign * (half + sidewalk_w * 0.5))
+            curb = offset_polyline(pts, sign * (half + 0.12))
+            if add_road(f"sidewalk_{i}_{side}", walk, sidewalk_w, sidewalk_mat):
+                count += 1
+            curb_obj = add_road(f"curb_{i}_{side}", curb, 0.28, curb_mat)
+            if curb_obj:
+                curb_obj.location.z = 0.06
+                count += 1
+    return count
+
+
+def add_parked_cars(
+    roads: list,
+    spawn_xy: tuple[float, float],
+    body_mats: list,
+    glass_mat,
+    max_cars: int = 36,
+) -> int:
+    """GTA3-simple parked cars along kerbs near spawn only."""
+    placed = 0
+    for ri, road in enumerate(roads):
+        kind = road.get("kind") or "residential"
+        if kind not in {"residential", "living_street", "tertiary", "unclassified", "secondary"}:
+            continue
+        pts = road.get("points") or []
+        if len(pts) < 2:
+            continue
+        half = float(road.get("width") or 6.0) * 0.5
+        # Park on the right kerb line.
+        kerb = offset_polyline(pts, -(half - 1.1))
+        dist_acc = 0.0
+        for i in range(len(kerb) - 1):
+            x0, y0 = kerb[i]
+            x1, y1 = kerb[i + 1]
+            seg = math.hypot(x1 - x0, y1 - y0)
+            yaw = math.atan2(y1 - y0, x1 - x0)
+            t = 0.0
+            while t < seg:
+                if placed >= max_cars:
+                    return placed
+                x = x0 + (x1 - x0) * (t / seg if seg else 0)
+                y = y0 + (y1 - y0) * (t / seg if seg else 0)
+                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 140.0:
+                    t += 16.0
+                    continue
+                # Skip every other slot for rhythm / gaps.
+                slot = placed + ri
+                if slot % 3 == 0:
+                    t += 7.5
+                    continue
+                body = add_box(
+                    f"car_{placed}",
+                    (4.2, 1.75, 1.45),
+                    (x, y, 0.72),
+                    yaw,
+                )
+                assign(body, body_mats[placed % len(body_mats)])
+                cabin = add_box(
+                    f"car_g_{placed}",
+                    (2.0, 1.55, 0.7),
+                    (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 1.45),
+                    yaw,
+                )
+                assign(cabin, glass_mat)
+                placed += 1
+                t += 14.0 + (slot % 5) * 0.8
+            dist_acc += seg
+    return placed
 
 
 def bounds(layout: dict) -> tuple[float, float, float, float]:
@@ -640,13 +750,21 @@ def add_park_vegetation(parks: list, trunk_mat, canopy_mat, bush_mat) -> int:
             h = 5.5 + (u * 4.0)
             trunk = add_box(f"tree_t_{park.get('id')}_{i}", (0.28, 0.28, h * 0.45), (x, y, h * 0.22), 0.0)
             assign(trunk, trunk_mat)
+            # Dual canopy blobs read richer from street level without heavy meshes.
             canopy = add_box(
                 f"tree_c_{park.get('id')}_{i}",
-                (2.2 + v, 2.2 + u, 2.4 + v),
-                (x, y, h * 0.55),
+                (2.6 + v, 2.5 + u, 2.8 + v * 0.5),
+                (x, y, h * 0.58),
                 u * 0.4,
             )
             assign(canopy, canopy_mat)
+            canopy2 = add_box(
+                f"tree_c2_{park.get('id')}_{i}",
+                (1.8 + u, 2.0 + v, 1.9),
+                (x + (u - 0.5) * 0.8, y + (v - 0.5) * 0.8, h * 0.72),
+                v * 0.6,
+            )
+            assign(canopy2, canopy_mat)
             placed += 1
         for i in range(n_bushes):
             if placed >= max_trees + max_bushes:
@@ -755,9 +873,11 @@ def build(layout: dict) -> None:
     water_mat = principled("water", (0.18, 0.32, 0.42, 1.0), 0.12)
     park_mat = principled("park", (0.28, 0.48, 0.26, 1.0), 0.92)
     road_mat = principled("asphalt", (0.08, 0.08, 0.09, 1.0), 0.96)
+    sidewalk_mat = principled("sidewalk", (0.55, 0.54, 0.50, 1.0), 0.95)
+    curb_mat = principled("curb", (0.42, 0.41, 0.38, 1.0), 0.9)
     trunk_mat = principled("trunk", (0.28, 0.18, 0.10, 1.0), 0.9)
-    canopy_mat = principled("canopy", (0.22, 0.42, 0.18, 1.0), 0.85)
-    bush_mat = principled("bush", (0.26, 0.40, 0.16, 1.0), 0.9)
+    canopy_mat = principled("canopy", (0.20, 0.40, 0.16, 1.0), 0.85)
+    bush_mat = principled("bush", (0.24, 0.38, 0.14, 1.0), 0.9)
     pole_mat = principled("pole", (0.18, 0.18, 0.18, 1.0), 0.5, metallic=0.4)
     housing_mat = principled("tl_housing", (0.08, 0.08, 0.08, 1.0), 0.45, metallic=0.35)
     lamp_mats = [
@@ -765,6 +885,14 @@ def build(layout: dict) -> None:
         principled("tl_amber", (0.9, 0.55, 0.08, 1.0), 0.25),
         principled("tl_green", (0.12, 0.7, 0.22, 1.0), 0.25),
     ]
+    car_mats = [
+        principled("car_black", (0.08, 0.08, 0.09, 1.0), 0.35, metallic=0.45),
+        principled("car_silver", (0.55, 0.55, 0.56, 1.0), 0.3, metallic=0.55),
+        principled("car_red", (0.45, 0.08, 0.06, 1.0), 0.35, metallic=0.35),
+        principled("car_blue", (0.12, 0.18, 0.35, 1.0), 0.35, metallic=0.4),
+        principled("car_cream", (0.72, 0.68, 0.55, 1.0), 0.4, metallic=0.25),
+    ]
+    car_glass = principled("car_glass", (0.35, 0.42, 0.48, 1.0), 0.12, metallic=0.1)
 
     mats = {
         "wall": {n: principled(f"wall_{n}", s["wall"], 0.92) for n, s in STYLES.items()},
@@ -775,12 +903,18 @@ def build(layout: dict) -> None:
         "trim": {n: principled(f"trim_{n}", s["trim"], 0.78) for n, s in STYLES.items()},
     }
 
+    spawn = layout.get("spawn") or {}
+    spawn_xy = (float(spawn["x"]), float(spawn["y"])) if spawn.get("x") is not None else None
+
     for i, pond in enumerate(layout.get("water") or []):
         add_ring(f"water_{pond.get('id', i)}", pond["ring"], 0.0, -0.04, water_mat)
     for i, park in enumerate(layout.get("parks") or []):
         add_ring(f"park_{park.get('id', i)}", park["ring"], 0.0, 0.02, park_mat)
     for i, road in enumerate(layout.get("roads") or []):
         add_road(f"road_{road.get('id', i)}", road["points"], float(road["width"]), road_mat)
+
+    walks = add_sidewalks_and_curbs(layout.get("roads") or [], sidewalk_mat, curb_mat, spawn_xy)
+    print(f"Sidewalk/curb strips: {walks}")
 
     veg = add_park_vegetation(layout.get("parks") or [], trunk_mat, canopy_mat, bush_mat)
     print(f"Park vegetation props: {veg}")
@@ -790,8 +924,10 @@ def build(layout: dict) -> None:
         add_traffic_light(f"signal_{i}", sx, sy, pole_mat, housing_mat, lamp_mats)
     print(f"Traffic lights: {len(signal_pts)}")
 
-    spawn = layout.get("spawn") or {}
-    spawn_xy = (float(spawn["x"]), float(spawn["y"])) if spawn.get("x") is not None else None
+    if spawn_xy is not None:
+        cars = add_parked_cars(layout.get("roads") or [], spawn_xy, car_mats, car_glass)
+        print(f"Parked cars near spawn: {cars}")
+
     for bldg in layout.get("buildings") or []:
         add_building(bldg, mats, spawn_xy=spawn_xy)
 
