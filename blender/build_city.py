@@ -19,6 +19,11 @@ if _REPO_ROOT not in sys.path:
 from cityview import climbers, railclear  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 
+_BLENDER_DIR = str(Path(__file__).resolve().parent)
+if _BLENDER_DIR not in sys.path:
+    sys.path.insert(0, _BLENDER_DIR)
+import trees_blender  # noqa: E402
+
 # Surface rail corridors for the current build (set in build()).
 RAILS: RailIndex = RailIndex([])
 
@@ -1349,89 +1354,6 @@ def _point_in_ring(x: float, y: float, ring: list[list[float]]) -> bool:
     return inside
 
 
-def add_park_vegetation(parks: list, trunk_mat, canopy_mats: list, bush_mats: list) -> int:
-    """Simple trees + bushes inside park polygons. Capped for browser FPS."""
-    placed = 0
-    max_trees = 260
-    max_bushes = 200
-    for park in parks:
-        ring = park.get("ring") or []
-        if len(ring) < 3:
-            continue
-        xs = [p[0] for p in ring]
-        ys = [p[1] for p in ring]
-        minx, maxx = min(xs), max(xs)
-        miny, maxy = min(ys), max(ys)
-        area = abs(sum(ring[i][0] * ring[(i + 1) % len(ring)][1] - ring[(i + 1) % len(ring)][0] * ring[i][1] for i in range(len(ring)))) * 0.5
-        n_trees = max(3, min(36, int(area / 650)))
-        n_bushes = max(4, min(48, int(area / 380)))
-        seed = int(park.get("id") or 1)
-        trees_here = 0
-        attempts = 0
-        while trees_here < n_trees and placed < max_trees and attempts < n_trees * 8:
-            attempts += 1
-            i = attempts
-            u = ((seed * 1103515245 + i * 12345) & 0x7FFFFFFF) / 0x7FFFFFFF
-            v = ((seed * 1664525 + i * 1013904223) & 0x7FFFFFFF) / 0x7FFFFFFF
-            x = minx + u * (maxx - minx)
-            y = miny + v * (maxy - miny)
-            if not _point_in_ring(x, y, ring):
-                continue
-            if RAILS.within(x, y, railclear.CLEAR_TREE):
-                continue
-            h = 5.5 + (u * 4.5)
-            leaf = canopy_mats[trees_here % len(canopy_mats)]
-            trunk = add_box(f"tree_t_{park.get('id')}_{i}", (0.28, 0.28, h * 0.45), (x, y, h * 0.22), 0.0)
-            assign(trunk, trunk_mat)
-            canopy = add_box(
-                f"tree_c_{park.get('id')}_{i}",
-                (2.8 + v, 2.7 + u, 3.0 + v * 0.5),
-                (x, y, h * 0.58),
-                u * 0.4,
-            )
-            assign(canopy, leaf)
-            canopy2 = add_box(
-                f"tree_c2_{park.get('id')}_{i}",
-                (2.0 + u, 2.2 + v, 2.1),
-                (x + (u - 0.5) * 0.9, y + (v - 0.5) * 0.9, h * 0.74),
-                v * 0.6,
-            )
-            assign(canopy2, leaf)
-            if trees_here % 3 == 0:
-                canopy3 = add_box(
-                    f"tree_c3_{park.get('id')}_{i}",
-                    (1.5 + v * 0.4, 1.6, 1.5),
-                    (x - (u - 0.5) * 0.6, y - (v - 0.5) * 0.5, h * 0.66),
-                    u,
-                )
-                assign(canopy3, leaf)
-            placed += 1
-            trees_here += 1
-        bushes_here = 0
-        attempts = 0
-        while bushes_here < n_bushes and placed < max_trees + max_bushes and attempts < n_bushes * 8:
-            attempts += 1
-            i = attempts
-            u = ((seed * 214013 + i * 2531011) & 0x7FFFFFFF) / 0x7FFFFFFF
-            v = ((seed * 1103515245 + i * 99991) & 0x7FFFFFFF) / 0x7FFFFFFF
-            x = minx + u * (maxx - minx)
-            y = miny + v * (maxy - miny)
-            if not _point_in_ring(x, y, ring):
-                continue
-            if RAILS.within(x, y, railclear.CLEAR_FURNITURE):
-                continue
-            bush = add_box(
-                f"bush_{park.get('id')}_{i}",
-                (1.2 + u * 0.7, 1.2 + v * 0.7, 0.95 + u * 0.55),
-                (x, y, 0.5),
-                0.0,
-            )
-            assign(bush, bush_mats[bushes_here % len(bush_mats)])
-            placed += 1
-            bushes_here += 1
-    return placed
-
-
 _DRIVEABLE_SIGNAL_KINDS = {
     "motorway",
     "motorway_link",
@@ -1763,7 +1685,9 @@ def add_street_furniture(
 ) -> dict:
     """Lamp posts, bollards, bins, benches, and sidewalk trees near the spawn."""
     stats = {"lamps": 0, "bollards": 0, "bins": 0, "benches": 0, "street_trees": 0, "bike_racks": 0}
-    max_lamps, max_bollards, max_bins, max_benches, max_trees = 42, 70, 24, 16, 48
+    # Street trees now come from surveyed positions (layout["trees"], see
+    # trees_blender); the old evenly-spaced kerb rows read as a straight parade.
+    max_lamps, max_bollards, max_bins, max_benches, max_trees = 42, 70, 24, 16, 0
     for ri, road in enumerate(roads):
         kind = road.get("kind") or "residential"
         if kind in {"footway", "path", "cycleway", "steps"}:
@@ -2140,6 +2064,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         principled("canopy_d", (0.30, 0.42, 0.16, 1.0), 0.84),
         principled("canopy_e", (0.20, 0.36, 0.10, 1.0), 0.88),
     ]
+    conifer_mat = principled("conifer", (0.07, 0.22, 0.11, 1.0), 0.92)
     bush_mats = [
         principled("bush_a", (0.20, 0.34, 0.11, 1.0), 0.92),
         principled("bush_b", (0.26, 0.38, 0.14, 1.0), 0.9),
@@ -2233,8 +2158,8 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     walks = add_sidewalks_and_curbs(layout.get("roads") or [], sidewalk_mat, curb_mat, spawn_xy)
     print(f"Sidewalk/curb strips: {walks}")
 
-    veg = add_park_vegetation(layout.get("parks") or [], trunk_mat, canopy_mats, bush_mats)
-    print(f"Park vegetation props: {veg}")
+    veg = trees_blender.add_vegetation(layout, RAILS, trunk_mat, canopy_mats, conifer_mat, bush_mats)
+    print(f"Trees and shrubs (surveyed + sparse-park fill): {veg}")
     park_am = add_park_amenities(layout.get("parks") or [], spawn_xy, wood_mat, path_mat, hedge_mat)
     print(f"Park amenities: {park_am}")
 
