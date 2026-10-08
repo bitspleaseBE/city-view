@@ -159,13 +159,33 @@
       scene.add(sun);
       scene.add(sun.target);
 
-      // Visible sun disc
+      // Visible sun disc + soft haze
       const sunMesh = new THREE.Mesh(
         new THREE.SphereGeometry(28, 16, 16),
         new THREE.MeshBasicMaterial({ color: 0xffe7a0 }),
       );
       sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
       scene.add(sunMesh);
+      const sunHaze = new THREE.Mesh(
+        new THREE.SphereGeometry(70, 12, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffe8b0, transparent: true, opacity: 0.18, depthWrite: false }),
+      );
+      sunHaze.position.copy(sunMesh.position);
+      scene.add(sunHaze);
+      // Soft cloud plates for pedestrian skyline (cheap billboards).
+      const cloudMat = new THREE.MeshBasicMaterial({
+        color: 0xf4f7fc,
+        transparent: true,
+        opacity: 0.55,
+        depthWrite: false,
+      });
+      for (let i = 0; i < 8; i++) {
+        const cloud = new THREE.Mesh(new THREE.PlaneGeometry(180 + i * 12, 36 + (i % 3) * 8), cloudMat);
+        const a = (i / 8) * Math.PI * 2 + 0.4;
+        cloud.position.set(Math.cos(a) * 700, 220 + (i % 4) * 28, Math.sin(a) * 700);
+        cloud.lookAt(0, 180, 0);
+        scene.add(cloud);
+      }
 
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;

@@ -354,6 +354,30 @@ def add_lod2_roof(name: str, ring, eaves_z: float, roof_h: float, shape: str, ma
         add_ring(f"{name}_b", upper, h * 0.45, eaves_z + h * 0.55, mat)
 
 
+def add_chimneys(name: str, ring: list[list[float]], eaves_z: float, roof_h: float, mat, seed: int) -> int:
+    """Brick chimney stubs — GTA3 skyline grit, only a few per roof."""
+    if len(ring) < 3:
+        return 0
+    cx = sum(p[0] for p in ring) / len(ring)
+    cy = sum(p[1] for p in ring) / len(ring)
+    n = 1 + (seed % 3)
+    placed = 0
+    for i in range(n):
+        u = ((seed * 1103515245 + i * 9973) & 0x7FFFFFFF) / 0x7FFFFFFF
+        v = ((seed * 1664525 + i * 4243) & 0x7FFFFFFF) / 0x7FFFFFFF
+        x = cx + (u - 0.5) * 3.2
+        y = cy + (v - 0.5) * 3.2
+        if not _point_in_ring(x, y, ring):
+            x, y = cx, cy
+        z = eaves_z + roof_h * 0.85 + 0.7
+        stack = add_box(f"{name}_chim{i}", (0.55, 0.45, 1.4), (x, y, z), u * 0.2)
+        assign(stack, mat)
+        cap = add_box(f"{name}_chimcap{i}", (0.7, 0.58, 0.12), (x, y, z + 0.75), 0.0)
+        assign(cap, mat)
+        placed += 1
+    return placed
+
+
 def _box_verts(cx, cy, cz, sx, sy, sz, yaw: float):
     """Axis-aligned box in local edge frame, rotated by yaw around Z."""
     c, s = math.cos(yaw), math.sin(yaw)
@@ -423,6 +447,13 @@ def add_street_facade(
     _append_box(bm, ox, oy, eaves_z * 0.5, length * 0.98, 0.08, eaves_z, yaw, 0)
     _append_box(bm, ox + nx * 0.04, oy + ny * 0.04, plinth_h * 0.5, length * 0.98, 0.12, plinth_h, yaw, 1)
     _append_box(bm, ox + nx * 0.08, oy + ny * 0.08, eaves_z + 0.05, length * 1.02, 0.22, 0.28, yaw, 2)
+    # Vertical soot / rain-stain streaks — century façades aren't pristine.
+    if detail == "full" and length > 5.0:
+        for si in range(1 + int(length // 7.0)):
+            along = -length * 0.35 + si * 2.8
+            sx = ox + math.cos(yaw) * along + nx * 0.09
+            sy = oy + math.sin(yaw) * along + ny * 0.09
+            _append_box(bm, sx, sy, eaves_z * 0.42, 0.35, 0.05, eaves_z * 0.75, yaw, 1)
 
     kind = style.get("window", "rect")
     floors = max(1, min(8, int(floors)))
@@ -532,6 +563,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     cx = sum(p[0] for p in ring) / len(ring)
     cy = sum(p[1] for p in ring) / len(ring)
     detail = "full"
+    dist = 0.0
     if spawn_xy is not None:
         dist = math.hypot(cx - spawn_xy[0], cy - spawn_xy[1])
         if dist > 140.0:
@@ -539,6 +571,10 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         if dist > 360.0:
             # Far LOD1 colour blocks only — still keep roofs.
             return
+
+    if detail == "full" and shape != "flat" and int(bid) % 2 == 0:
+        chimney_mat = mats.get("chimney") or roof
+        add_chimneys(name, ring, max(2.5, eaves), roof_h, chimney_mat, int(bid) if bid else 1)
 
     for ei, edge in enumerate(bldg.get("street_edges") or []):
         i0 = int(edge["i0"])
@@ -877,7 +913,7 @@ def add_street_furniture(
     canopy_mats: list,
 ) -> dict:
     """Lamp posts, bollards, bins, benches, and sidewalk trees near the spawn."""
-    stats = {"lamps": 0, "bollards": 0, "bins": 0, "benches": 0, "street_trees": 0}
+    stats = {"lamps": 0, "bollards": 0, "bins": 0, "benches": 0, "street_trees": 0, "bike_racks": 0}
     max_lamps, max_bollards, max_bins, max_benches, max_trees = 42, 70, 24, 16, 48
     for ri, road in enumerate(roads):
         kind = road.get("kind") or "residential"
@@ -988,8 +1024,70 @@ def add_street_furniture(
                             )
                             assign(back, wood_mat)
                             stats["benches"] += 1
+                        elif kind_slot == 4 and stats.get("bike_racks", 0) < 20:
+                            # Simple U-rack pair.
+                            for k, off in enumerate((-0.35, 0.35)):
+                                rack = add_box(
+                                    f"bike_{stats.get('bike_racks', 0)}_{k}",
+                                    (0.08, 0.55, 0.85),
+                                    (x + math.cos(yaw) * off, y + math.sin(yaw) * off, 0.42),
+                                    yaw,
+                                )
+                                assign(rack, metal_mat)
+                            stats["bike_racks"] = stats.get("bike_racks", 0) + 1
                     t += step + (slot % 3) * 0.8
                 dist += seg
+    return stats
+
+
+def add_park_amenities(
+    parks: list,
+    spawn_xy: tuple[float, float] | None,
+    wood_mat,
+    path_mat,
+    max_benches: int = 36,
+) -> dict:
+    """Park benches + short gravel paths so greens read usable from the street."""
+    stats = {"benches": 0, "paths": 0}
+    for park in parks:
+        ring = park.get("ring") or []
+        if len(ring) < 3:
+            continue
+        cx = sum(p[0] for p in ring) / len(ring)
+        cy = sum(p[1] for p in ring) / len(ring)
+        if spawn_xy is not None and math.hypot(cx - spawn_xy[0], cy - spawn_xy[1]) > 220.0:
+            continue
+        xs = [p[0] for p in ring]
+        ys = [p[1] for p in ring]
+        seed = int(park.get("id") or 1)
+        # One short path through the park centroid.
+        path_pts = [
+            [cx - 8.0, cy - 2.0],
+            [cx, cy],
+            [cx + 8.0, cy + 1.5],
+        ]
+        if add_road(f"park_path_{park.get('id')}", path_pts, 1.6, path_mat):
+            stats["paths"] += 1
+        for i in range(3):
+            if stats["benches"] >= max_benches:
+                return stats
+            u = ((seed * 1103515245 + i * 777) & 0x7FFFFFFF) / 0x7FFFFFFF
+            v = ((seed * 1664525 + i * 333) & 0x7FFFFFFF) / 0x7FFFFFFF
+            x = min(xs) + u * (max(xs) - min(xs))
+            y = min(ys) + v * (max(ys) - min(ys))
+            if not _point_in_ring(x, y, ring):
+                x, y = cx + (u - 0.5) * 4.0, cy + (v - 0.5) * 4.0
+            yaw = u * math.pi
+            seat = add_box(f"park_bench_{stats['benches']}", (1.7, 0.42, 0.12), (x, y, 0.42), yaw)
+            assign(seat, wood_mat)
+            back = add_box(
+                f"park_bench_b_{stats['benches']}",
+                (1.7, 0.08, 0.55),
+                (x - math.sin(yaw) * 0.18, y + math.cos(yaw) * 0.18, 0.72),
+                yaw,
+            )
+            assign(back, wood_mat)
+            stats["benches"] += 1
     return stats
 
 
@@ -1122,6 +1220,8 @@ def build(layout: dict) -> None:
         principled("bush_b", (0.28, 0.40, 0.16, 1.0), 0.88),
     ]
     dash_mat = principled("road_dash", (0.82, 0.78, 0.55, 1.0), 0.9)
+    path_mat = principled("park_path", (0.48, 0.42, 0.32, 1.0), 0.95)
+    chimney_mat = principled("chimney_brick", (0.32, 0.18, 0.14, 1.0), 0.9)
     pole_mat = principled("pole", (0.18, 0.18, 0.18, 1.0), 0.5, metallic=0.4)
     housing_mat = principled("tl_housing", (0.08, 0.08, 0.08, 1.0), 0.45, metallic=0.35)
     lamp_mats = [
@@ -1149,6 +1249,7 @@ def build(layout: dict) -> None:
         "glass": {n: principled(f"glass_{n}", s["glass"], 0.2, metallic=0.05) for n, s in STYLES.items()},
         "plinth": {n: principled(f"plinth_{n}", s["plinth"], 0.94) for n, s in STYLES.items()},
         "trim": {n: principled(f"trim_{n}", s["trim"], 0.78) for n, s in STYLES.items()},
+        "chimney": chimney_mat,
     }
 
     spawn = layout.get("spawn") or {}
@@ -1166,6 +1267,8 @@ def build(layout: dict) -> None:
 
     veg = add_park_vegetation(layout.get("parks") or [], trunk_mat, canopy_mats, bush_mats)
     print(f"Park vegetation props: {veg}")
+    park_am = add_park_amenities(layout.get("parks") or [], spawn_xy, wood_mat, path_mat)
+    print(f"Park amenities: {park_am}")
 
     signal_pts = collect_signal_points(layout, spawn_xy=spawn_xy)
     for i, (sx, sy) in enumerate(signal_pts):
