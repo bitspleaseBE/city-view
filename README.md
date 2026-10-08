@@ -117,3 +117,13 @@ Uses the official Blender Lab server from `~/blender_mcp`, not a third-party for
 `$HOME` is not expanded in Cursor MCP JSON — use the absolute path.
 
 Restart the Blender GUI after installing the add-on. Autostart listens on `localhost:9876`. Confirm in Preferences → Add-ons → MCP that the server shows as running. Then reload the Blender MCP server in Cursor Settings.
+
+## Generated façade textures
+
+Walls in the 3D city are real image textures, not flat colours:
+
+1. `assets/generated/facades/facade_01…50.jpg` — **50 image-generated, straight (orthographic, upright, level) Antwerp townhouse elevations**: Art Nouveau, neo-Flemish, neoclassical, brick and stone variety. `assets/generated/walls/` holds six generated seamless wall textures for side walls.
+2. `cityview/facade_kit.py` — per façade: storeys, real-world width and building-type tags; plus the layout maths. Each street edge is cut into houses of ~6.4 m; every house gets **one full elevation, ground to eaves, mapped without mirroring** (no flipped repeats, no per-floor band cropping). Neighbouring houses always differ, so a long edge reads as a terrace. Selection scores storey count, horizontal stretch, building-type tags and a seeded jitter.
+3. `python -m cityview.facade_textures` (needs `pip install -e .[textures]`) packs them into `assets/textures/facade_atlas.jpg` + `wall_*.jpg`. **These are committed**, so CI only needs Blender.
+4. `blender/build_city.py` maps the atlas onto each street façade (`facade_photo_atlas` material) and tiles wall textures on block walls; the glTF export embeds the JPEGs.
+5. `python3 scripts/inspect_glb_textures.py viewer/klein_antwerpen.glb` proves the GLB contains the images (CI runs it).

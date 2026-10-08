@@ -55,6 +55,11 @@ jobs:
           test -f viewer/klein_antwerpen.glb
           ls -lh viewer/klein_antwerpen.glb output/antwerp_harmonie.glb
 
+      - name: Verify façade photo textures are inside the GLB
+        run: |
+          test -f assets/textures/facade_atlas.jpg
+          python3 scripts/inspect_glb_textures.py viewer/klein_antwerpen.glb
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

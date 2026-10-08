@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import sys
+import zlib
 from pathlib import Path
 
 import bmesh
@@ -16,6 +17,7 @@ from mathutils import Vector
 _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+from cityview import facade_kit, surface_kit  # noqa: E402
 from cityview import climbers, railclear  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 
@@ -30,6 +32,14 @@ RAILS: RailIndex = RailIndex([])
 # (building id, street_edges index) -> climbing-plant spec (set in build()).
 CLIMBERS: dict[tuple[int, int], dict] = {}
 CLIMBER_STATS = {"plants": 0, "leaves": 0}
+
+# Photo-derived facade imagery (committed by cityview.facade_textures).
+TEXTURES_DIR = Path(_REPO_ROOT) / "assets" / facade_kit.TEXTURES_DIRNAME
+TYPES_DOC: dict | None = None
+FACADE_PHOTO_MAT = None  # shared atlas material, set in build()
+SURFACES_DIR = Path(_REPO_ROOT) / "assets" / surface_kit.TEXTURES_DIRNAME  # procedural roofs / paving / grass
+PHOTO_MAT_SLOT = 7  # material slot of the atlas on façade meshes
+STATS = {"photo_quads": 0, "photo_edges": 0}
 
 
 # Century-old Harmonie palette: stylish but lived-in, not showroom clean.
@@ -208,6 +218,128 @@ def principled(name: str, color, rough: float = 0.85, metallic: float = 0.0):
     return mat
 
 
+def load_texture(path: Path):
+    """Load a committed texture; None when missing so CI still builds flat colours."""
+    if not Path(path).exists():
+        print(f"WARNING: texture missing, using flat colour: {path}")
+        return None
+    img = bpy.data.images.load(str(path), check_existing=True)
+    img.colorspace_settings.name = "sRGB"
+    return img
+
+
+def image_average(img) -> tuple[float, float, float]:
+    """Mean sRGB colour of an image (used to tint a shared photo tile per building)."""
+    try:
+        import numpy as np
+
+        w, h = img.size
+        px = np.empty(w * h * 4, dtype="float32")
+        img.pixels.foreach_get(px)
+        px = px.reshape(-1, 4)[:, :3]
+        lin = px.mean(axis=0)
+        # pixels are linear for sRGB images; convert the mean back to sRGB-ish for ratios.
+        srgb = np.where(lin <= 0.0031308, lin * 12.92, 1.055 * np.power(lin, 1 / 2.4) - 0.055)
+        return float(srgb[0]), float(srgb[1]), float(srgb[2])
+    except Exception:  # pragma: no cover - fall back to neutral tint
+        return (0.5, 0.5, 0.5)
+
+
+def textured(
+    name: str,
+    img,
+    fallback_color,
+    rough: float = 0.88,
+    tint=None,
+    extend: str = "REPEAT",
+):
+    """Principled material whose Base Color is an ImageTexture (x optional tint).
+
+    The glTF exporter turns this into baseColorTexture (+ baseColorFactor for
+    the tint), so the photo survives into the GLB.
+    """
+    if img is None:
+        return principled(name, fallback_color, rough)
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    out = nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    tex = nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    tex.interpolation = "Linear"
+    tex.extension = extend
+    bsdf.inputs["Roughness"].default_value = rough
+    if "Metallic" in bsdf.inputs:
+        bsdf.inputs["Metallic"].default_value = 0.0
+    if tint is not None:
+        mix = nodes.new("ShaderNodeMix")
+        mix.data_type = "RGBA"
+        mix.blend_type = "MULTIPLY"
+        mix.inputs[0].default_value = 1.0
+        mix.inputs[7].default_value = (float(tint[0]), float(tint[1]), float(tint[2]), 1.0)
+        links.new(tex.outputs["Color"], mix.inputs[6])
+        links.new(mix.outputs[2], bsdf.inputs["Base Color"])
+    else:
+        links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return mat
+
+
+def wall_tint(wall_rgba, avg_rgb) -> tuple[float, float, float]:
+    """Darken-only tint (glTF factors are <= 1) pulling a photo tile toward the type palette."""
+    out = []
+    for i in range(3):
+        ratio = min(1.0, float(wall_rgba[i]) / max(avg_rgb[i], 1e-3))
+        out.append(max(0.55, 1.0 - 0.7 * (1.0 - ratio)))
+    return tuple(out)
+
+
+def apply_planar_uvs(faces, uv_layer, tile_m: float) -> None:
+    """World-planar UVs (metres / tile_m): side faces use (along-wall, z), others (x, y)."""
+    inv = 1.0 / max(tile_m, 0.1)
+    for face in faces:
+        n = face.normal
+        horiz = math.hypot(n.x, n.y)
+        if abs(n.z) < 0.7 and horiz > 1e-6:
+            tx, ty = n.y / horiz, -n.x / horiz
+            for loop in face.loops:
+                co = loop.vert.co
+                loop[uv_layer].uv = ((co.x * tx + co.y * ty) * inv, co.z * inv)
+        else:
+            for loop in face.loops:
+                co = loop.vert.co
+                loop[uv_layer].uv = (co.x * inv, co.y * inv)
+
+
+def apply_roof_uvs(mesh, tile_m: float) -> None:
+    """Per-face slope-aligned UVs: u runs along the eave, v up the slope (courses stay level)."""
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.normal_update()
+    uv_layer = bm.loops.layers.uv.verify()
+    inv = 1.0 / max(tile_m, 0.1)
+    for face in bm.faces:
+        n = face.normal
+        if n.z < 0.0:  # winding of from_pydata roofs is not guaranteed outward
+            n = -n
+        horiz = math.hypot(n.x, n.y)
+        if horiz < 1e-4:  # flat cap
+            for loop in face.loops:
+                co = loop.vert.co
+                loop[uv_layer].uv = (co.x * inv, co.y * inv)
+            continue
+        tx, ty = n.y / horiz, -n.x / horiz
+        ux, uy, uz = -n.x * n.z / horiz, -n.y * n.z / horiz, horiz
+        for loop in face.loops:
+            co = loop.vert.co
+            loop[uv_layer].uv = ((co.x * tx + co.y * ty) * inv, (co.x * ux + co.y * uy + co.z * uz) * inv)
+    bm.to_mesh(mesh)
+    bm.free()
+
+
 def assign(obj: bpy.types.Object, mat: bpy.types.Material) -> None:
     obj.data.materials.clear()
     obj.data.materials.append(mat)
@@ -283,7 +415,13 @@ def add_box(name: str, size, loc, rot_z: float = 0.0) -> bpy.types.Object:
     return link(obj)
 
 
-def ring_mesh(name: str, ring: list[list[float]], height: float, z: float = 0.0) -> bpy.types.Mesh | None:
+def ring_mesh(
+    name: str,
+    ring: list[list[float]],
+    height: float,
+    z: float = 0.0,
+    uv_tile_m: float | None = None,
+) -> bpy.types.Mesh | None:
     if len(ring) < 3:
         return None
     mesh = bpy.data.meshes.new(name)
@@ -303,6 +441,8 @@ def ring_mesh(name: str, ring: list[list[float]], height: float, z: float = 0.0)
         moved = [ele for ele in extruded["geom"] if isinstance(ele, bmesh.types.BMVert)]
         bmesh.ops.translate(bm, verts=moved, vec=(0.0, 0.0, height))
     bm.normal_update()
+    if uv_tile_m:
+        apply_planar_uvs(bm.faces, bm.loops.layers.uv.verify(), uv_tile_m)
     bm.to_mesh(mesh)
     bm.free()
     mesh.update()
@@ -376,8 +516,15 @@ def inset_ring(ring: list[list[float]], inset: float) -> list[list[float]]:
     return fixed
 
 
-def add_ring(name: str, ring: list[list[float]], height: float, z: float, mat: bpy.types.Material) -> bpy.types.Object | None:
-    mesh = ring_mesh(name, ring, height, z)
+def add_ring(
+    name: str,
+    ring: list[list[float]],
+    height: float,
+    z: float,
+    mat: bpy.types.Material,
+    uv_tile_m: float | None = None,
+) -> bpy.types.Object | None:
+    mesh = ring_mesh(name, ring, height, z, uv_tile_m=uv_tile_m)
     if mesh is None:
         return None
     obj = bpy.data.objects.new(name, mesh)
@@ -437,7 +584,9 @@ def _prism_roof_ok(ring: list[list[float]], min_fill: float = 0.82) -> bool:
     return True
 
 
-def add_gable_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, mat) -> None:
+def add_gable_roof(
+    name: str, ring: list[list[float]], z0: float, roof_h: float, mat, uv_tile_m: float | None = None
+) -> None:
     cx, cy, ux, uy, vx, vy, hu, hv = _obb(ring)
     # Clamp half-extents so eave corners stay inside the wall ring.
     hu = max(0.45, hu - 0.08)
@@ -455,7 +604,7 @@ def add_gable_roof(name: str, ring: list[list[float]], z0: float, roof_h: float,
         hu *= 0.9
         hv *= 0.9
         if hu < 0.45 or hv < 0.45:
-            add_mansard_roof(name, ring, z0, roof_h, mat)
+            add_mansard_roof(name, ring, z0, roof_h, mat, uv_tile_m)
             return
     h = max(1.0, roof_h)
     # Four eave corners + ridge line along long axis — base exactly at eaves_z (z0).
@@ -476,11 +625,15 @@ def add_gable_roof(name: str, ring: list[list[float]], z0: float, roof_h: float,
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(corners, [], faces)
     mesh.update()
+    if uv_tile_m:
+        apply_roof_uvs(mesh, uv_tile_m)
     obj = bpy.data.objects.new(name, mesh)
     assign(link(obj), mat)
 
 
-def add_hip_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, mat) -> None:
+def add_hip_roof(
+    name: str, ring: list[list[float]], z0: float, roof_h: float, mat, uv_tile_m: float | None = None
+) -> None:
     if len(ring) < 3:
         return
     # Use a slight inset so hip faces sit on the wall plate, not past it.
@@ -499,33 +652,39 @@ def add_hip_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, m
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
     mesh.update()
+    if uv_tile_m:
+        apply_roof_uvs(mesh, uv_tile_m)
     obj = bpy.data.objects.new(name, mesh)
     assign(link(obj), mat)
 
 
-def add_mansard_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, mat) -> None:
+def add_mansard_roof(
+    name: str, ring: list[list[float]], z0: float, roof_h: float, mat, uv_tile_m: float | None = None
+) -> None:
     """Two inset extruded plates — stays inside footprint for irregular rings."""
     h = max(0.35, roof_h)
     lower = inset_ring(ring, 0.55)
-    add_ring(f"{name}_a", lower, h * 0.55, z0, mat)
+    add_ring(f"{name}_a", lower, h * 0.55, z0, mat, uv_tile_m=uv_tile_m)
     upper = inset_ring(ring, 1.25)
-    add_ring(f"{name}_b", upper, h * 0.45, z0 + h * 0.55, mat)
+    add_ring(f"{name}_b", upper, h * 0.45, z0 + h * 0.55, mat, uv_tile_m=uv_tile_m)
 
 
-def add_lod2_roof(name: str, ring, eaves_z: float, roof_h: float, shape: str, mat) -> None:
+def add_lod2_roof(
+    name: str, ring, eaves_z: float, roof_h: float, shape: str, mat, uv_tile_m: float | None = None
+) -> None:
     h = max(0.35, roof_h)
     # Irregular / L-shaped footprints: OBB gables spill past walls — use mansard.
     if shape in {"gable", "hip"} and not _prism_roof_ok(ring):
         shape = "mansard"
     if shape == "flat":
         # Slight inset so flat caps don't Z-fight or overhang sidewalks.
-        add_ring(name, inset_ring(ring, 0.04), min(0.55, h), eaves_z, mat)
+        add_ring(name, inset_ring(ring, 0.04), min(0.55, h), eaves_z, mat, uv_tile_m=uv_tile_m)
     elif shape == "hip":
-        add_hip_roof(name, ring, eaves_z, h, mat)
+        add_hip_roof(name, ring, eaves_z, h, mat, uv_tile_m)
     elif shape == "gable":
-        add_gable_roof(name, ring, eaves_z, h, mat)
+        add_gable_roof(name, ring, eaves_z, h, mat, uv_tile_m)
     else:  # mansard
-        add_mansard_roof(name, ring, eaves_z, h, mat)
+        add_mansard_roof(name, ring, eaves_z, h, mat, uv_tile_m)
 
 
 def add_chimneys(name: str, ring: list[list[float]], eaves_z: float, roof_h: float, mat, seed: int) -> int:
@@ -595,6 +754,15 @@ def _append_box(bm, cx, cy, cz, sx, sy, sz, yaw: float, mat_index: int) -> None:
     for idxs in faces_idx:
         face = bm.faces.new([verts[i] for i in idxs])
         face.material_index = mat_index
+
+
+def _append_photo_quad(bm, uv_layer, pts, uvs, mat_index: int) -> None:
+    """One textured quad; ``pts`` are 4 (x, y, z) corners, ``uvs`` 4 matching (u, v)."""
+    verts = [bm.verts.new(p) for p in pts]
+    face = bm.faces.new(verts)
+    face.material_index = mat_index
+    for loop, uv in zip(face.loops, uvs):
+        loop[uv_layer].uv = uv
 
 
 def _climber_mat_base(mesh, mats: dict, climber: dict | None) -> int | None:
@@ -670,6 +838,98 @@ def _append_climber(
     return len(plant["leaves"])
 
 
+def add_photo_facade(
+    name: str,
+    p0: list[float],
+    p1: list[float],
+    outward: list[float],
+    eaves_z: float,
+    floors: int,
+    style_name: str,
+    mats: dict,
+    mat_key: str,
+    detail: str,
+    near_spawn: bool,
+    climber: dict | None = None,
+) -> bool:
+    """Street façade skinned with generated straight elevations (atlas).
+
+    Each house is ONE full elevation (ground to eaves), never mirrored; a long
+    edge becomes a terrace of different houses. Cornice, kerb skirt and
+    spawn-local ivy stay 3D so the silhouette keeps depth.
+    """
+    x0, y0 = p0
+    x1, y1 = p1
+    length = math.hypot(x1 - x0, y1 - y0)
+    nx, ny = outward
+    yaw = math.atan2(y1 - y0, x1 - x0)
+    ux, uy = math.cos(yaw), math.sin(yaw)
+    mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    ox, oy = mx + nx * 0.06, my + ny * 0.06
+    base_type = style_name.split("__v")[0]
+    seed = zlib.adler32(name.encode("utf-8"))
+    quads = facade_kit.plan_facade_quads(length * 0.98, eaves_z, floors, base_type, seed)
+    tile_id = facade_kit.wall_tile_for_type(base_type, TYPES_DOC)
+    tile_m = float(facade_kit.WALL_TILES[tile_id]["tile_m"])
+
+    mesh = bpy.data.meshes.new(name)
+    for key in ("wall", "plinth", "trim", "frame", "glass"):
+        mesh.materials.append(mats[key].get(style_name) or mats[key][mat_key])
+    ivy_mats = mats.get("ivy") or []
+    shutter_mats = mats.get("shutter") or []
+    accent_seed = sum(ord(c) for c in name) if name else 0
+    mesh.materials.append(ivy_mats[accent_seed % len(ivy_mats)] if ivy_mats else mats["plinth"][mat_key])
+    mesh.materials.append(shutter_mats[accent_seed % len(shutter_mats)] if shutter_mats else mats["frame"][mat_key])
+    mesh.materials.append(FACADE_PHOTO_MAT)  # slot PHOTO_MAT_SLOT
+    climber_base = _climber_mat_base(mesh, mats, climber)
+
+    bm = bmesh.new()
+    uv_layer = bm.loops.layers.uv.verify()
+    # Backing skin (textured wall tile) + thin kerb skirt + deep cornice.
+    skin_start = len(bm.faces)
+    _append_box(bm, ox, oy, eaves_z * 0.5, length * 0.98, 0.1, eaves_z, yaw, 0)
+    _append_box(bm, ox + nx * 0.06, oy + ny * 0.06, 0.09, length * 0.985, 0.16, 0.18, yaw, 1)
+    _append_box(bm, ox + nx * 0.12, oy + ny * 0.12, eaves_z + 0.1, length * 1.02, 0.34, 0.38, yaw, 2)
+    _append_box(bm, ox + nx * 0.18, oy + ny * 0.18, eaves_z + 0.28, length * 1.0, 0.2, 0.12, yaw, 2)
+    bm.normal_update()
+    apply_planar_uvs([f for f in bm.faces if f.material_index == 0], uv_layer, tile_m)
+
+    # Photo quads sit 10 cm proud of the skin centre line (>= 4 cm clear of its front face).
+    off = 0.16
+    # Which way does increasing "a" run as seen from the street? n == u x z  -> rightwards.
+    rightwards = (uy * nx - ux * ny) > 0
+    half = length * 0.98 * 0.5
+    for q in quads:
+        a0, a1, z0, z1 = q["a0"] - half, q["a1"] - half, q["z0"], q["z1"]
+        u0, v0, u1, v1 = q["uv"]
+        ul, ur = u0, u1  # never mirrored: u0 < u1 for every house
+        if not rightwards:
+            ul, ur = ur, ul
+        def corner(a, z):
+            return (ox + ux * a + nx * off, oy + uy * a + ny * off, z)
+        pts = [corner(a0, z0), corner(a1, z0), corner(a1, z1), corner(a0, z1)]
+        uvs = [(ul, v0), (ur, v0), (ur, v1), (ul, v1)]
+        if not rightwards:
+            # keep outward-facing winding
+            pts = [pts[1], pts[0], pts[3], pts[2]]
+            uvs = [uvs[1], uvs[0], uvs[3], uvs[2]]
+        _append_photo_quad(bm, uv_layer, pts, uvs, PHOTO_MAT_SLOT)
+        STATS["photo_quads"] += 1
+
+    # Rare climbing plant (planned per street in build(); most façades have none).
+    if climber_base is not None and climber is not None and detail == "full":
+        CLIMBER_STATS["leaves"] += _append_climber(
+            bm, climber, climber_base, ox, oy, ux, uy, nx, ny, length, eaves_z, 0.9, []
+        )
+
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(name, mesh))
+    STATS["photo_edges"] += 1
+    return True
+
+
 def add_street_facade(
     name: str,
     p0: list[float],
@@ -695,6 +955,10 @@ def add_street_facade(
     x1, y1 = p1
     length = math.hypot(x1 - x0, y1 - y0)
     if length < 2.6 or eaves_z < 4.0:
+        return
+    if FACADE_PHOTO_MAT is not None and add_photo_facade(
+        name, p0, p1, outward, eaves_z, floors, style_name, mats, mat_key, detail, near_spawn, climber
+    ):
         return
     nx, ny = outward
     yaw = math.atan2(y1 - y0, x1 - x0)
@@ -978,6 +1242,88 @@ def add_street_facade(
     link(bpy.data.objects.new(name, mesh))
 
 
+DORMER_STATS = {"dormers": 0}
+
+
+def add_dormers(
+    name: str,
+    p0: list[float],
+    p1: list[float],
+    outward: list[float],
+    eaves_z: float,
+    roof_h: float,
+    roof_mat,
+    frame_mat,
+    glass_mat,
+    trim_mat,
+    seed: int,
+) -> int:
+    """Pitched-roof dormer windows on a mansard's street slope (one batched mesh per edge).
+
+    Sits on the lower mansard plate (inset 0.55 m): masonry cheeks, a glazed front with
+    frame, and a small capped roof — the classic Antwerp attic-storey silhouette.
+    """
+    x0, y0 = p0
+    x1, y1 = p1
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 5.0:
+        return 0
+    nx, ny = outward
+    nl = math.hypot(nx, ny) or 1.0
+    nx, ny = nx / nl, ny / nl
+    yaw = math.atan2(y1 - y0, x1 - x0)
+    ux, uy = math.cos(yaw), math.sin(yaw)
+    bays = max(1, int(length / 2.35))
+    bay_w = length / bays
+    # Real dormers stand proud of the lower slope and poke through the upper one.
+    body_h = min(1.5, max(0.35, roof_h) * 0.78)
+    if body_h < 0.9:
+        return 0
+    inset = 0.55
+    depth = 0.8
+    mid_x, mid_y = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    mesh = bpy.data.meshes.new(name)
+    for m in (roof_mat, trim_mat, frame_mat, glass_mat):
+        mesh.materials.append(m)
+    bm = bmesh.new()
+    placed = 0
+    for bi in range(bays):
+        # Every other bay, phase set per building so adjacent houses do not mirror each other.
+        if (bi + seed) % 2:
+            continue
+        if bi == 0 or bi == bays - 1:
+            continue
+        along = (bi + 0.5) * bay_w - length * 0.5
+        w = min(1.35, bay_w * 0.58)
+        # Front sits 6 cm proud of the lower slope wall; body runs back into the upper plate.
+        fd = inset - 0.06
+        cxm = mid_x + ux * along - nx * (fd + depth * 0.5)
+        cym = mid_y + uy * along - ny * (fd + depth * 0.5)
+        z0 = eaves_z + 0.05
+        _append_box(bm, cxm, cym, z0 + body_h * 0.5, w, depth, body_h, yaw, 0)
+        # Trim surround + glass + frame on the front face.
+        fx = mid_x + ux * along - nx * (fd - 0.015)
+        fy = mid_y + uy * along - ny * (fd - 0.015)
+        _append_box(bm, fx, fy, z0 + body_h * 0.5, w * 0.82, 0.05, body_h * 0.78, yaw, 1)
+        _append_box(bm, fx + nx * 0.03, fy + ny * 0.03, z0 + body_h * 0.5, w * 0.62, 0.05, body_h * 0.62, yaw, 3)
+        _append_box(bm, fx + nx * 0.06, fy + ny * 0.06, z0 + body_h * 0.5, w * 0.06, 0.04, body_h * 0.62, yaw, 2)
+        _append_box(bm, fx + nx * 0.06, fy + ny * 0.06, z0 + body_h * 0.62, w * 0.62, 0.04, 0.05, yaw, 2)
+        # Cap: wide slab (zinc/slate cornice) + narrower ridge slab reads as a little pitched roof.
+        cap_x, cap_y = cxm - nx * 0.02, cym - ny * 0.02
+        _append_box(bm, cap_x, cap_y, z0 + body_h + 0.07, w + 0.30, depth + 0.30, 0.14, yaw, 0)
+        _append_box(bm, cap_x, cap_y, z0 + body_h + 0.22, w * 0.55, depth + 0.1, 0.18, yaw, 0)
+        placed += 1
+    if not placed:
+        bm.free()
+        bpy.data.meshes.remove(mesh)
+        return 0
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(name, mesh))
+    return placed
+
+
 def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = None) -> None:
     style_name = style_key_for(bldg)
     type_id = bldg.get("building_type") or bldg.get("style") or "eclectic"
@@ -1000,8 +1346,20 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     wall = mats["wall"].get(style_name) or mats["wall"].get(type_id) or mats["wall"]["eclectic"]
     roof = mats["roof"].get(style_name) or mats["roof"].get(type_id) or mats["roof"]["eclectic"]
 
-    add_ring(name, ring, max(2.5, eaves), 0.0, wall)
-    add_lod2_roof(f"{name}_roof", ring, max(2.5, eaves), roof_h, shape, roof)
+    base_type = style_name.split("__v")[0]
+    wall_tile_m = float(facade_kit.WALL_TILES[facade_kit.wall_tile_for_type(base_type, TYPES_DOC)]["tile_m"])
+    add_ring(name, ring, max(2.5, eaves), 0.0, wall, uv_tile_m=wall_tile_m)
+    roof_uv_tile = None
+    roof_pool = mats.get("roof_tex") or {}
+    # Irregular footprints fall back to a mansard stack inside add_lod2_roof.
+    eff_shape = "mansard" if shape in {"gable", "hip"} and not _prism_roof_ok(ring) else shape
+    if roof_pool:
+        surf = surface_kit.pick_roof_surface(eff_shape, int(bid) if str(bid).lstrip("-").isdigit() else 1)
+        variants = roof_pool.get(surf)
+        if variants:
+            roof = variants[zlib.crc32(f"rv:{bid}".encode()) % len(variants)]
+            roof_uv_tile = surface_kit.surface_tile_m(surf)
+    add_lod2_roof(f"{name}_roof", ring, max(2.5, eaves), roof_h, shape, roof, uv_tile_m=roof_uv_tile)
 
     cx = sum(p[0] for p in ring) / len(ring)
     cy = sum(p[1] for p in ring) / len(ring)
@@ -1026,6 +1384,20 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         i1 = int(edge["i1"])
         if i0 >= len(ring) or i1 >= len(ring):
             continue
+        if detail == "full" and eff_shape == "mansard" and roof_h >= 1.5:
+            DORMER_STATS["dormers"] += add_dormers(
+                f"{name}_dormers{ei}",
+                ring[i0],
+                ring[i1],
+                edge.get("outward") or [0.0, 1.0],
+                max(2.5, eaves),
+                roof_h,
+                roof,
+                mats["frame"].get(style_name) or mats["frame"]["eclectic"],
+                mats["glass"].get(style_name) or mats["glass"]["eclectic"],
+                mats["trim"].get(style_name) or mats["trim"]["eclectic"],
+                int(bid) if str(bid).lstrip("-").isdigit() else 1,
+            )
         add_street_facade(
             f"{name}_facade{ei}",
             ring[i0],
@@ -1061,7 +1433,13 @@ Z_ZEBRA_ON_RAIL = 0.22  # zebra stripe pieces that cross a rail corridor
 Z_TRAM = Z_TRAM_BED  # backwards-compatible alias
 
 
-def polyline_mesh(name: str, points: list[list[float]], width: float, z: float = Z_ROAD) -> bpy.types.Mesh | None:
+def polyline_mesh(
+    name: str,
+    points: list[list[float]],
+    width: float,
+    z: float = Z_ROAD,
+    uv_tile_m: float | None = None,
+) -> bpy.types.Mesh | None:
     if len(points) < 2:
         return None
     half = width / 2.0
@@ -1084,6 +1462,17 @@ def polyline_mesh(name: str, points: list[list[float]], width: float, z: float =
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, [], faces)
     mesh.update()
+    if uv_tile_m:
+        # u = distance along the polyline, v = across the strip (metres / tile).
+        along = [0.0]
+        for i in range(1, n):
+            along.append(along[-1] + math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]))
+        inv = 1.0 / max(uv_tile_m, 0.1)
+        uvs = [(a * inv, 0.0) for a in along] + [(a * inv, width * inv) for a in reversed(along)]
+        uv_layer = mesh.uv_layers.new(name="UVMap")
+        for poly in mesh.polygons:
+            for li, vi in zip(poly.loop_indices, poly.vertices):
+                uv_layer.data[li].uv = uvs[vi]
     return mesh
 
 
@@ -1093,8 +1482,9 @@ def add_road(
     width: float,
     mat: bpy.types.Material,
     z: float = Z_ROAD,
+    uv_tile_m: float | None = None,
 ) -> bpy.types.Object | None:
-    mesh = polyline_mesh(name, points, width, z=z)
+    mesh = polyline_mesh(name, points, width, z=z, uv_tile_m=uv_tile_m)
     if mesh is None:
         return None
     obj = bpy.data.objects.new(name, mesh)
@@ -1125,6 +1515,8 @@ def add_sidewalks_and_curbs(
     sidewalk_mat,
     curb_mat,
     spawn_xy: tuple[float, float] | None,
+    sidewalk_tile_m: float | None = None,
+    curb_tile_m: float | None = None,
 ) -> int:
     """Sidewalk ribbons + low curbs. Prefer roads near the human spawn for FPS."""
     count = 0
@@ -1146,10 +1538,14 @@ def add_sidewalks_and_curbs(
             curb = offset_polyline(pts, sign * (half + 0.12))
             # Never lay pavement/kerb over a tram bed (shared tram streets).
             for ri, run in enumerate(railclear.clear_runs(walk, RAILS, railclear.CLEAR_SIDEWALK)):
-                if add_road(f"sidewalk_{i}_{side}_{ri}", run, sidewalk_w, sidewalk_mat, z=Z_SIDEWALK):
+                if add_road(
+                    f"sidewalk_{i}_{side}_{ri}", run, sidewalk_w, sidewalk_mat, z=Z_SIDEWALK, uv_tile_m=sidewalk_tile_m
+                ):
                     count += 1
             for ri, run in enumerate(railclear.clear_runs(curb, RAILS, railclear.CLEAR_CURB)):
-                if add_road(f"curb_{i}_{side}_{ri}", run, 0.28, curb_mat, z=Z_CURB):
+                if add_road(
+                    f"curb_{i}_{side}_{ri}", run, 0.28, curb_mat, z=Z_CURB, uv_tile_m=curb_tile_m
+                ):
                     count += 1
     return count
 
@@ -2032,7 +2428,17 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     merge_building_types(types_doc)
     if types_doc:
         print(f"Building types loaded: {len(types_doc.get('types') or {})}")
-    global RAILS
+    global RAILS, TYPES_DOC, FACADE_PHOTO_MAT
+    TYPES_DOC = types_doc
+    STATS["photo_quads"] = 0
+    STATS["photo_edges"] = 0
+    atlas_img = load_texture(TEXTURES_DIR / facade_kit.ATLAS_FILE)
+    FACADE_PHOTO_MAT = (
+        textured("facade_photo_atlas", atlas_img, (0.6, 0.55, 0.45, 1.0), rough=0.9, extend="EXTEND")
+        if atlas_img is not None
+        else None
+    )
+    print(f"Facade photo atlas: {'loaded' if atlas_img is not None else 'MISSING'}")
     RAILS = RailIndex.from_layout(layout)
     print(f"Surface rail segments: {len(RAILS.segments)}")
     xmin, ymin, xmax, ymax = bounds(layout)
@@ -2048,13 +2454,45 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         [(0, 1, 2, 3)],
     )
     ground.update()
-    assign(link(bpy.data.objects.new("ground", ground)), principled("ground", (0.74, 0.73, 0.68, 1.0), 0.95))
+    surf_imgs: dict[str, object] = {}
+
+    def surface_img(key: str):
+        if key not in surf_imgs:
+            surf_imgs[key] = load_texture(SURFACES_DIR / surface_kit.surface_file(key))
+        return surf_imgs[key]
+
+    def surface_mat(key: str, name: str, fallback, rough: float, tint=None, extend: str = "REPEAT"):
+        return textured(name, surface_img(key), fallback, rough=rough, tint=tint, extend=extend)
+
+    gravel_tile = surface_kit.surface_tile_m("gravel")
+    guv = ground.uv_layers.new(name="UVMap")
+    for poly in ground.polygons:
+        for li, vi in zip(poly.loop_indices, poly.vertices):
+            vx, vy, _vz = ground.vertices[vi].co
+            guv.data[li].uv = (vx / gravel_tile, vy / gravel_tile)
+    assign(
+        link(bpy.data.objects.new("ground", ground)),
+        surface_mat("gravel", "ground", (0.74, 0.73, 0.68, 1.0), 0.95, tint=(0.94, 0.94, 0.92)),
+    )
 
     water_mat = principled("water", (0.18, 0.32, 0.42, 1.0), 0.12)
-    park_mat = principled("park", (0.28, 0.48, 0.26, 1.0), 0.92)
-    road_mat = principled("asphalt", (0.08, 0.08, 0.09, 1.0), 0.96)
-    sidewalk_mat = principled("sidewalk", (0.55, 0.54, 0.50, 1.0), 0.95)
-    curb_mat = principled("curb", (0.42, 0.41, 0.38, 1.0), 0.9)
+    park_mat = surface_mat("grass", "park", (0.28, 0.48, 0.26, 1.0), 0.92)
+    road_mat = surface_mat("asphalt", "asphalt", (0.08, 0.08, 0.09, 1.0), 0.96)
+    sidewalk_mat = surface_mat("sidewalk", "sidewalk", (0.55, 0.54, 0.50, 1.0), 0.95)
+    curb_mat = surface_mat("curb", "curb", (0.42, 0.41, 0.38, 1.0), 0.9)
+    # Roof families: slate / clay pantiles / zinc / bitumen, each with a few weathering tints.
+    roof_tex: dict[str, list] = {}
+    for key, tints in (
+        ("roof_slate", ((1.0, 1.0, 1.0), (0.80, 0.82, 0.86), (0.92, 0.88, 0.84))),
+        ("roof_clay", ((1.0, 1.0, 1.0), (0.84, 0.80, 0.78), (0.94, 0.88, 0.80))),
+        ("roof_zinc", ((1.0, 1.0, 1.0), (0.85, 0.87, 0.90))),
+        ("roof_flat", ((1.0, 1.0, 1.0), (0.86, 0.86, 0.88))),
+    ):
+        if surface_img(key) is None:
+            continue
+        roof_tex[key] = [
+            surface_mat(key, f"{key}_{ti}", (0.18, 0.17, 0.16, 1.0), 0.78, tint=t) for ti, t in enumerate(tints)
+        ]
     trunk_mat = principled("trunk", (0.28, 0.18, 0.10, 1.0), 0.9)
     # Varied park canopy: deep shade, sun-lit lime, dusty summer olive.
     canopy_mats = [
@@ -2127,9 +2565,26 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     style_items = [(n, s) for n, s in STYLES.items() if n in used_keys]
     if not style_items:
         style_items = list(STYLES.items())
+    tile_imgs: dict[str, object] = {}
+    tile_avgs: dict[str, tuple[float, float, float]] = {}
+
+    def wall_mat(n: str, st: dict):
+        tid = facade_kit.wall_tile_for_type(n.split("__v")[0], types_doc)
+        if tid not in tile_imgs:
+            tile_imgs[tid] = load_texture(TEXTURES_DIR / facade_kit.wall_tile_file(tid))
+            tile_avgs[tid] = image_average(tile_imgs[tid]) if tile_imgs[tid] is not None else (0.5, 0.5, 0.5)
+        return textured(
+            f"wall_{n}",
+            tile_imgs[tid],
+            st["wall"],
+            rough=0.88,
+            tint=wall_tint(st["wall"], tile_avgs[tid]),
+        )
+
     mats = {
-        "wall": {n: principled(f"wall_{n}", s["wall"], 0.88) for n, s in style_items},
+        "wall": {n: wall_mat(n, s) for n, s in style_items},
         "roof": {n: principled(f"roof_{n}", s["roof"], 0.72, metallic=0.05) for n, s in style_items},
+        "roof_tex": roof_tex,
         "frame": {n: principled(f"frame_{n}", s["frame"], 0.62, metallic=0.12) for n, s in style_items},
         # Glazier glass — darker, slightly reflective so windows read as openings not stickers.
         "glass": {n: principled(f"glass_{n}", s["glass"], 0.12, metallic=0.35) for n, s in style_items},
@@ -2148,14 +2603,35 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     for i, pond in enumerate(layout.get("water") or []):
         add_ring(f"water_{pond.get('id', i)}", pond["ring"], 0.0, Z_WATER, water_mat)
     for i, park in enumerate(layout.get("parks") or []):
-        add_ring(f"park_{park.get('id', i)}", park["ring"], 0.0, Z_PARK, park_mat)
+        add_ring(
+            f"park_{park.get('id', i)}",
+            park["ring"],
+            0.0,
+            Z_PARK,
+            park_mat,
+            uv_tile_m=surface_kit.surface_tile_m("grass"),
+        )
     for i, road in enumerate(layout.get("roads") or []):
-        add_road(f"road_{road.get('id', i)}", road["points"], float(road["width"]), road_mat, z=Z_ROAD)
+        add_road(
+            f"road_{road.get('id', i)}",
+            road["points"],
+            float(road["width"]),
+            road_mat,
+            z=Z_ROAD,
+            uv_tile_m=surface_kit.surface_tile_m("asphalt"),
+        )
 
     tram_n, stop_n = add_transit_layer(layout, spawn_xy)
     print(f"Transit: {tram_n} tram tracks, {stop_n} stops")
 
-    walks = add_sidewalks_and_curbs(layout.get("roads") or [], sidewalk_mat, curb_mat, spawn_xy)
+    walks = add_sidewalks_and_curbs(
+        layout.get("roads") or [],
+        sidewalk_mat,
+        curb_mat,
+        spawn_xy,
+        sidewalk_tile_m=surface_kit.surface_tile_m("sidewalk"),
+        curb_tile_m=surface_kit.surface_tile_m("curb"),
+    )
     print(f"Sidewalk/curb strips: {walks}")
 
     veg = trees_blender.add_vegetation(layout, RAILS, trunk_mat, canopy_mats, conifer_mat, bush_mats)
@@ -2208,9 +2684,15 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     streets = {c["street"] for c in CLIMBERS.values()}
     print(f"Climbing plants: {len(CLIMBERS)} houses on {len(streets)} streets (max {climbers.MAX_PER_STREET}/street)")
 
+    DORMER_STATS["dormers"] = 0
     for bldg in layout.get("buildings") or []:
         add_building(bldg, mats, spawn_xy=spawn_xy)
+    print(f"Mansard dormers: {DORMER_STATS['dormers']}; textured roof families: {sorted((mats.get('roof_tex') or {}))}")
     print(f"Climbing-plant leaf clusters: {CLIMBER_STATS['leaves']}")
+    print(
+        f"Photo facades: {STATS['photo_edges']} street edges, {STATS['photo_quads']} textured quads "
+        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'})"
+    )
 
     setup_world()
     setup_cameras(layout, xmin, ymin, xmax, ymax)
@@ -2226,6 +2708,8 @@ def export_outputs(output_dir: Path, name: str, do_render: bool) -> None:
         export_texcoords=True,
         export_normals=True,
         export_materials="EXPORT",
+        export_image_format="JPEG",  # photo textures stay JPEG inside the GLB
+        export_jpeg_quality=85,
         export_cameras=True,
         export_yup=True,
     )

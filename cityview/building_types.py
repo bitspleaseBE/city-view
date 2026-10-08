@@ -7,6 +7,7 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+from cityview.facade_kit import annotate_types_document
 from cityview.palette import jitter_rgba, remix_palette, sample_photo
 from cityview.paths import ASSETS, ROOT
 
@@ -216,7 +217,7 @@ def build_types_document(ref_dir: Path | None = None) -> dict[str, Any]:
             "palette": {k: base[k] for k in ("wall", "roof", "frame", "glass", "plinth", "trim", "rough")},
             "variants": variants,
         }
-    return {
+    return annotate_types_document({
         "title": "Klein Antwerpen building types (photo-remixed)",
         "references_dir": str(REFERENCES_DIR.relative_to(ROOT)),
         "variant_count": VARIANT_COUNT,
@@ -231,7 +232,7 @@ def build_types_document(ref_dir: Path | None = None) -> dict[str, Any]:
             }
             for name, s in samples.items()
         },
-    }
+    })
 
 
 def write_building_types(path: Path | None = None, ref_dir: Path | None = None) -> Path:

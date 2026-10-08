@@ -167,7 +167,20 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_02",
+        "facade_05",
+        "facade_06",
+        "facade_10",
+        "facade_20",
+        "facade_25",
+        "facade_30",
+        "facade_33",
+        "facade_35",
+        "facade_50"
+      ],
+      "wall_tile": "brick_brown"
     },
     "red-brick": {
       "name": "Red-brick terrace",
@@ -333,7 +346,19 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_02",
+        "facade_06",
+        "facade_14",
+        "facade_17",
+        "facade_25",
+        "facade_28",
+        "facade_38",
+        "facade_44",
+        "facade_50"
+      ],
+      "wall_tile": "brick_red"
     },
     "neoclassical": {
       "name": "Cream stucco neoclassical",
@@ -499,7 +524,22 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_03",
+        "facade_08",
+        "facade_13",
+        "facade_18",
+        "facade_21",
+        "facade_23",
+        "facade_26",
+        "facade_29",
+        "facade_37",
+        "facade_39",
+        "facade_45",
+        "facade_49"
+      ],
+      "wall_tile": "stucco_cream"
     },
     "cream-tile": {
       "name": "Cream-tile shop",
@@ -665,7 +705,16 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_03",
+        "facade_13",
+        "facade_15",
+        "facade_23",
+        "facade_43",
+        "facade_45"
+      ],
+      "wall_tile": "stucco_cream"
     },
     "eclectic": {
       "name": "Buff eclectic walk-up",
@@ -831,7 +880,22 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_09",
+        "facade_10",
+        "facade_15",
+        "facade_19",
+        "facade_21",
+        "facade_26",
+        "facade_34",
+        "facade_37",
+        "facade_39",
+        "facade_47",
+        "facade_48",
+        "facade_49"
+      ],
+      "wall_tile": "stone_buff"
     },
     "yellow-brick": {
       "name": "Yellow-brick row",
@@ -997,7 +1061,15 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_04",
+        "facade_30",
+        "facade_32",
+        "facade_41",
+        "facade_47"
+      ],
+      "wall_tile": "brick_yellow"
     },
     "art-nouveau": {
       "name": "Art-Nouveau bay",
@@ -1163,7 +1235,19 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_01",
+        "facade_04",
+        "facade_07",
+        "facade_16",
+        "facade_24",
+        "facade_27",
+        "facade_32",
+        "facade_40",
+        "facade_42"
+      ],
+      "wall_tile": "stone_buff"
     },
     "art-deco": {
       "name": "Art-Deco pale",
@@ -1328,7 +1412,12 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_12",
+        "facade_36"
+      ],
+      "wall_tile": "plaster_white"
     },
     "international": {
       "name": "International modern",
@@ -1494,7 +1583,12 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_34",
+        "facade_48"
+      ],
+      "wall_tile": "plaster_white"
     },
     "modern-infill": {
       "name": "Modern infill",
@@ -1659,7 +1753,12 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_31",
+        "facade_48"
+      ],
+      "wall_tile": "plaster_white"
     },
     "neo-gothic": {
       "name": "Neo-Gothic stone",
@@ -1824,7 +1923,11 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_20"
+      ],
+      "wall_tile": "brick_brown"
     },
     "white-modern": {
       "name": "White modern slab",
@@ -1989,7 +2092,13 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_19",
+        "facade_31",
+        "facade_36"
+      ],
+      "wall_tile": "plaster_white"
     },
     "prefab-70s": {
       "name": "Prefab 70s",
@@ -2154,7 +2263,13 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_11",
+        "facade_22",
+        "facade_46"
+      ],
+      "wall_tile": "plaster_white"
     },
     "brown-tile": {
       "name": "Brown tile",
@@ -2319,7 +2434,15 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_05",
+        "facade_11",
+        "facade_28",
+        "facade_33",
+        "facade_40"
+      ],
+      "wall_tile": "brick_brown"
     },
     "antwerp-70s": {
       "name": "Antwerp 70s cream",
@@ -2485,7 +2608,15 @@
             1.0
           ]
         }
-      ]
+      ],
+      "facade_cells": [
+        "facade_08",
+        "facade_22",
+        "facade_38",
+        "facade_44",
+        "facade_46"
+      ],
+      "wall_tile": "stucco_cream"
     }
   },
   "photo_samples": {
@@ -3028,6 +3159,481 @@
         1.0
       ],
       "brightness": 0.4261
+    }
+  },
+  "facade_kit": {
+    "atlas": "textures/facade_atlas.jpg",
+    "count": 50,
+    "mapping": "one straight unmirrored elevation per house; terrace along the edge",
+    "facades": {
+      "facade_01": {
+        "source": "generated/facades/facade_01.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "art-nouveau"
+        ]
+      },
+      "facade_02": {
+        "source": "generated/facades/facade_02.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "red-brick",
+          "neo-flemish"
+        ]
+      },
+      "facade_03": {
+        "source": "generated/facades/facade_03.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neoclassical",
+          "cream-tile"
+        ]
+      },
+      "facade_04": {
+        "source": "generated/facades/facade_04.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "yellow-brick",
+          "art-nouveau"
+        ]
+      },
+      "facade_05": {
+        "source": "generated/facades/facade_05.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "neo-flemish",
+          "brown-tile"
+        ]
+      },
+      "facade_06": {
+        "source": "generated/facades/facade_06.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neo-flemish",
+          "red-brick"
+        ]
+      },
+      "facade_07": {
+        "source": "generated/facades/facade_07.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "art-nouveau"
+        ]
+      },
+      "facade_08": {
+        "source": "generated/facades/facade_08.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "neoclassical",
+          "antwerp-70s"
+        ]
+      },
+      "facade_09": {
+        "source": "generated/facades/facade_09.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "eclectic"
+        ]
+      },
+      "facade_10": {
+        "source": "generated/facades/facade_10.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neo-flemish",
+          "eclectic"
+        ]
+      },
+      "facade_11": {
+        "source": "generated/facades/facade_11.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "prefab-70s",
+          "brown-tile"
+        ]
+      },
+      "facade_12": {
+        "source": "generated/facades/facade_12.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "art-deco"
+        ]
+      },
+      "facade_13": {
+        "source": "generated/facades/facade_13.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "cream-tile",
+          "neoclassical"
+        ]
+      },
+      "facade_14": {
+        "source": "generated/facades/facade_14.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "red-brick"
+        ]
+      },
+      "facade_15": {
+        "source": "generated/facades/facade_15.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "eclectic",
+          "cream-tile"
+        ]
+      },
+      "facade_16": {
+        "source": "generated/facades/facade_16.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "art-nouveau"
+        ]
+      },
+      "facade_17": {
+        "source": "generated/facades/facade_17.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "red-brick"
+        ]
+      },
+      "facade_18": {
+        "source": "generated/facades/facade_18.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neoclassical"
+        ]
+      },
+      "facade_19": {
+        "source": "generated/facades/facade_19.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "eclectic",
+          "white-modern"
+        ]
+      },
+      "facade_20": {
+        "source": "generated/facades/facade_20.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neo-gothic",
+          "neo-flemish"
+        ]
+      },
+      "facade_21": {
+        "source": "generated/facades/facade_21.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "neoclassical",
+          "eclectic"
+        ]
+      },
+      "facade_22": {
+        "source": "generated/facades/facade_22.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "prefab-70s",
+          "antwerp-70s"
+        ]
+      },
+      "facade_23": {
+        "source": "generated/facades/facade_23.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "neoclassical",
+          "cream-tile"
+        ]
+      },
+      "facade_24": {
+        "source": "generated/facades/facade_24.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "art-nouveau"
+        ]
+      },
+      "facade_25": {
+        "source": "generated/facades/facade_25.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "red-brick",
+          "neo-flemish"
+        ]
+      },
+      "facade_26": {
+        "source": "generated/facades/facade_26.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "neoclassical",
+          "eclectic"
+        ]
+      },
+      "facade_27": {
+        "source": "generated/facades/facade_27.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "art-nouveau"
+        ]
+      },
+      "facade_28": {
+        "source": "generated/facades/facade_28.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "brown-tile",
+          "red-brick"
+        ]
+      },
+      "facade_29": {
+        "source": "generated/facades/facade_29.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neoclassical"
+        ]
+      },
+      "facade_30": {
+        "source": "generated/facades/facade_30.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "yellow-brick",
+          "neo-flemish"
+        ]
+      },
+      "facade_31": {
+        "source": "generated/facades/facade_31.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "modern-infill",
+          "white-modern"
+        ]
+      },
+      "facade_32": {
+        "source": "generated/facades/facade_32.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "yellow-brick",
+          "art-nouveau"
+        ]
+      },
+      "facade_33": {
+        "source": "generated/facades/facade_33.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "brown-tile",
+          "neo-flemish"
+        ]
+      },
+      "facade_34": {
+        "source": "generated/facades/facade_34.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "eclectic",
+          "international"
+        ]
+      },
+      "facade_35": {
+        "source": "generated/facades/facade_35.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neo-flemish"
+        ]
+      },
+      "facade_36": {
+        "source": "generated/facades/facade_36.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "art-deco",
+          "white-modern"
+        ]
+      },
+      "facade_37": {
+        "source": "generated/facades/facade_37.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "eclectic",
+          "neoclassical"
+        ]
+      },
+      "facade_38": {
+        "source": "generated/facades/facade_38.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "red-brick",
+          "antwerp-70s"
+        ]
+      },
+      "facade_39": {
+        "source": "generated/facades/facade_39.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "neoclassical",
+          "eclectic"
+        ]
+      },
+      "facade_40": {
+        "source": "generated/facades/facade_40.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "brown-tile",
+          "art-nouveau"
+        ]
+      },
+      "facade_41": {
+        "source": "generated/facades/facade_41.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "yellow-brick"
+        ]
+      },
+      "facade_42": {
+        "source": "generated/facades/facade_42.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "art-nouveau"
+        ]
+      },
+      "facade_43": {
+        "source": "generated/facades/facade_43.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "cream-tile"
+        ]
+      },
+      "facade_44": {
+        "source": "generated/facades/facade_44.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "red-brick",
+          "antwerp-70s"
+        ]
+      },
+      "facade_45": {
+        "source": "generated/facades/facade_45.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "neoclassical",
+          "cream-tile"
+        ]
+      },
+      "facade_46": {
+        "source": "generated/facades/facade_46.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "antwerp-70s",
+          "prefab-70s"
+        ]
+      },
+      "facade_47": {
+        "source": "generated/facades/facade_47.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "yellow-brick",
+          "eclectic"
+        ]
+      },
+      "facade_48": {
+        "source": "generated/facades/facade_48.jpg",
+        "storeys": 4,
+        "width_m": 7.54,
+        "types": [
+          "eclectic",
+          "modern-infill",
+          "international"
+        ]
+      },
+      "facade_49": {
+        "source": "generated/facades/facade_49.jpg",
+        "storeys": 5,
+        "width_m": 9.34,
+        "types": [
+          "eclectic",
+          "neoclassical"
+        ]
+      },
+      "facade_50": {
+        "source": "generated/facades/facade_50.jpg",
+        "storeys": 3,
+        "width_m": 7.65,
+        "types": [
+          "neo-flemish",
+          "red-brick"
+        ]
+      }
+    },
+    "wall_tiles": {
+      "brick_red": {
+        "source": "generated/walls/wall_brick_red.jpg",
+        "file": "textures/wall_brick_red.jpg",
+        "tile_m": 1.6
+      },
+      "brick_brown": {
+        "source": "generated/walls/wall_brick_brown.jpg",
+        "file": "textures/wall_brick_brown.jpg",
+        "tile_m": 1.6
+      },
+      "stone_buff": {
+        "source": "generated/walls/wall_stone_buff.jpg",
+        "file": "textures/wall_stone_buff.jpg",
+        "tile_m": 2.4
+      },
+      "stucco_cream": {
+        "source": "generated/walls/wall_stucco_cream.jpg",
+        "file": "textures/wall_stucco_cream.jpg",
+        "tile_m": 3.0
+      },
+      "brick_yellow": {
+        "source": "generated/walls/wall_brick_yellow.jpg",
+        "file": "textures/wall_brick_yellow.jpg",
+        "tile_m": 1.6
+      },
+      "plaster_white": {
+        "source": "generated/walls/wall_plaster_white.jpg",
+        "file": "textures/wall_plaster_white.jpg",
+        "tile_m": 3.0
+      }
     }
   }
 }

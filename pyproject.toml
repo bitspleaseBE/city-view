@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+textures = ["pillow", "numpy"]  # only to re-render assets/textures from the reference photos
+
 [project.scripts]
 cityview = "cityview.cli:main"
 
