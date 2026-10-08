@@ -37,7 +37,9 @@ jobs:
           EXPECTED_SHA256="ed0c872742d590b42fbe3b91286f60f6f18e0f69f6314fd47db9ff419c7ce2f6"
           curl -L --fail --retry 3 -o "/tmp/${ARCHIVE}" "${BASE}/${ARCHIVE}"
           curl -L --fail --retry 3 -o "/tmp/blender.sha256" "${BASE}/blender-${BLENDER_VERSION}.sha256"
-          grep " ${ARCHIVE}\$" /tmp/blender.sha256 | sha256sum -c -
+          EXPECTED="$(awk -v f="$ARCHIVE" '$2 == f { print $1 }' /tmp/blender.sha256)"
+          test -n "$EXPECTED"
+          test "$EXPECTED" = "$EXPECTED_SHA256"
           echo "${EXPECTED_SHA256}  /tmp/${ARCHIVE}" | sha256sum -c -
           sudo mkdir -p /opt/blender
           sudo tar -xJf "/tmp/${ARCHIVE}" -C /opt/blender --strip-components=1
