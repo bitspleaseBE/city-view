@@ -16,11 +16,15 @@ from mathutils import Vector
 _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
-from cityview import railclear  # noqa: E402
+from cityview import climbers, railclear  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 
 # Surface rail corridors for the current build (set in build()).
 RAILS: RailIndex = RailIndex([])
+
+# (building id, street_edges index) -> climbing-plant spec (set in build()).
+CLIMBERS: dict[tuple[int, int], dict] = {}
+CLIMBER_STATS = {"plants": 0, "leaves": 0}
 
 
 # Century-old Harmonie palette: stylish but lived-in, not showroom clean.
@@ -588,6 +592,79 @@ def _append_box(bm, cx, cy, cz, sx, sy, sz, yaw: float, mat_index: int) -> None:
         face.material_index = mat_index
 
 
+def _climber_mat_base(mesh, mats: dict, climber: dict | None) -> int | None:
+    """Append the climbing-plant palette to ``mesh``; return the first slot (or None)."""
+    palette = mats.get("climber") or []
+    if not climber or not palette:
+        return None
+    base = len(mesh.materials)
+    for m in palette:
+        mesh.materials.append(m)
+    return base
+
+
+def _append_climber(
+    bm,
+    spec: dict,
+    mat_base: int,
+    ox: float,
+    oy: float,
+    ux: float,
+    uy: float,
+    nx: float,
+    ny: float,
+    length: float,
+    eaves_z: float,
+    plinth_h: float,
+    openings: list[tuple[float, float, float, float]],
+) -> int:
+    """Grow one ivy / creeper on a façade: thin stem ribbons + faceted leaf clusters.
+
+    Everything hugs the wall (leaves 19-30 cm proud, apex a few cm more) instead of
+    stacked boxes; see ``cityview.climbers`` for the growth model. Returns leaf count.
+    """
+    plant = climbers.generate_climber(spec, length, eaves_z, plinth_h, openings)
+
+    def pt(a: float, z: float, d: float) -> tuple[float, float, float]:
+        return (ox + ux * a + nx * d, oy + uy * a + ny * d, z)
+
+    def face(pts, mat: int, centre=None) -> None:
+        verts = [bm.verts.new(p) for p in pts]
+        try:
+            f = bm.faces.new(verts)
+        except ValueError:
+            return
+        f.normal_update()
+        n = f.normal
+        if centre is None:
+            outward_dot = n.x * nx + n.y * ny
+        else:
+            fc = f.calc_center_median()
+            outward_dot = n.x * (fc.x - centre[0]) + n.y * (fc.y - centre[1]) + n.z * (fc.z - centre[2])
+        if outward_dot < 0.0:
+            f.normal_flip()
+        f.material_index = mat
+
+    for a0, z0, a1, z1, w in plant["stems"]:
+        hw = w * 0.5
+        face([pt(a0 - hw, z0, 0.185), pt(a0 + hw, z0, 0.185), pt(a1 + hw, z1, 0.185), pt(a1 - hw, z1, 0.185)], mat_base + climbers.STEM)
+
+    for i, (a, z, w, h, roll, depth, mat) in enumerate(plant["leaves"]):
+        # Leaf = kite folded along its midrib: tip + base ride proud, side points
+        # sink toward the wall, so each leaf catches light like a real one (2 tris).
+        d0 = 0.19 + (i % 8) * 0.011  # stagger layers so overlapping leaves never z-fight
+        cr, sr = math.cos(roll), math.sin(roll)
+
+        def at(u: float, v: float, d: float):
+            return pt(a + u * cr - v * sr, z + u * sr + v * cr, d)
+
+        tip, base = at(0.0, h * 0.5, d0 + depth), at(0.0, -h * 0.5, d0 + depth * 0.4)
+        left, right = at(-w * 0.5, 0.0, d0), at(w * 0.5, 0.0, d0)
+        face([base, right, tip], mat_base + mat)
+        face([base, tip, left], mat_base + mat)
+    return len(plant["leaves"])
+
+
 def add_street_facade(
     name: str,
     p0: list[float],
@@ -600,6 +677,7 @@ def add_street_facade(
     detail: str = "full",
     window_kind: str | None = None,
     near_spawn: bool = False,
+    climber: dict | None = None,
 ) -> None:
     """One batched mesh per street edge (skin, plinth, cornice, windows)."""
     style = style_of(style_name)
@@ -632,6 +710,10 @@ def add_street_facade(
     mesh.materials.append(
         shutter_mats[accent_seed % len(shutter_mats)] if shutter_mats else mats["frame"][mat_key]
     )
+    # Climbing-plant palette goes after every fixed slot (only on façades that have one).
+    climber_base = _climber_mat_base(mesh, mats, climber)
+    # Window / door rectangles (along, half_w, z0, z1) so climbing plants skirt openings.
+    openings: list[tuple[float, float, float, float]] = []
 
     bm = bmesh.new()
     plinth_h = min(1.25, max(0.9, eaves_z * 0.11))
@@ -700,24 +782,6 @@ def add_street_facade(
                 2,
             )
 
-    # Spawn-local ivy cascade near façade corners (batched, shared ivy slot).
-    if near_spawn and detail == "full" and length > 4.0:
-        for corner_along, ivy_h in ((-length * 0.42, min(4.2, eaves_z * 0.55)), (length * 0.38, min(3.2, eaves_z * 0.4))):
-            ix = ox + math.cos(yaw) * corner_along + nx * 0.16
-            iy = oy + math.sin(yaw) * corner_along + ny * 0.16
-            _append_box(bm, ix, iy, ivy_h * 0.45, 0.55, 0.22, ivy_h, yaw, 5)
-            _append_box(
-                bm,
-                ix + nx * 0.12,
-                iy + ny * 0.12,
-                ivy_h * 0.28,
-                0.85,
-                0.35,
-                ivy_h * 0.35,
-                yaw,
-                5,
-            )
-
     for fi in range(floors):
         z_base = fi * floor_h
         for bi in range(bays):
@@ -727,6 +791,7 @@ def add_street_facade(
             if fi == 0 and bi == door_bay:
                 dh = min(2.35, floor_h * 0.75)
                 door_w = min(1.15, win_w * 0.9)
+                openings.append((along, door_w * 0.5 + 0.1, plinth_h, plinth_h + dh))
                 # Recessed door plane — stoop starts at the reveal and steps out.
                 _append_box(
                     bm,
@@ -799,6 +864,7 @@ def add_street_facade(
             else:
                 wh, ww = floor_h * (0.42 if fi == 0 else 0.5), win_w
             sill = (plinth_h + 0.35) if fi == 0 else (z_base + floor_h * 0.22)
+            openings.append((along, ww * 0.5 + 0.1, sill - 0.05, sill + wh + 0.15))
             # Deep reveal: thick frame, glass inset, sill + lintel — windows as holes.
             _append_box(bm, px, py, sill + wh * 0.5, ww + 0.14, 0.14, wh + 0.14, yaw, 3)
             _append_box(
@@ -883,6 +949,24 @@ def add_street_facade(
                             6,
                         )
 
+    # Rare climbing plant (planned per street in build(); most façades have none).
+    if climber_base is not None and climber is not None and detail == "full":
+        CLIMBER_STATS["leaves"] += _append_climber(
+            bm,
+            climber,
+            climber_base,
+            ox,
+            oy,
+            math.cos(yaw),
+            math.sin(yaw),
+            nx,
+            ny,
+            length,
+            eaves_z,
+            plinth_h,
+            openings,
+        )
+
     bm.to_mesh(mesh)
     bm.free()
     mesh.update()
@@ -949,6 +1033,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             detail=detail,
             window_kind=window_kind,
             near_spawn=near_spawn,
+            climber=CLIMBERS.get((int(bid), ei)) if detail == "full" else None,
         )
 
 
@@ -2064,6 +2149,15 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         principled("ivy_a", (0.14, 0.30, 0.10, 1.0), 0.92),
         principled("ivy_b", (0.18, 0.34, 0.12, 1.0), 0.9),
     ]
+    # Climbing-plant palette; order matches cityview.climbers LEAF_* / STEM constants.
+    climber_mats = [
+        principled("climber_dark", (0.05, 0.13, 0.05, 1.0), 0.9),
+        principled("climber_mid", (0.09, 0.20, 0.07, 1.0), 0.92),
+        principled("climber_light", (0.15, 0.28, 0.09, 1.0), 0.92),
+        principled("climber_olive", (0.21, 0.26, 0.08, 1.0), 0.94),
+        principled("climber_red", (0.40, 0.10, 0.06, 1.0), 0.9),
+        principled("climber_stem", (0.15, 0.10, 0.07, 1.0), 0.95),
+    ]
     shutter_mats = [
         principled("shutter_green", (0.18, 0.28, 0.16, 1.0), 0.75),
         principled("shutter_cream", (0.72, 0.66, 0.48, 1.0), 0.78),
@@ -2118,6 +2212,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "trim": {n: principled(f"trim_{n}", s["trim"], 0.7) for n, s in style_items},
         "chimney": chimney_mat,
         "ivy": ivy_mats,
+        "climber": climber_mats,
         "shutter": shutter_mats,
     }
     print(f"Facade material keys: {len(style_items)}")
@@ -2181,8 +2276,16 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         )
         print(f"Street furniture: {furniture}")
 
+    # Climbing plants are rare: per street, most get none, some one house, hard cap two.
+    CLIMBERS.clear()
+    CLIMBERS.update(climbers.plan_climbers(layout, spawn_xy))
+    CLIMBER_STATS["leaves"] = 0
+    streets = {c["street"] for c in CLIMBERS.values()}
+    print(f"Climbing plants: {len(CLIMBERS)} houses on {len(streets)} streets (max {climbers.MAX_PER_STREET}/street)")
+
     for bldg in layout.get("buildings") or []:
         add_building(bldg, mats, spawn_xy=spawn_xy)
+    print(f"Climbing-plant leaf clusters: {CLIMBER_STATS['leaves']}")
 
     setup_world()
     setup_cameras(layout, xmin, ymin, xmax, ymax)
