@@ -578,7 +578,10 @@ export async function createTraffic(scene, THREE, opts = {}) {
       } else {
         car.velocity = Math.max(desire, car.velocity - BRAKE * 2.2 * step);
       }
-      if (car.velocity < 0.05) car.velocity = 0;
+      // Snap to rest only when we actually want to be at rest. Clamping on speed alone
+      // zeroes every launch once ACCEL*step < 0.05 (>= ~52 fps), so cars that stopped at
+      // a red could never pull away again on 60/120 Hz displays.
+      if (car.velocity < 0.05 && desire < 0.05) car.velocity = 0;
       car.lateral += (lateralNudge - car.lateral) * Math.min(1, step * 3);
       car.lateral = Math.max(-0.7, Math.min(0.7, car.lateral));
 
