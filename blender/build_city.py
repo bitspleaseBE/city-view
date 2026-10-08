@@ -948,7 +948,7 @@ def add_photo_facade(
         STATS["photo_quads"] += 1
 
     # Doorsteps: stone treads in front of every front door in the elevations, so
-    # entrances stand proud of the pavement (pavement top is Z_SIDEWALK ~ 15 cm).
+    # entrances stand proud of the pavement (pavement top is Z_SIDEWALK ~ 12 cm).
     first_step_face = len(bm.faces)
     for door in facade_kit.door_steps(quads, rightwards=rightwards):
         STATS["door_steps"] += _append_doorstep(

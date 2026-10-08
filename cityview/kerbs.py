@@ -22,8 +22,8 @@ NON_CARRIAGEWAY = frozenset({"footway", "path", "cycleway", "steps", "pedestrian
 
 # Vertical profile (metres above the world datum; road surface is ~0.04).
 Z_ROAD_SURFACE = 0.04
-KERB_TOP = 0.165  # ~12 cm reveal above the asphalt, like a real Antwerp natuursteen kerb
-PAVEMENT_TOP = 0.15  # pavement sits a hair below the kerb top
+KERB_TOP = 0.15  # ~11 cm reveal above the asphalt (Antwerp natuursteen kerbs run 10-14 cm)
+PAVEMENT_TOP = 0.12  # pavement just under the kerb top; keeps surveyed benches' seat height sane
 KERB_WIDTH = 0.28
 MIN_CROSS_ANGLE_SIN = math.sin(math.radians(35.0))
 CELL = 40.0
