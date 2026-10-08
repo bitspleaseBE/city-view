@@ -13,6 +13,7 @@ from cityview.gtfs_delijn import enrich_layout_transit
 from cityview.jobs import add_photo_building, load_scene, resolve_photo, write_job
 from cityview.osm import fetch_osm, layout_from_osm
 from cityview.paths import (
+    BENCHES_CACHE,
     BLENDER_SCRIPTS,
     DEFAULT_BLENDER,
     DEFAULT_PLACES,
@@ -24,6 +25,7 @@ from cityview.paths import (
     TREES_CACHE,
     VIEWER,
 )
+from cityview.benches import attach_benches, summarize as summarize_benches
 from cityview.trees import attach_trees, summarize as summarize_trees
 from cityview.streetscape import (
     export_roads_near_spawn,
@@ -140,6 +142,10 @@ def city_command(args: argparse.Namespace) -> int:
     trees_cache = TREES_CACHE / f"{cache_key or place_name}.json"
     tree_plan = attach_trees(layout, bbox, origin, trees_cache, refresh=bool(args.refresh))
     print("trees: " + summarize_trees(tree_plan["stats"]))
+    # Surveyed benches (OSM amenity=bench + Stad Antwerpen park furniture); cached under assets/benches.
+    benches_cache = BENCHES_CACHE / f"{cache_key or place_name}.json"
+    bench_plan = attach_benches(layout, osm, bbox, origin, benches_cache, refresh=bool(args.refresh))
+    print("benches: " + summarize_benches(bench_plan))
     # Prefer committed photo-remix JSON (CI has no macOS sips / may lack Pillow).
     if BUILDING_TYPES_PATH.exists():
         types_path = BUILDING_TYPES_PATH
