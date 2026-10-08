@@ -1,6 +1,7 @@
 import unittest
 
 from cityview.streetscape import (
+    export_roads_near_spawn,
     floors_from_height,
     height_truth,
     nearest_road_pose,
@@ -41,6 +42,37 @@ class StreetEdgeTests(unittest.TestCase):
         self.assertAlmostEqual(sy, 0.0, places=3)
         self.assertAlmostEqual(sx, 10.0, places=3)
         self.assertAlmostEqual(yaw, 0.0, places=3)
+
+
+class RoadsExportTests(unittest.TestCase):
+    def test_exports_driveable_near_spawn(self):
+        layout = {
+            "roads": [
+                {
+                    "id": 1,
+                    "kind": "residential",
+                    "width": 6.0,
+                    "points": [[0.0, 0.0], [40.0, 0.0]],
+                },
+                {
+                    "id": 2,
+                    "kind": "footway",
+                    "width": 2.0,
+                    "points": [[0.0, 0.0], [40.0, 0.0]],
+                },
+                {
+                    "id": 3,
+                    "kind": "secondary",
+                    "width": 8.0,
+                    "points": [[500.0, 500.0], [520.0, 500.0]],
+                },
+            ]
+        }
+        payload = export_roads_near_spawn(
+            layout, {"x": 5.0, "y": 0.0}, radius=100.0, max_roads=10
+        )
+        self.assertEqual(len(payload["roads"]), 1)
+        self.assertEqual(payload["roads"][0]["id"], 1)
 
 
 if __name__ == "__main__":

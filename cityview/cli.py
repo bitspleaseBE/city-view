@@ -20,7 +20,7 @@ from cityview.paths import (
     ROOT,
     VIEWER,
 )
-from cityview.streetscape import spawn_from_place
+from cityview.streetscape import export_roads_near_spawn, spawn_from_place
 
 
 def blender_bin() -> Path:
@@ -167,6 +167,10 @@ def city_command(args: argparse.Namespace) -> int:
         spawn_path = VIEWER / "spawn.json"
         spawn_path.write_text(json.dumps(spawn, indent=2) + "\n")
         print(f"Wrote {spawn_path}")
+    roads_payload = export_roads_near_spawn(layout, spawn)
+    roads_path = VIEWER / "roads.json"
+    roads_path.write_text(json.dumps(roads_payload) + "\n")
+    print(f"Wrote {roads_path} ({len(roads_payload['roads'])} roads near spawn)")
     print(f"Outputs in {output_dir}")
     return 0
 
