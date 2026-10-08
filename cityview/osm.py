@@ -105,6 +105,8 @@ def overpass_query(south: float, west: float, north: float, east: float) -> str:
   way["railway"="light_rail"]({bbox});
   node["highway"="traffic_signals"]({bbox});
   node["highway"="crossing"]["crossing"="traffic_signals"]({bbox});
+  node["amenity"="bench"]({bbox});
+  way["amenity"="bench"]({bbox});
   node["highway"="bus_stop"]({bbox});
   node["railway"="tram_stop"]({bbox});
   node["public_transport"="platform"]({bbox});

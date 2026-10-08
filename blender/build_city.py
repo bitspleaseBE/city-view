@@ -24,6 +24,7 @@ from cityview.railclear import RailIndex  # noqa: E402
 _BLENDER_DIR = str(Path(__file__).resolve().parent)
 if _BLENDER_DIR not in sys.path:
     sys.path.insert(0, _BLENDER_DIR)
+import benches_blender  # noqa: E402
 import trees_blender  # noqa: E402
 
 # Surface rail corridors for the current build (set in build()).
@@ -2095,11 +2096,15 @@ def add_street_furniture(
     trunk_mat,
     canopy_mats: list,
 ) -> dict:
-    """Lamp posts, bollards, bins, benches, and sidewalk trees near the spawn."""
-    stats = {"lamps": 0, "bollards": 0, "bins": 0, "benches": 0, "street_trees": 0, "bike_racks": 0}
+    """Lamp posts, bollards, bins and bike racks near the spawn.
+
+    Benches are *not* generated here: they come from surveyed positions with a surveyed
+    or rule-derived facing (``cityview.benches`` / ``benches_blender``).
+    """
+    stats = {"lamps": 0, "bollards": 0, "bins": 0, "street_trees": 0, "bike_racks": 0}
     # Street trees now come from surveyed positions (layout["trees"], see
     # trees_blender); the old evenly-spaced kerb rows read as a straight parade.
-    max_lamps, max_bollards, max_bins, max_benches, max_trees = 42, 70, 24, 16, 0
+    max_lamps, max_bollards, max_bins, max_trees = 42, 70, 24, 0
     for ri, road in enumerate(roads):
         kind = road.get("kind") or "residential"
         if kind in {"footway", "path", "cycleway", "steps"}:
@@ -2199,22 +2204,6 @@ def add_street_furniture(
                             )
                             assign(bin_obj, bin_mat)
                             stats["bins"] += 1
-                        elif kind_slot == 3 and stats["benches"] < max_benches:
-                            seat = add_box(
-                                f"bench_{stats['benches']}",
-                                (1.6, 0.42, 0.12),
-                                (x, y, 0.42),
-                                yaw,
-                            )
-                            assign(seat, wood_mat)
-                            back = add_box(
-                                f"bench_b_{stats['benches']}",
-                                (1.6, 0.08, 0.55),
-                                (x - math.sin(yaw) * 0.18, y + math.cos(yaw) * 0.18, 0.72),
-                                yaw,
-                            )
-                            assign(back, wood_mat)
-                            stats["benches"] += 1
                         elif kind_slot == 4 and stats.get("bike_racks", 0) < 20:
                             # Simple U-rack pair.
                             for k, off in enumerate((-0.35, 0.35)):
@@ -2234,13 +2223,11 @@ def add_street_furniture(
 def add_park_amenities(
     parks: list,
     spawn_xy: tuple[float, float] | None,
-    wood_mat,
     path_mat,
     hedge_mat,
-    max_benches: int = 36,
 ) -> dict:
-    """Park benches, gravel paths, and edge hedges so greens read usable from the street."""
-    stats = {"benches": 0, "paths": 0, "hedges": 0}
+    """Gravel paths and edge hedges so greens read usable (benches: see benches_blender)."""
+    stats = {"paths": 0, "hedges": 0}
     for park in parks:
         ring = park.get("ring") or []
         if len(ring) < 3:
@@ -2282,28 +2269,6 @@ def add_park_amenities(
             )
             assign(hedge, hedge_mat)
             stats["hedges"] += 1
-        for i in range(3):
-            if stats["benches"] >= max_benches:
-                return stats
-            u = ((seed * 1103515245 + i * 777) & 0x7FFFFFFF) / 0x7FFFFFFF
-            v = ((seed * 1664525 + i * 333) & 0x7FFFFFFF) / 0x7FFFFFFF
-            x = min(xs) + u * (max(xs) - min(xs))
-            y = min(ys) + v * (max(ys) - min(ys))
-            if not _point_in_ring(x, y, ring):
-                x, y = cx + (u - 0.5) * 4.0, cy + (v - 0.5) * 4.0
-            if RAILS.within(x, y, railclear.CLEAR_TREE):
-                continue
-            yaw = u * math.pi
-            seat = add_box(f"park_bench_{stats['benches']}", (1.7, 0.42, 0.12), (x, y, 0.42), yaw)
-            assign(seat, wood_mat)
-            back = add_box(
-                f"park_bench_b_{stats['benches']}",
-                (1.7, 0.08, 0.55),
-                (x - math.sin(yaw) * 0.18, y + math.cos(yaw) * 0.18, 0.72),
-                yaw,
-            )
-            assign(back, wood_mat)
-            stats["benches"] += 1
     return stats
 
 
@@ -2656,8 +2621,10 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
 
     veg = trees_blender.add_vegetation(layout, RAILS, trunk_mat, canopy_mats, conifer_mat, bush_mats)
     print(f"Trees and shrubs (surveyed + sparse-park fill): {veg}")
-    park_am = add_park_amenities(layout.get("parks") or [], spawn_xy, wood_mat, path_mat, hedge_mat)
+    park_am = add_park_amenities(layout.get("parks") or [], spawn_xy, path_mat, hedge_mat)
     print(f"Park amenities: {park_am}")
+    bench_stats = benches_blender.add_benches(layout, RAILS, wood_mat, pole_mat)
+    print(f"Benches (surveyed positions + facing): {bench_stats}")
 
     signal_placements = collect_signal_placements(layout, spawn_xy=spawn_xy)
     lights_n = 0
