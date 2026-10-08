@@ -440,6 +440,33 @@ def shop_awnings(
     return out
 
 
+def downpipes(
+    quads: list[dict[str, Any]],
+    eaves_z: float,
+    keep_clear: list[tuple[float, float]] | None = None,
+    min_gap_m: float = 5.0,
+) -> list[dict[str, float]]:
+    """Rainwater downpipe placements ``[{"a": along edge, "z1": top height}]`` (metres).
+
+    Pipes sit on party-wall joints between neighbouring houses (never mid-elevation,
+    where they would cut a window), skip any joint inside a ``keep_clear`` span
+    (doors / shop glazing, ``(a_centre, width)``), and are thinned to one every
+    ``min_gap_m`` so long terraces read as paired houses sharing a pipe.
+    """
+    clear = keep_clear or []
+    out: list[dict[str, float]] = []
+    last = -1e9
+    for left, right in zip(quads, quads[1:]):
+        a = 0.5 * (left["a1"] + right["a0"])
+        if a - last < min_gap_m:
+            continue
+        if any(abs(a - c) < w * 0.5 + 0.25 for c, w in clear):
+            continue
+        out.append({"a": a, "z1": eaves_z - 0.15})
+        last = a
+    return out
+
+
 def window_reveals(
     quads: list[dict[str, Any]], rightwards: bool = True, min_width_m: float = 0.5
 ) -> list[dict[str, float]]:

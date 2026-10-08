@@ -51,7 +51,7 @@ SURFACES_DIR = Path(_REPO_ROOT) / "assets" / surface_kit.TEXTURES_DIRNAME  # pro
 PHOTO_MAT_SLOT = 7  # material slot of the atlas on façade meshes
 DOORSTEP_MAT = None  # shared granite doorstep material, set in build()
 DOORSTEP_MAT_SLOT = 8  # right after the atlas slot
-STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0, "awnings": 0, "reveals": 0}
+STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0, "awnings": 0, "reveals": 0, "downpipes": 0}
 
 
 # Century-old Harmonie palette: stylish but lived-in, not showroom clean.
@@ -1005,6 +1005,29 @@ def _append_shop_awning(bm, ox, oy, ux, uy, nx, ny, a, w, z_top, off, variant: i
     return 1
 
 
+def _append_downpipe(bm, ox, oy, ux, uy, nx, ny, a, z_top, off) -> int:
+    """Cast-iron rainwater pipe on a party-wall joint (frame material, slot 3).
+
+    Shaft + wall brackets every ~1.6 m, a hopper head under the cornice and a bent
+    shoe at the foot, so the façade reads as plumbed rather than a flat print.
+    """
+    yaw = math.atan2(uy, ux)
+    cx, cy = ox + ux * a, oy + uy * a
+    z_bot = 0.2
+    h = z_top - z_bot
+    if h < 2.0:
+        return 0
+    d = off + 0.05
+    _append_box(bm, cx + nx * d, cy + ny * d, z_bot + h * 0.5, 0.09, 0.09, h, yaw, 3)
+    z = z_bot + 0.9
+    while z < z_top - 0.5:
+        _append_box(bm, cx + nx * (d - 0.01), cy + ny * (d - 0.01), z, 0.14, 0.12, 0.05, yaw, 3)
+        z += 1.6
+    _append_box(bm, cx + nx * (d + 0.01), cy + ny * (d + 0.01), z_top - 0.1, 0.24, 0.16, 0.26, yaw, 3)  # hopper head
+    _append_box(bm, cx + nx * (d + 0.08), cy + ny * (d + 0.08), z_bot + 0.05, 0.09, 0.2, 0.12, yaw, 3)  # shoe
+    return 1
+
+
 def _stable_variant(name: str, a: float) -> int:
     return zlib.adler32(f"{name}:{a:.2f}".encode("utf-8")) % 2
 
@@ -1133,6 +1156,13 @@ def add_photo_facade(
             STATS["awnings"] += _append_shop_awning(
                 bm, ox, oy, ux, uy, nx, ny, shop["a"] - half, shop["w"], shop["z"], off, int(shop["side"])
             )
+
+    # Rainwater downpipes on party-wall joints, clear of doors and shop glazing.
+    if detail == "full":
+        clear = [(d["a"], d["w"] * 1.4) for d in facade_kit.door_steps(quads, rightwards=rightwards)]
+        clear += [(sh["a"], sh["w"]) for sh in facade_kit.shop_awnings(quads, rightwards=rightwards)]
+        for pipe in facade_kit.downpipes(quads, eaves_z, clear):
+            STATS["downpipes"] += _append_downpipe(bm, ox, oy, ux, uy, nx, ny, pipe["a"] - half, pipe["z1"], off)
 
     # Window reveals: sills, heads and jamb fins on the glass found in the elevations,
     # so near-spawn windows have relief instead of being printed flat.
@@ -3016,6 +3046,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     STATS["door_steps"] = 0
     STATS["awnings"] = 0
     STATS["reveals"] = 0
+    STATS["downpipes"] = 0
     STATS["photo_edges"] = 0
     atlas_img = load_texture(TEXTURES_DIR / facade_kit.ATLAS_FILE)
     FACADE_PHOTO_MAT = (
@@ -3290,7 +3321,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Aerial-matched roofs: {ROOF_STATS}")
     print(
         f"Photo facades: {STATS['photo_edges']} street edges, {STATS['photo_quads']} textured quads "
-        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'}); doorsteps: {STATS['door_steps']}; awnings: {STATS['awnings']}; window reveals: {STATS['reveals']}"
+        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'}); doorsteps: {STATS['door_steps']}; awnings: {STATS['awnings']}; window reveals: {STATS['reveals']}; downpipes: {STATS['downpipes']}"
     )
 
     setup_world()

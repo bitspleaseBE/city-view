@@ -109,5 +109,19 @@ class FacadeKitTests(unittest.TestCase):
             self.assertIn(entry.get("wall_tile"), kit.WALL_TILES)
 
 
+    def test_downpipes_sit_on_joints_clear_of_doors_and_thinned(self):
+        quads = kit.plan_facade_quads(40.0, 13.0, 4, "art-nouveau", seed=5)
+        joints = [0.5 * (l["a1"] + r["a0"]) for l, r in zip(quads, quads[1:])]
+        pipes = kit.downpipes(quads, 13.0)
+        self.assertTrue(pipes)
+        for p in pipes:
+            self.assertTrue(any(abs(p["a"] - j) < 1e-6 for j in joints))
+            self.assertAlmostEqual(p["z1"], 12.85)
+        gaps = [b["a"] - a["a"] for a, b in zip(pipes, pipes[1:])]
+        self.assertTrue(all(g >= 5.0 for g in gaps))
+        blocked = kit.downpipes(quads, 13.0, keep_clear=[(j, 2.0) for j in joints])
+        self.assertEqual(blocked, [])
+
+
 if __name__ == "__main__":
     unittest.main()
