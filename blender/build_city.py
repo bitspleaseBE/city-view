@@ -476,25 +476,27 @@ def add_street_facade(
                 dh = min(2.3, floor_h * 0.72)
                 _append_box(bm, px, py, plinth_h + dh * 0.5, min(1.1, win_w * 0.85), 0.1, dh, yaw, 3)
                 if detail == "full":
-                    # Stone stoop steps — Belgian townhouse entry.
+                    # Stone stoop steps — flush to door threshold, not sidewalk furniture.
+                    # px/py already sit ~0.12m out (door plane); keep steps shallow against that.
+                    door_w = min(1.1, win_w * 0.85)
                     _append_box(
                         bm,
-                        px + nx * 0.45,
-                        py + ny * 0.45,
-                        0.12,
-                        min(1.3, win_w),
-                        0.55,
-                        0.22,
+                        px + nx * 0.05,
+                        py + ny * 0.05,
+                        0.20,
+                        door_w,
+                        0.18,
+                        0.20,
                         yaw,
                         1,
                     )
                     _append_box(
                         bm,
-                        px + nx * 0.7,
-                        py + ny * 0.7,
-                        0.06,
-                        min(1.4, win_w * 1.05),
-                        0.4,
+                        px + nx * 0.20,
+                        py + ny * 0.20,
+                        0.155,
+                        min(1.2, door_w * 1.08),
+                        0.22,
                         0.12,
                         yaw,
                         1,
