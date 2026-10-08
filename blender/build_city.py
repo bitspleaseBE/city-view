@@ -589,6 +589,7 @@ def add_street_facade(
     mats: dict,
     detail: str = "full",
     window_kind: str | None = None,
+    near_spawn: bool = False,
 ) -> None:
     """One batched mesh per street edge (skin, plinth, cornice, windows)."""
     style = style_of(style_name)
@@ -609,15 +610,51 @@ def add_street_facade(
 
     mesh = bpy.data.meshes.new(name)
     # Slot order matches material_index below.
+    # 0 wall, 1 plinth, 2 trim, 3 frame, 4 glass, 5 ivy, 6 shutter/awning fabric
     for key in ("wall", "plinth", "trim", "frame", "glass"):
         mesh.materials.append(mats[key].get(style_name) or mats[key][mat_key])
+    ivy_mats = mats.get("ivy") or []
+    shutter_mats = mats.get("shutter") or []
+    accent_seed = sum(ord(c) for c in name) if name else 0
+    mesh.materials.append(
+        ivy_mats[accent_seed % len(ivy_mats)] if ivy_mats else mats["plinth"][mat_key]
+    )
+    mesh.materials.append(
+        shutter_mats[accent_seed % len(shutter_mats)] if shutter_mats else mats["frame"][mat_key]
+    )
 
     bm = bmesh.new()
     plinth_h = min(1.25, max(0.9, eaves_z * 0.11))
     # Skin slightly proud of the LOD1 block so façades cast readable depth.
     _append_box(bm, ox, oy, eaves_z * 0.5, length * 0.98, 0.1, eaves_z, yaw, 0)
-    _append_box(bm, ox + nx * 0.05, oy + ny * 0.05, plinth_h * 0.5, length * 0.98, 0.16, plinth_h, yaw, 1)
-    _append_box(bm, ox + nx * 0.1, oy + ny * 0.1, eaves_z + 0.08, length * 1.02, 0.28, 0.34, yaw, 2)
+    # Plinth: thicker base + grit bands (soot ledge + scuffed skirting).
+    _append_box(bm, ox + nx * 0.05, oy + ny * 0.05, plinth_h * 0.5, length * 0.98, 0.18, plinth_h, yaw, 1)
+    _append_box(
+        bm,
+        ox + nx * 0.09,
+        oy + ny * 0.09,
+        0.12,
+        length * 0.99,
+        0.1,
+        0.14,
+        yaw,
+        1,
+    )
+    if detail == "full":
+        _append_box(
+            bm,
+            ox + nx * 0.08,
+            oy + ny * 0.08,
+            plinth_h - 0.08,
+            length * 0.96,
+            0.08,
+            0.1,
+            yaw,
+            1,
+        )
+    # Cornice: deep main ledge + thinner crown for century silhouette.
+    _append_box(bm, ox + nx * 0.12, oy + ny * 0.12, eaves_z + 0.1, length * 1.02, 0.34, 0.38, yaw, 2)
+    _append_box(bm, ox + nx * 0.18, oy + ny * 0.18, eaves_z + 0.28, length * 1.0, 0.2, 0.12, yaw, 2)
     # Vertical soot / rain-stain streaks — century façades aren't pristine.
     if detail == "full" and length > 5.0:
         for si in range(1 + int(length // 7.0)):
@@ -651,6 +688,24 @@ def add_street_facade(
                 0.16,
                 yaw,
                 2,
+            )
+
+    # Spawn-local ivy cascade near façade corners (batched, shared ivy slot).
+    if near_spawn and detail == "full" and length > 4.0:
+        for corner_along, ivy_h in ((-length * 0.42, min(4.2, eaves_z * 0.55)), (length * 0.38, min(3.2, eaves_z * 0.4))):
+            ix = ox + math.cos(yaw) * corner_along + nx * 0.16
+            iy = oy + math.sin(yaw) * corner_along + ny * 0.16
+            _append_box(bm, ix, iy, ivy_h * 0.45, 0.55, 0.22, ivy_h, yaw, 5)
+            _append_box(
+                bm,
+                ix + nx * 0.12,
+                iy + ny * 0.12,
+                ivy_h * 0.28,
+                0.85,
+                0.35,
+                ivy_h * 0.35,
+                yaw,
+                5,
             )
 
     for fi in range(floors):
@@ -701,16 +756,29 @@ def add_street_facade(
                 continue
             # Shop awnings on ground-floor bays — lived-in street rhythm.
             if detail == "full" and fi == 0 and bi % 3 == 1 and kind != "ribbon":
+                aw_z = plinth_h + floor_h * 0.55
                 _append_box(
                     bm,
                     px + nx * 0.45,
                     py + ny * 0.45,
-                    plinth_h + floor_h * 0.55,
+                    aw_z,
                     win_w * 1.1,
                     0.55,
                     0.08,
                     yaw,
-                    2,
+                    6,
+                )
+                # Ground-level shop sign board hanging under the awning.
+                _append_box(
+                    bm,
+                    px + nx * 0.38,
+                    py + ny * 0.38,
+                    aw_z - 0.28,
+                    win_w * 0.85,
+                    0.06,
+                    0.32,
+                    yaw,
+                    6,
                 )
             if kind == "ribbon":
                 wh, ww = floor_h * 0.52, bay_w * 0.88
@@ -781,6 +849,29 @@ def add_street_facade(
                         yaw,
                         3,
                     )
+                # Paired window shutters — spawn-local only to keep GLB lean.
+                if (
+                    near_spawn
+                    and fi >= 1
+                    and kind not in {"ribbon", "tall"}
+                    and bi % 2 == 1
+                ):
+                    shut_w = max(0.18, ww * 0.28)
+                    shut_d = 0.05
+                    for side in (-1.0, 1.0):
+                        sx = px + math.cos(yaw) * side * (ww * 0.5 + shut_w * 0.45) + nx * 0.1
+                        sy = py + math.sin(yaw) * side * (ww * 0.5 + shut_w * 0.45) + ny * 0.1
+                        _append_box(
+                            bm,
+                            sx,
+                            sy,
+                            sill + wh * 0.5,
+                            shut_w,
+                            shut_d,
+                            wh * 0.92,
+                            yaw,
+                            6,
+                        )
 
     bm.to_mesh(mesh)
     bm.free()
@@ -817,8 +908,10 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     cy = sum(p[1] for p in ring) / len(ring)
     detail = "full"
     dist = 0.0
+    near_spawn = False
     if spawn_xy is not None:
         dist = math.hypot(cx - spawn_xy[0], cy - spawn_xy[1])
+        near_spawn = dist <= 95.0
         if dist > 140.0:
             detail = "simple"
         if dist > 360.0:
@@ -845,6 +938,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             mats,
             detail=detail,
             window_kind=window_kind,
+            near_spawn=near_spawn,
         )
 
 
@@ -1222,29 +1316,260 @@ def add_park_vegetation(parks: list, trunk_mat, canopy_mats: list, bush_mats: li
     return placed
 
 
-def add_traffic_light(name: str, x: float, y: float, pole_mat, housing_mat, lamp_mats) -> None:
-    pole = add_box(f"{name}_pole", (0.12, 0.12, 3.4), (x, y, 1.7), 0.0)
+_DRIVEABLE_SIGNAL_KINDS = {
+    "motorway",
+    "motorway_link",
+    "trunk",
+    "trunk_link",
+    "primary",
+    "primary_link",
+    "secondary",
+    "secondary_link",
+    "tertiary",
+    "tertiary_link",
+    "unclassified",
+    "residential",
+    "living_street",
+}
+
+
+def _nearest_road_hit(
+    px: float, py: float, roads: list
+) -> tuple[float, float, float, float, float, float] | None:
+    """Closest driveable centreline sample: cx, cy, tx, ty, width, dist."""
+    best: tuple[float, float, float, float, float, float] | None = None
+    for road in roads:
+        kind = road.get("kind") or "residential"
+        if kind not in _DRIVEABLE_SIGNAL_KINDS:
+            continue
+        pts = road.get("points") or []
+        width = float(road.get("width") or 6.0)
+        for i in range(len(pts) - 1):
+            ax, ay = float(pts[i][0]), float(pts[i][1])
+            bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+            dx, dy = bx - ax, by - ay
+            len2 = dx * dx + dy * dy
+            if len2 < 1e-6:
+                continue
+            t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len2))
+            cx, cy = ax + t * dx, ay + t * dy
+            dist = math.hypot(px - cx, py - cy)
+            if best is None or dist < best[5]:
+                length = math.sqrt(len2)
+                best = (cx, cy, dx / length, dy / length, width, dist)
+    return best
+
+
+def _cluster_signal_nodes(
+    nodes: list[tuple[float, float]],
+    *,
+    merge_m: float = 12.0,
+) -> list[tuple[float, float]]:
+    """Deduplicate OSM signal nodes; one cluster centroid per intersection."""
+    clusters: list[list[tuple[float, float]]] = []
+    for x, y in nodes:
+        placed = False
+        for cluster in clusters:
+            cx = sum(p[0] for p in cluster) / len(cluster)
+            cy = sum(p[1] for p in cluster) / len(cluster)
+            if math.hypot(x - cx, y - cy) <= merge_m:
+                cluster.append((x, y))
+                placed = True
+                break
+        if not placed:
+            clusters.append([(x, y)])
+    out: list[tuple[float, float]] = []
+    for cluster in clusters:
+        out.append(
+            (
+                sum(p[0] for p in cluster) / len(cluster),
+                sum(p[1] for p in cluster) / len(cluster),
+            )
+        )
+    return out
+
+
+def _approaches_at_junction(
+    jx: float, jy: float, roads: list, *, search_r: float = 16.0
+) -> list[dict]:
+    """Unique inbound approaches (stop-line + curb) around a junction centre."""
+    raw: list[dict] = []
+    for road in roads:
+        kind = road.get("kind") or "residential"
+        if kind not in _DRIVEABLE_SIGNAL_KINDS:
+            continue
+        pts = road.get("points") or []
+        width = float(road.get("width") or 6.0)
+        if len(pts) < 2:
+            continue
+        for i in range(len(pts) - 1):
+            ax, ay = float(pts[i][0]), float(pts[i][1])
+            bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+            for ex, ey, ox, oy in ((ax, ay, bx, by), (bx, by, ax, ay)):
+                if math.hypot(ex - jx, ey - jy) > search_r:
+                    continue
+                dx, dy = ex - ox, ey - oy
+                length = math.hypot(dx, dy) or 1.0
+                # Inbound tangent: travel toward the junction endpoint.
+                tx, ty = dx / length, dy / length
+                # Stop-line ~3m before junction along the approach.
+                sx = ex - tx * 3.2
+                sy = ey - ty * 3.2
+                raw.append({"tx": tx, "ty": ty, "sx": sx, "sy": sy, "width": width})
+            # Mid-segment projection when the junction sits along a long way.
+            dx, dy = bx - ax, by - ay
+            len2 = dx * dx + dy * dy
+            if len2 < 1.0:
+                continue
+            t = max(0.0, min(1.0, ((jx - ax) * dx + (jy - ay) * dy) / len2))
+            if t <= 0.02 or t >= 0.98:
+                continue
+            cx, cy = ax + t * dx, ay + t * dy
+            if math.hypot(cx - jx, cy - jy) > search_r * 0.6:
+                continue
+            length = math.sqrt(len2)
+            tx, ty = dx / length, dy / length
+            for sign in (1.0, -1.0):
+                atx, aty = tx * sign, ty * sign
+                sx = jx - atx * 3.2
+                sy = jy - aty * 3.2
+                raw.append({"tx": atx, "ty": aty, "sx": sx, "sy": sy, "width": width})
+
+    # Angle-bin so we get at most one approach per compass arm.
+    bins: dict[int, dict] = {}
+    for ap in raw:
+        ang = math.atan2(ap["ty"], ap["tx"])
+        key = int(round(ang / (math.pi / 4.0))) % 8
+        prev = bins.get(key)
+        if prev is None:
+            bins[key] = ap
+            continue
+        # Prefer stop-lines closer to a typical 3m offset from junction.
+        d_new = abs(math.hypot(ap["sx"] - jx, ap["sy"] - jy) - 3.2)
+        d_old = abs(math.hypot(prev["sx"] - jx, prev["sy"] - jy) - 3.2)
+        if d_new < d_old:
+            bins[key] = ap
+    return list(bins.values())[:4]
+
+
+def collect_signal_placements(
+    layout: dict, spawn_xy: tuple[float, float] | None = None
+) -> list[dict]:
+    """OSM traffic_signals → curb poles + stop-line zebras per approach."""
+    roads = layout.get("roads") or []
+    raw: list[tuple[float, float]] = []
+    for s in layout.get("signals") or []:
+        x, y = float(s["x"]), float(s["y"])
+        if spawn_xy is not None and math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 220.0:
+            continue
+        raw.append((x, y))
+    if not raw:
+        return []
+
+    if spawn_xy is not None:
+        raw.sort(key=lambda p: math.hypot(p[0] - spawn_xy[0], p[1] - spawn_xy[1]))
+    clusters = _cluster_signal_nodes(raw, merge_m=12.0)
+    if spawn_xy is not None:
+        clusters.sort(key=lambda p: math.hypot(p[0] - spawn_xy[0], p[1] - spawn_xy[1]))
+    clusters = clusters[:14]
+
+    placements: list[dict] = []
+    used_stops: list[tuple[float, float]] = []
+    for jx, jy in clusters:
+        approaches = _approaches_at_junction(jx, jy, roads)
+        if not approaches:
+            hit = _nearest_road_hit(jx, jy, roads)
+            if hit is None:
+                continue
+            cx, cy, tx, ty, width, _dist = hit
+            approaches = [
+                {
+                    "tx": tx,
+                    "ty": ty,
+                    "sx": cx - tx * 3.0,
+                    "sy": cy - ty * 3.0,
+                    "width": width,
+                }
+            ]
+        for ap in approaches:
+            sx, sy = ap["sx"], ap["sy"]
+            if any(math.hypot(sx - ux, sy - uy) < 5.5 for ux, uy in used_stops):
+                continue
+            used_stops.append((sx, sy))
+            tx, ty = ap["tx"], ap["ty"]
+            width = float(ap["width"])
+            half = width * 0.5
+            # Right-hand curb relative to inbound travel.
+            rx, ry = ty, -tx
+            pole_x = sx + rx * (half + 0.85)
+            pole_y = sy + ry * (half + 0.85)
+            # Face the head toward oncoming traffic (look back along approach).
+            yaw = math.atan2(-ty, -tx)
+            placements.append(
+                {
+                    "pole_x": pole_x,
+                    "pole_y": pole_y,
+                    "stop_x": sx,
+                    "stop_y": sy,
+                    "tx": tx,
+                    "ty": ty,
+                    "yaw": yaw,
+                    "width": width,
+                    "jx": jx,
+                    "jy": jy,
+                }
+            )
+    return placements
+
+
+def add_traffic_light(
+    name: str,
+    x: float,
+    y: float,
+    yaw: float,
+    pole_mat,
+    housing_mat,
+    lamp_mats,
+) -> None:
+    """Pole on the curb; head faces oncoming traffic."""
+    pole = add_box(f"{name}_pole", (0.12, 0.12, 3.4), (x, y, 1.7), yaw)
     assign(pole, pole_mat)
-    head = add_box(f"{name}_head", (0.28, 0.22, 0.85), (x, y + 0.18, 3.55), 0.0)
+    # Local +Y is the face direction after rot_z=yaw (Blender).
+    fx, fy = math.cos(yaw), math.sin(yaw)
+    hx, hy = x + fx * 0.2, y + fy * 0.2
+    head = add_box(f"{name}_head", (0.28, 0.22, 0.85), (hx, hy, 3.55), yaw)
     assign(head, housing_mat)
     for i, mat in enumerate(lamp_mats):
-        lamp = add_box(f"{name}_l{i}", (0.16, 0.08, 0.16), (x, y + 0.32, 3.85 - i * 0.26), 0.0)
+        lx = hx + fx * 0.14
+        ly = hy + fy * 0.14
+        lamp = add_box(f"{name}_l{i}", (0.16, 0.08, 0.16), (lx, ly, 3.85 - i * 0.26), yaw)
         assign(lamp, mat)
 
 
-def add_crosswalks(signal_pts: list[tuple[float, float]], stripe_mat, spawn_xy) -> int:
-    """Zebra stripes near OSM traffic signals (and spawn-proximate junctions)."""
+def add_crosswalks(placements: list[dict], stripe_mat, spawn_xy) -> int:
+    """One zebra set per approach: stripes perpendicular to road tangent."""
     count = 0
-    for i, (sx, sy) in enumerate(signal_pts):
-        if spawn_xy is not None and math.hypot(sx - spawn_xy[0], sy - spawn_xy[1]) > 280.0:
+    for i, pl in enumerate(placements):
+        sx, sy = float(pl["stop_x"]), float(pl["stop_y"])
+        if spawn_xy is not None and math.hypot(sx - spawn_xy[0], sy - spawn_xy[1]) > 220.0:
             continue
-        # Orient stripes roughly along local cardinal — reads fine from POV.
-        yaw = (i % 2) * (math.pi * 0.5)
-        for s in range(6):
-            along = -2.4 + s * 0.85
-            cx = sx + math.cos(yaw) * along
-            cy = sy + math.sin(yaw) * along
-            stripe = add_box(f"zebra_{i}_{s}", (0.45, 3.2, 0.02), (cx, cy, Z_ZEBRA), yaw)
+        tx, ty = float(pl["tx"]), float(pl["ty"])
+        width = float(pl.get("width") or 6.0)
+        # Travel yaw: stripe long axis is across the carriageway (local Y after rot).
+        yaw = math.atan2(ty, tx)
+        span = max(3.2, min(7.5, width * 0.92))
+        n_stripes = 5
+        for s in range(n_stripes):
+            along = -1.6 + s * 0.8
+            cx = sx + tx * along
+            cy = sy + ty * along
+            # Thin along travel (X), wide across road (Y).
+            stripe = add_box(
+                f"zebra_{i}_{s}",
+                (0.42, span, 0.02),
+                (cx, cy, Z_ZEBRA),
+                yaw,
+            )
             assign(stripe, stripe_mat)
             count += 1
     return count
@@ -1490,28 +1815,51 @@ def add_road_dashes(roads: list, spawn_xy: tuple[float, float], dash_mat, max_da
     return placed
 
 
-def collect_signal_points(layout: dict, spawn_xy: tuple[float, float] | None = None) -> list[tuple[float, float]]:
-    pts: list[tuple[float, float]] = []
-    for s in layout.get("signals") or []:
-        pts.append((float(s["x"]), float(s["y"])))
-    if pts:
-        if spawn_xy is not None:
-            pts.sort(key=lambda p: math.hypot(p[0] - spawn_xy[0], p[1] - spawn_xy[1]))
-        return pts[:48]
-    # Fallback: dense road vertices ≈ junctions.
-    buckets: dict[tuple[int, int], int] = {}
-    coords: dict[tuple[int, int], tuple[float, float]] = {}
-    for road in layout.get("roads") or []:
-        if road.get("kind") in {"footway", "path", "cycleway", "steps", "service"}:
+def add_asphalt_wear(
+    roads: list,
+    spawn_xy: tuple[float, float],
+    wear_mats: list,
+    max_patches: int = 64,
+) -> int:
+    """Subtle darker asphalt patches near spawn — worn carriageway without new textures."""
+    placed = 0
+    for ri, road in enumerate(roads):
+        kind = road.get("kind") or "residential"
+        if kind not in {"residential", "tertiary", "secondary", "unclassified", "primary", "living_street"}:
             continue
-        for x, y in road.get("points") or []:
-            key = (int(round(x / 8.0)), int(round(y / 8.0)))
-            buckets[key] = buckets.get(key, 0) + 1
-            coords[key] = (x, y)
-    for key, count in buckets.items():
-        if count >= 3:
-            pts.append(coords[key])
-    return pts[:60]
+        pts = road.get("points") or []
+        if len(pts) < 2:
+            continue
+        mid = pts[len(pts) // 2]
+        if math.hypot(mid[0] - spawn_xy[0], mid[1] - spawn_xy[1]) > 140.0:
+            continue
+        half = float(road.get("width") or 6.0) * 0.28
+        for i in range(len(pts) - 1):
+            x0, y0 = pts[i]
+            x1, y1 = pts[i + 1]
+            seg = math.hypot(x1 - x0, y1 - y0)
+            yaw = math.atan2(y1 - y0, x1 - x0)
+            t = 4.0 + (ri % 5) * 1.2
+            while t < seg - 2.0:
+                if placed >= max_patches:
+                    return placed
+                x = x0 + (x1 - x0) * (t / seg)
+                y = y0 + (y1 - y0) * (t / seg)
+                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) <= 120.0:
+                    # Alternate centre blotches and kerb-side tyre wear.
+                    side = 1.0 if (placed % 3) else 0.0
+                    ox = x + math.cos(yaw + math.pi * 0.5) * half * side * (1.0 if placed % 2 == 0 else -1.0)
+                    oy = y + math.sin(yaw + math.pi * 0.5) * half * side * (1.0 if placed % 2 == 0 else -1.0)
+                    patch = add_box(
+                        f"asphalt_wear_{placed}",
+                        (2.4 + (placed % 3) * 0.4, 0.9 + (placed % 2) * 0.35, 0.015),
+                        (ox, oy, Z_ROAD + 0.008),
+                        yaw,
+                    )
+                    assign(patch, wear_mats[placed % len(wear_mats)])
+                    placed += 1
+                t += 11.0 + (ri % 3)
+    return placed
 
 
 def setup_cameras(layout: dict, xmin: float, ymin: float, xmax: float, ymax: float) -> None:
@@ -1589,14 +1937,31 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     sidewalk_mat = principled("sidewalk", (0.55, 0.54, 0.50, 1.0), 0.95)
     curb_mat = principled("curb", (0.42, 0.41, 0.38, 1.0), 0.9)
     trunk_mat = principled("trunk", (0.28, 0.18, 0.10, 1.0), 0.9)
+    # Varied park canopy: deep shade, sun-lit lime, dusty summer olive.
     canopy_mats = [
-        principled("canopy_a", (0.18, 0.42, 0.14, 1.0), 0.85),
-        principled("canopy_b", (0.26, 0.38, 0.12, 1.0), 0.88),
-        principled("canopy_c", (0.14, 0.34, 0.16, 1.0), 0.82),
+        principled("canopy_a", (0.16, 0.40, 0.13, 1.0), 0.9),
+        principled("canopy_b", (0.24, 0.44, 0.14, 1.0), 0.86),
+        principled("canopy_c", (0.12, 0.32, 0.15, 1.0), 0.92),
+        principled("canopy_d", (0.30, 0.42, 0.16, 1.0), 0.84),
+        principled("canopy_e", (0.20, 0.36, 0.10, 1.0), 0.88),
     ]
     bush_mats = [
-        principled("bush_a", (0.22, 0.36, 0.12, 1.0), 0.9),
-        principled("bush_b", (0.28, 0.40, 0.16, 1.0), 0.88),
+        principled("bush_a", (0.20, 0.34, 0.11, 1.0), 0.92),
+        principled("bush_b", (0.26, 0.38, 0.14, 1.0), 0.9),
+        principled("bush_c", (0.18, 0.30, 0.12, 1.0), 0.94),
+    ]
+    ivy_mats = [
+        principled("ivy_a", (0.14, 0.30, 0.10, 1.0), 0.92),
+        principled("ivy_b", (0.18, 0.34, 0.12, 1.0), 0.9),
+    ]
+    shutter_mats = [
+        principled("shutter_green", (0.18, 0.28, 0.16, 1.0), 0.75),
+        principled("shutter_cream", (0.72, 0.66, 0.48, 1.0), 0.78),
+        principled("shutter_blue", (0.22, 0.28, 0.38, 1.0), 0.72),
+    ]
+    wear_mats = [
+        principled("asphalt_wear_a", (0.05, 0.05, 0.055, 1.0), 0.98),
+        principled("asphalt_wear_b", (0.10, 0.09, 0.08, 1.0), 0.97),
     ]
     dash_mat = principled("road_dash", (0.82, 0.78, 0.55, 1.0), 0.9)
     path_mat = principled("park_path", (0.48, 0.42, 0.32, 1.0), 0.95)
@@ -1639,9 +2004,11 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "frame": {n: principled(f"frame_{n}", s["frame"], 0.62, metallic=0.12) for n, s in style_items},
         # Glazier glass — darker, slightly reflective so windows read as openings not stickers.
         "glass": {n: principled(f"glass_{n}", s["glass"], 0.12, metallic=0.35) for n, s in style_items},
-        "plinth": {n: principled(f"plinth_{n}", s["plinth"], 0.9) for n, s in style_items},
+        "plinth": {n: principled(f"plinth_{n}", s["plinth"], 0.92) for n, s in style_items},
         "trim": {n: principled(f"trim_{n}", s["trim"], 0.7) for n, s in style_items},
         "chimney": chimney_mat,
+        "ivy": ivy_mats,
+        "shutter": shutter_mats,
     }
     print(f"Facade material keys: {len(style_items)}")
 
@@ -1666,16 +2033,26 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     park_am = add_park_amenities(layout.get("parks") or [], spawn_xy, wood_mat, path_mat, hedge_mat)
     print(f"Park amenities: {park_am}")
 
-    signal_pts = collect_signal_points(layout, spawn_xy=spawn_xy)
-    for i, (sx, sy) in enumerate(signal_pts):
-        add_traffic_light(f"signal_{i}", sx, sy, pole_mat, housing_mat, lamp_mats)
-    print(f"Traffic lights: {len(signal_pts)}")
-    zebras = add_crosswalks(signal_pts, stripe_mat, spawn_xy)
+    signal_placements = collect_signal_placements(layout, spawn_xy=spawn_xy)
+    for i, pl in enumerate(signal_placements):
+        add_traffic_light(
+            f"signal_{i}",
+            float(pl["pole_x"]),
+            float(pl["pole_y"]),
+            float(pl["yaw"]),
+            pole_mat,
+            housing_mat,
+            lamp_mats,
+        )
+    print(f"Traffic lights: {len(signal_placements)}")
+    zebras = add_crosswalks(signal_placements, stripe_mat, spawn_xy)
     print(f"Crosswalk stripes: {zebras}")
 
     if spawn_xy is not None:
         dashes = add_road_dashes(layout.get("roads") or [], spawn_xy, dash_mat)
         print(f"Road dashes near spawn: {dashes}")
+        wear = add_asphalt_wear(layout.get("roads") or [], spawn_xy, wear_mats)
+        print(f"Asphalt wear patches near spawn: {wear}")
         cars = add_parked_cars(
             layout.get("roads") or [], spawn_xy, car_mats, car_glass, tire_mat, max_cars=48
         )

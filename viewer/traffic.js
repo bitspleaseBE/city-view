@@ -1,15 +1,53 @@
 /**
- * Runtime GTA3-simple traffic: box cars follow OSM road centrelines
- * with car-to-car / player following-distance avoidance.
+ * Runtime GTA3-simple traffic: box cars follow driveable OSM centrelines
+ * with car-following, 30s lights at real stop-lines, and stuck respawn.
+ * Never uses tram/rail ways.
  */
 
-const CAR_COUNT = 18;
 const BASE_SPEED = 9.5;
-const FOLLOW_DIST = 8;
+const FOLLOW_DIST = 9;
 const PLAYER_STOP_DIST = 4;
 const SNAP_M = 11;
 const LANE_OFFSET = 1.15;
+const STUCK_SEC = 5;
+const MIN_GAP = 3.4;
+const CYCLE_SEC = 30;
+const METERS_PER_CAR = 480;
+const MIN_CARS = 8;
+const MAX_CARS = 14;
 const BODY_COLORS = [0xc45c48, 0x3d5a80, 0xd4a373, 0x4a5568, 0xb8b0a4, 0x2f6f5e];
+
+const DRIVEABLE_KINDS = new Set([
+  "motorway",
+  "motorway_link",
+  "trunk",
+  "trunk_link",
+  "primary",
+  "primary_link",
+  "secondary",
+  "secondary_link",
+  "tertiary",
+  "tertiary_link",
+  "unclassified",
+  "residential",
+  "living_street",
+]);
+
+const BLOCKED_KINDS = new Set([
+  "tram",
+  "rail",
+  "light_rail",
+  "subway",
+  "narrow_gauge",
+  "platform",
+  "footway",
+  "path",
+  "cycleway",
+  "steps",
+  "pedestrian",
+  "service",
+  "bus_guideway",
+]);
 
 function blenderToThree(x, y, out) {
   out.set(x, 0, -y);
@@ -19,13 +57,15 @@ function blenderToThree(x, y, out) {
 function buildPaths(roads, THREE) {
   const paths = [];
   for (const road of roads) {
+    const kind = String(road.kind || "residential").toLowerCase();
+    if (BLOCKED_KINDS.has(kind) || (kind && !DRIVEABLE_KINDS.has(kind))) continue;
+    if (road.tramShared === true && kind === "tram") continue;
     const pts = road.points || [];
     if (pts.length < 2) continue;
     const points = [];
     for (const p of pts) {
       points.push(blenderToThree(p[0], p[1], new THREE.Vector3()));
     }
-    // Deduplicate consecutive duplicates
     const cleaned = [points[0]];
     for (let i = 1; i < points.length; i++) {
       if (cleaned[cleaned.length - 1].distanceToSquared(points[i]) > 0.05) {
@@ -40,17 +80,54 @@ function buildPaths(roads, THREE) {
       cumulative.push(len);
     }
     if (len < 4) continue;
+    const laneOffset = Number.isFinite(road.laneOffset) ? road.laneOffset : LANE_OFFSET;
     paths.push({
       id: road.id,
+      kind,
       width: road.width || 6,
+      laneOffset: road.tramShared ? Math.max(laneOffset, 2.35) : laneOffset,
       points: cleaned,
       cumulative,
       length: len,
       start: cleaned[0],
       end: cleaned[cleaned.length - 1],
+      occupants: 0,
     });
   }
   return paths;
+}
+
+function buildSignals(raw, THREE, cycleSec) {
+  const signals = [];
+  const tmp = new THREE.Vector3();
+  for (const s of raw || []) {
+    const stopX = s.stopX ?? s.x;
+    const stopY = s.stopY ?? s.y;
+    if (!Number.isFinite(stopX) || !Number.isFinite(stopY)) continue;
+    blenderToThree(stopX, stopY, tmp);
+    const stop = tmp.clone();
+    let tx = Number(s.tx);
+    let ty = Number(s.ty);
+    let tan;
+    if (Number.isFinite(tx) && Number.isFinite(ty) && tx * tx + ty * ty > 1e-6) {
+      // Blender (x,y) → Three (x, 0, -y); tangent likewise.
+      tan = new THREE.Vector3(tx, 0, -ty).normalize();
+    } else {
+      tan = new THREE.Vector3(1, 0, 0);
+    }
+    const id = s.id ?? signals.length;
+    const phaseOffset = (Math.abs(Number(id) || signals.length) % 17) * 1.7;
+    // Axis group: NS vs EW for alternating greens within the 30s cycle.
+    const ns = Math.abs(tan.z) >= Math.abs(tan.x);
+    signals.push({
+      stop,
+      tan,
+      ns,
+      phaseOffset,
+      width: s.width || 6,
+    });
+  }
+  return { signals, cycleSec };
 }
 
 function samplePath(path, s, THREE, outPos, outTan) {
@@ -72,11 +149,11 @@ function samplePath(path, s, THREE, outPos, outTan) {
   } else {
     outTan.normalize();
   }
-  // Right-hand lane offset
+  const lane = path.laneOffset ?? LANE_OFFSET;
   const rx = outTan.z;
   const rz = -outTan.x;
-  outPos.x += rx * LANE_OFFSET;
-  outPos.z += rz * LANE_OFFSET;
+  outPos.x += rx * lane;
+  outPos.z += rz * lane;
   outPos.y = 0.75;
 }
 
@@ -93,7 +170,6 @@ function makeSharedParts(THREE) {
 
 function makeCarMesh(THREE, parts, colorIndex) {
   const group = new THREE.Group();
-  // Length along local +Z (Three.js forward for yaw)
   const body = new THREE.Mesh(parts.bodyGeo, parts.bodyMats[colorIndex % parts.bodyMats.length]);
   const cabin = new THREE.Mesh(parts.cabinGeo, parts.glassMat);
   cabin.position.set(0, 0.7, 0.1);
@@ -111,44 +187,85 @@ function makeCarMesh(THREE, parts, colorIndex) {
   return group;
 }
 
-function pickNextPath(paths, path, atEnd, THREE) {
+function tipTangent(path, atEnd, THREE) {
+  const pts = path.points;
+  if (atEnd) {
+    return new THREE.Vector3().subVectors(pts[pts.length - 1], pts[pts.length - 2]).normalize();
+  }
+  return new THREE.Vector3().subVectors(pts[0], pts[1]).normalize();
+}
+
+function entryTangent(path, reverse, THREE) {
+  const pts = path.points;
+  if (reverse) {
+    return new THREE.Vector3().subVectors(pts[pts.length - 2], pts[pts.length - 1]).normalize();
+  }
+  return new THREE.Vector3().subVectors(pts[1], pts[0]).normalize();
+}
+
+function pickNextPath(paths, path, atEnd, cars, car, THREE) {
   const tip = atEnd ? path.end : path.start;
+  const outTan = tipTangent(path, atEnd, THREE);
   const candidates = [];
   for (let i = 0; i < paths.length; i++) {
     const other = paths[i];
     if (other === path) continue;
     const dStart = tip.distanceTo(other.start);
     const dEnd = tip.distanceTo(other.end);
-    if (dStart < SNAP_M) candidates.push({ index: i, reverse: false, d: dStart });
-    if (dEnd < SNAP_M) candidates.push({ index: i, reverse: true, d: dEnd });
+    if (dStart < SNAP_M) {
+      const inTan = entryTangent(other, false, THREE);
+      candidates.push({ index: i, reverse: false, d: dStart, align: outTan.dot(inTan) });
+    }
+    if (dEnd < SNAP_M) {
+      const inTan = entryTangent(other, true, THREE);
+      candidates.push({ index: i, reverse: true, d: dEnd, align: outTan.dot(inTan) });
+    }
   }
   if (!candidates.length) {
-    // U-turn on same path
     return { index: paths.indexOf(path), reverse: !atEnd ? false : true, flip: true };
   }
-  candidates.sort((a, b) => a.d - b.d);
-  const pool = candidates.slice(0, Math.min(4, candidates.length));
-  return pool[(Math.random() * pool.length) | 0];
+  // Prefer continuing forward; avoid U-turns; prefer quieter edges.
+  for (const c of candidates) {
+    let crowd = 0;
+    for (const other of cars) {
+      if (other === car) continue;
+      if (other.pathIndex === c.index) crowd++;
+    }
+    c.score = c.align * 2.2 - crowd * 0.55 - c.d * 0.04;
+    if (c.align < -0.25) c.score -= 3.5;
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const forward = candidates.filter((c) => c.align > 0.15);
+  const pool = (forward.length ? forward : candidates).slice(0, Math.min(3, candidates.length));
+  // Soft random among top choices so fleets diverge.
+  const weights = pool.map((_, i) => 3 - i);
+  let r = Math.random() * weights.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < pool.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return pool[i];
+  }
+  return pool[0];
 }
 
 function createCar(paths, THREE, parts) {
   const index = (Math.random() * paths.length) | 0;
   const path = paths[index];
   const reverse = Math.random() < 0.5;
-  const s = Math.random() * path.length * 0.85;
+  const s = 2 + Math.random() * Math.max(1, path.length * 0.8 - 4);
   const colorIndex = (Math.random() * BODY_COLORS.length) | 0;
   const mesh = makeCarMesh(THREE, parts, colorIndex);
-  const speed = BASE_SPEED * (0.85 + Math.random() * 0.35);
+  const speed = BASE_SPEED * (0.8 + Math.random() * 0.45);
   return {
     mesh,
     pathIndex: index,
     reverse,
     s,
     speed,
-    velocity: speed,
+    velocity: speed * (0.6 + Math.random() * 0.4),
     pos: new THREE.Vector3(),
     tan: new THREE.Vector3(),
     lateral: 0,
+    stuck: 0,
   };
 }
 
@@ -167,6 +284,19 @@ function placeCar(car, paths, THREE) {
   car.mesh.rotation.y = Math.atan2(car.tan.x, car.tan.z);
 }
 
+function fleetCount(paths, requested) {
+  if (Number.isFinite(requested)) return requested;
+  let total = 0;
+  for (const p of paths) total += p.length;
+  return Math.max(MIN_CARS, Math.min(MAX_CARS, Math.round(total / METERS_PER_CAR)));
+}
+
+function signalIsGreen(sig, nowSec, cycleSec) {
+  const phase = ((nowSec + sig.phaseOffset) % cycleSec + cycleSec) % cycleSec;
+  const nsGreen = phase < cycleSec * 0.5;
+  return sig.ns ? nsGreen : !nsGreen;
+}
+
 /**
  * @param {import('three').Scene} scene
  * @param {typeof import('three')} THREE
@@ -174,7 +304,6 @@ function placeCar(car, paths, THREE) {
  */
 export async function createTraffic(scene, THREE, opts = {}) {
   const url = opts.url || "./roads.json";
-  const count = opts.count ?? CAR_COUNT;
   let data;
   try {
     const res = await fetch(url);
@@ -190,6 +319,10 @@ export async function createTraffic(scene, THREE, opts = {}) {
     return { update() {}, dispose() {} };
   }
 
+  const cycleSec = Number(data.cycleSeconds) || CYCLE_SEC;
+  const { signals } = buildSignals(data.signals || [], THREE, cycleSec);
+  const count = fleetCount(paths, opts.count);
+
   const root = new THREE.Group();
   root.name = "RuntimeTraffic";
   scene.add(root);
@@ -198,14 +331,13 @@ export async function createTraffic(scene, THREE, opts = {}) {
   const cars = [];
   for (let i = 0; i < count; i++) {
     const car = createCar(paths, THREE, parts);
-    // Spread spawn so cars don't stack
     let tries = 0;
-    while (tries < 12) {
+    while (tries < 20) {
       placeCar(car, paths, THREE);
-      const clash = cars.some((c) => c.pos.distanceToSquared(car.pos) < 64);
+      const clash = cars.some((c) => c.pos.distanceToSquared(car.pos) < 100);
       if (!clash) break;
       car.pathIndex = (Math.random() * paths.length) | 0;
-      car.s = Math.random() * paths[car.pathIndex].length * 0.85;
+      car.s = 2 + Math.random() * Math.max(1, paths[car.pathIndex].length * 0.8 - 4);
       car.reverse = Math.random() < 0.5;
       tries++;
     }
@@ -215,23 +347,59 @@ export async function createTraffic(scene, THREE, opts = {}) {
   }
 
   const playerPos = new THREE.Vector3();
+  let simTime = Math.random() * cycleSec;
+
+  function respawnCar(car) {
+    let best = null;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const pathIndex = (Math.random() * paths.length) | 0;
+      const reverse = Math.random() < 0.5;
+      const s = 2 + Math.random() * Math.max(1, paths[pathIndex].length * 0.85 - 4);
+      car.pathIndex = pathIndex;
+      car.reverse = reverse;
+      car.s = s;
+      placeCar(car, paths, THREE);
+      let minD = Infinity;
+      for (const other of cars) {
+        if (other === car) continue;
+        minD = Math.min(minD, car.pos.distanceTo(other.pos));
+      }
+      const playerD = playerPos.lengthSq() > 0 ? car.pos.distanceTo(playerPos) : 80;
+      const score = Math.min(minD, 40) + Math.min(playerD, 60) * 0.35;
+      if (!best || score > best.score) {
+        best = { pathIndex, reverse, s, score, pos: car.pos.clone(), tan: car.tan.clone() };
+      }
+      if (minD > 18 && playerD > 35) break;
+    }
+    if (best) {
+      car.pathIndex = best.pathIndex;
+      car.reverse = best.reverse;
+      car.s = best.s;
+      car.velocity = car.speed * 0.7;
+      car.stuck = 0;
+      car.lateral = 0;
+      placeCar(car, paths, THREE);
+    }
+  }
 
   function advanceJunction(car) {
     const path = paths[car.pathIndex];
     const atEnd = !car.reverse;
-    const next = pickNextPath(paths, path, atEnd, THREE);
+    const next = pickNextPath(paths, path, atEnd, cars, car, THREE);
     if (next.flip) {
       car.reverse = !car.reverse;
-      car.s = 0.5;
+      car.s = 1.0;
       return;
     }
     car.pathIndex = next.index;
     car.reverse = next.reverse;
-    car.s = 0.5;
+    car.s = 1.0;
   }
 
   function update(dt, walkObject) {
     if (dt <= 0) return;
+    const step = Math.min(dt, 0.05);
+    simTime += step;
     if (walkObject) {
       playerPos.set(walkObject.position.x, 0, walkObject.position.z);
     }
@@ -248,18 +416,24 @@ export async function createTraffic(scene, THREE, opts = {}) {
         const dx = other.pos.x - car.pos.x;
         const dz = other.pos.z - car.pos.z;
         const distSq = dx * dx + dz * dz;
-        if (distSq > FOLLOW_DIST * FOLLOW_DIST * 2.5) continue;
-        const dist = Math.sqrt(distSq);
+        if (distSq > FOLLOW_DIST * FOLLOW_DIST * 3) continue;
+        const heading = other.tan.x * car.tan.x + other.tan.z * car.tan.z;
+        // Only follow leaders on a similar heading (same corridor / same way).
+        if (heading < 0.35) continue;
         const ahead = dx * car.tan.x + dz * car.tan.z;
         const side = dx * car.tan.z + dz * -car.tan.x;
-        if (ahead > 0.4 && ahead < FOLLOW_DIST + 4 && Math.abs(side) < 3.2) {
-          const gap = ahead - 3.2;
+        if (ahead > 0.5 && ahead < FOLLOW_DIST + 5 && Math.abs(side) < 2.8) {
+          const gap = ahead - MIN_GAP;
           if (gap < FOLLOW_DIST) {
-            const factor = Math.max(0, gap / FOLLOW_DIST);
-            desire = Math.min(desire, car.speed * factor * factor);
+            if (gap < 0.6) {
+              desire = 0;
+            } else {
+              const factor = Math.max(0.08, gap / FOLLOW_DIST);
+              desire = Math.min(desire, car.speed * factor);
+            }
           }
-          if (Math.abs(side) < 1.8 && dist < 5) {
-            lateralNudge += side > 0 ? -0.35 : 0.35;
+          if (Math.abs(side) < 1.6 && ahead < 5) {
+            lateralNudge += side > 0 ? -0.25 : 0.25;
           }
         }
       }
@@ -279,12 +453,38 @@ export async function createTraffic(scene, THREE, opts = {}) {
         }
       }
 
-      car.velocity += (desire - car.velocity) * Math.min(1, dt * 4);
-      if (car.velocity < 0.15) car.velocity = 0;
-      car.lateral += (lateralNudge - car.lateral) * Math.min(1, dt * 3);
-      car.lateral = Math.max(-0.9, Math.min(0.9, car.lateral));
+      // Stop-line red lights (shared 30s NS/EW phases).
+      for (let s = 0; s < signals.length; s++) {
+        const sig = signals[s];
+        const dx = sig.stop.x - car.pos.x;
+        const dz = sig.stop.z - car.pos.z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq > 22 * 22) continue;
+        const ahead = dx * car.tan.x + dz * car.tan.z;
+        const side = Math.abs(dx * car.tan.z + dz * -car.tan.x);
+        const approachDot = car.tan.x * sig.tan.x + car.tan.z * sig.tan.z;
+        if (ahead < 0.4 || ahead > 16 || side > Math.max(3.2, sig.width * 0.55)) continue;
+        if (approachDot < 0.35) continue;
+        if (!signalIsGreen(sig, simTime, cycleSec)) {
+          if (ahead < 4.5) desire = 0;
+          else desire = Math.min(desire, car.speed * Math.max(0.05, (ahead - 3.5) / 10));
+        }
+      }
 
-      car.s += car.velocity * dt;
+      car.velocity += (desire - car.velocity) * Math.min(1, step * 3.2);
+      if (car.velocity < 0.12) car.velocity = 0;
+      car.lateral += (lateralNudge - car.lateral) * Math.min(1, step * 3);
+      car.lateral = Math.max(-0.7, Math.min(0.7, car.lateral));
+
+      if (car.velocity < 0.2) car.stuck += step;
+      else car.stuck = Math.max(0, car.stuck - step * 0.5);
+
+      if (car.stuck > STUCK_SEC) {
+        respawnCar(car);
+        continue;
+      }
+
+      car.s += car.velocity * step;
       const path = paths[car.pathIndex];
       if (car.s >= path.length - 0.5) {
         advanceJunction(car);
@@ -303,5 +503,11 @@ export async function createTraffic(scene, THREE, opts = {}) {
     for (const m of parts.bodyMats) m.dispose();
   }
 
-  return { update, dispose, count: cars.length, pathCount: paths.length };
+  return {
+    update,
+    dispose,
+    count: cars.length,
+    pathCount: paths.length,
+    signalCount: signals.length,
+  };
 }

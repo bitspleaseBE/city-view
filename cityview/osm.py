@@ -13,6 +13,7 @@ from cityview.streetscape import (
     annotate_layout,
     floors_from_height,
     height_truth,
+    parse_maxspeed_kmh,
     roof_shape_for,
     safe_roof_shape,
 )
@@ -46,7 +47,17 @@ ROAD_WIDTHS = {
     "steps": 2.0,
 }
 
-SKIP_HIGHWAYS = {"corridor", "proposed", "construction", "raceway", "bus_guideway"}
+SKIP_HIGHWAYS = {
+    "corridor",
+    "proposed",
+    "construction",
+    "raceway",
+    "bus_guideway",
+    "platform",
+    "tram",
+    "elevator",
+    "bridleway",
+}
 
 # Late-70s / early-80s building types (centrum / eilandje default).
 BUILDING_STYLES = [
@@ -439,7 +450,19 @@ def road_width(tags: dict[str, str]) -> float | None:
     highway = tags.get("highway")
     if not highway or highway in SKIP_HIGHWAYS:
         return None
-    return ROAD_WIDTHS.get(highway, 5.5)
+    # Tram / rail ways are transit tracks, never car carriageways — even when a
+    # highway tag is also present on a shared corridor.
+    railway = tags.get("railway")
+    if railway in RAILWAY_MODES or railway in {
+        "tram",
+        "rail",
+        "light_rail",
+        "subway",
+        "narrow_gauge",
+        "preserved",
+    }:
+        return None
+    return ROAD_WIDTHS.get(highway)
 
 
 def _relation_rings(
@@ -503,6 +526,11 @@ def layout_from_osm(
             )
             # Tram tracks are not roads; continue so they are not double-counted.
             continue
+        # Any remaining rail/tram geometry stays off the car road graph.
+        if railway in {"tram", "rail", "light_rail", "subway", "narrow_gauge", "preserved"}:
+            continue
+        if tags.get("highway") in {"tram", "platform"}:
+            continue
         if "building" in tags:
             ring = _closed(pts)
             area = _area(ring)
@@ -550,14 +578,16 @@ def layout_from_osm(
             continue
         width = road_width(tags)
         if width and len(pts) >= 2:
-            roads.append(
-                {
-                    "id": int(way["id"]),
-                    "points": pts,
-                    "width": width,
-                    "kind": tags.get("highway", "residential"),
-                }
-            )
+            road = {
+                "id": int(way["id"]),
+                "points": pts,
+                "width": width,
+                "kind": tags.get("highway", "residential"),
+            }
+            limit = parse_maxspeed_kmh(tags)
+            if limit is not None:
+                road["maxspeed_kmh"] = limit
+            roads.append(road)
 
     for rel in rels.values():
         tags = rel.get("tags") or {}

@@ -316,14 +316,176 @@ def nearest_road_yaw(x: float, y: float, roads: list[dict[str, Any]]) -> float:
 
 DRIVEABLE_ROAD_KINDS = frozenset(
     {
-        "residential",
-        "living_street",
-        "tertiary",
-        "unclassified",
+        "motorway",
+        "motorway_link",
+        "trunk",
+        "trunk_link",
+        "primary",
+        "primary_link",
         "secondary",
         "secondary_link",
+        "tertiary",
+        "tertiary_link",
+        "unclassified",
+        "residential",
+        "living_street",
     }
 )
+
+# Never put these on the car graph (tram/rail/pedestrian/service alleys).
+NON_DRIVEABLE_ROAD_KINDS = frozenset(
+    {
+        "tram",
+        "rail",
+        "light_rail",
+        "subway",
+        "narrow_gauge",
+        "platform",
+        "footway",
+        "path",
+        "cycleway",
+        "steps",
+        "pedestrian",
+        "service",
+        "bus_guideway",
+        "corridor",
+        "construction",
+        "proposed",
+        "raceway",
+        "bridleway",
+        "elevator",
+    }
+)
+
+_TRAM_TRANSIT_MODES = frozenset({"tram", "subway", "light_rail", "rail"})
+
+# Belgian urban defaults (km/h) when OSM carries no maxspeed. Antwerp centre is
+# largely a 30 zone; arterials are 50.
+DEFAULT_URBAN_SPEED_KMH = {
+    "motorway": 70.0,
+    "motorway_link": 50.0,
+    "trunk": 50.0,
+    "trunk_link": 50.0,
+    "primary": 50.0,
+    "primary_link": 40.0,
+    "secondary": 50.0,
+    "secondary_link": 40.0,
+    "tertiary": 50.0,
+    "tertiary_link": 40.0,
+    "unclassified": 30.0,
+    "residential": 30.0,
+    "living_street": 20.0,
+}
+_MIN_SPEED_KMH = 5.0
+_MAX_SPEED_KMH = 120.0
+
+
+def parse_maxspeed_kmh(tags: dict[str, str] | None) -> float | None:
+    """Parse an OSM ``maxspeed`` tag to km/h, or ``None`` if absent/unusable.
+
+    Handles ``"30"``, ``"50 km/h"``, ``"20 mph"``, ``"walk"`` and ``"BE:urban"``
+    style implicit values. Lists (``"30;50"``) take the lowest value.
+    """
+    if not tags:
+        return None
+    raw = tags.get("maxspeed") or tags.get("maxspeed:forward") or tags.get("maxspeed:backward")
+    if not raw:
+        return None
+    best: float | None = None
+    for part in str(raw).replace(",", ";").split(";"):
+        text = part.strip().lower()
+        if not text:
+            continue
+        value: float | None = None
+        if text == "walk":
+            value = 7.0
+        elif text.endswith("urban") or text.endswith(":urban"):
+            value = 50.0
+        else:
+            num = ""
+            for ch in text:
+                if ch.isdigit() or (ch == "." and "." not in num):
+                    num += ch
+                elif num:
+                    break
+            if num:
+                try:
+                    value = float(num)
+                except ValueError:
+                    value = None
+                if value is not None and "mph" in text:
+                    value *= 1.609344
+        if value is None or value <= 0:
+            continue
+        value = max(_MIN_SPEED_KMH, min(_MAX_SPEED_KMH, value))
+        best = value if best is None else min(best, value)
+    return best
+
+
+def road_speed_kmh(kind: str, maxspeed_kmh: float | None) -> float:
+    """Effective cruising limit: tagged maxspeed, else a Belgian urban default."""
+    if maxspeed_kmh is not None and maxspeed_kmh > 0:
+        return float(maxspeed_kmh)
+    return DEFAULT_URBAN_SPEED_KMH.get(str(kind or "").lower(), 30.0)
+
+
+def _tram_way_ids(layout: dict[str, Any]) -> set[Any]:
+    ids: set[Any] = set()
+    for line in layout.get("transit_lines") or []:
+        mode = (line.get("mode") or "").lower()
+        if mode in _TRAM_TRANSIT_MODES:
+            ids.add(line.get("id"))
+    return ids
+
+
+def _road_near_tram(
+    pts: list[list[float]],
+    tram_segs: list[tuple[float, float, float, float]],
+    *,
+    sample_n: int = 6,
+    avg_thresh: float = 3.5,
+) -> bool:
+    """True when a highway centreline hugs tram rails (shared corridor)."""
+    if not tram_segs or len(pts) < 2:
+        return False
+    samples: list[tuple[float, float]] = []
+    for i in range(sample_n):
+        t = i / max(1, sample_n - 1)
+        idx = t * (len(pts) - 1)
+        i0 = int(idx)
+        i1 = min(len(pts) - 1, i0 + 1)
+        f = idx - i0
+        samples.append(
+            (
+                float(pts[i0][0]) * (1 - f) + float(pts[i1][0]) * f,
+                float(pts[i0][1]) * (1 - f) + float(pts[i1][1]) * f,
+            )
+        )
+    total = 0.0
+    for px, py in samples:
+        best = min(
+            _point_segment_dist(px, py, ax, ay, bx, by) for ax, ay, bx, by in tram_segs
+        )
+        total += best
+    return (total / len(samples)) <= avg_thresh
+
+
+def _tram_segments(layout: dict[str, Any]) -> list[tuple[float, float, float, float]]:
+    segs: list[tuple[float, float, float, float]] = []
+    for line in layout.get("transit_lines") or []:
+        if (line.get("mode") or "").lower() not in _TRAM_TRANSIT_MODES:
+            continue
+        pts = line.get("points") or []
+        for i in range(1, len(pts)):
+            segs.append(
+                (
+                    float(pts[i - 1][0]),
+                    float(pts[i - 1][1]),
+                    float(pts[i][0]),
+                    float(pts[i][1]),
+                )
+            )
+    return segs
 
 
 def export_roads_near_spawn(
@@ -333,13 +495,19 @@ def export_roads_near_spawn(
     radius: float = 280.0,
     max_roads: int = 60,
 ) -> dict[str, Any]:
-    """Lightweight road centreline sample for runtime traffic near spawn."""
+    """Lightweight driveable road centrelines + signals for runtime traffic."""
     sx = float(spawn["x"]) if spawn else 0.0
     sy = float(spawn["y"]) if spawn else 0.0
+    tram_ids = _tram_way_ids(layout)
+    tram_segs = _tram_segments(layout)
     scored: list[tuple[float, dict[str, Any]]] = []
     for road in layout.get("roads") or []:
-        kind = road.get("kind") or "residential"
-        if kind not in DRIVEABLE_ROAD_KINDS:
+        kind = str(road.get("kind") or "residential").lower()
+        if kind in NON_DRIVEABLE_ROAD_KINDS or kind not in DRIVEABLE_ROAD_KINDS:
+            continue
+        rid = road.get("id")
+        # Transit tram/rail polylines must never appear as car paths.
+        if rid in tram_ids:
             continue
         pts = road.get("points") or []
         if len(pts) < 2:
@@ -347,23 +515,192 @@ def export_roads_near_spawn(
         dmin = min(_dist(sx, sy, float(p[0]), float(p[1])) for p in pts)
         if dmin > radius:
             continue
+        shared = _road_near_tram(pts, tram_segs)
+        tagged = road.get("maxspeed_kmh")
+        tagged_kmh = float(tagged) if isinstance(tagged, (int, float)) and tagged > 0 else None
         scored.append(
             (
                 dmin,
                 {
-                    "id": road.get("id"),
+                    "id": rid,
                     "kind": kind,
                     "width": float(road.get("width") or 6.0),
+                    # Posted limit from OSM (null when untagged) + the limit
+                    # traffic actually uses (tagged or urban default), km/h.
+                    "maxspeedKmh": tagged_kmh,
+                    "speedKmh": road_speed_kmh(kind, tagged_kmh),
+                    # Wider right-lane offset when highway hugs tram rails.
+                    "laneOffset": 2.4 if shared else 1.15,
+                    "tramShared": shared,
                     "points": [[float(p[0]), float(p[1])] for p in pts],
                 },
             )
         )
     scored.sort(key=lambda item: item[0])
+
+    signals = _export_signal_stop_lines(
+        layout, sx, sy, radius=min(radius, 220.0), max_clusters=14
+    )
+
     return {
         "spawn": {"x": sx, "y": sy},
         "radius": radius,
         "roads": [item[1] for item in scored[:max_roads]],
+        "signals": signals,
+        "cycleSeconds": 30,
     }
+
+
+def _export_signal_stop_lines(
+    layout: dict[str, Any],
+    sx: float,
+    sy: float,
+    *,
+    radius: float,
+    max_clusters: int,
+) -> list[dict[str, Any]]:
+    """Deduped OSM signal clusters → curb poles + stop-lines for the viewer."""
+    raw: list[tuple[float, float, Any]] = []
+    for sig in layout.get("signals") or []:
+        x = float(sig.get("x") or 0.0)
+        y = float(sig.get("y") or 0.0)
+        if _dist(sx, sy, x, y) > radius:
+            continue
+        raw.append((x, y, sig.get("id")))
+    if not raw:
+        return []
+
+    # Greedy 12m clustering (same rule as Blender).
+    clusters: list[list[tuple[float, float, Any]]] = []
+    for item in sorted(raw, key=lambda p: _dist(sx, sy, p[0], p[1])):
+        placed = False
+        for cluster in clusters:
+            cx = sum(p[0] for p in cluster) / len(cluster)
+            cy = sum(p[1] for p in cluster) / len(cluster)
+            if _dist(item[0], item[1], cx, cy) <= 12.0:
+                cluster.append(item)
+                placed = True
+                break
+        if not placed:
+            clusters.append([item])
+    clusters.sort(
+        key=lambda c: _dist(
+            sx, sy, sum(p[0] for p in c) / len(c), sum(p[1] for p in c) / len(c)
+        )
+    )
+
+    roads = [
+        r
+        for r in (layout.get("roads") or [])
+        if str(r.get("kind") or "").lower() in DRIVEABLE_ROAD_KINDS
+    ]
+    out: list[dict[str, Any]] = []
+    used: list[tuple[float, float]] = []
+    for cluster in clusters[:max_clusters]:
+        jx = sum(p[0] for p in cluster) / len(cluster)
+        jy = sum(p[1] for p in cluster) / len(cluster)
+        approaches = _runtime_approaches(jx, jy, roads)
+        if not approaches:
+            hit = _runtime_nearest_road(jx, jy, roads)
+            if hit is None:
+                continue
+            cx, cy, tx, ty, width = hit
+            approaches = [
+                {
+                    "tx": tx,
+                    "ty": ty,
+                    "stop_x": cx - tx * 3.0,
+                    "stop_y": cy - ty * 3.0,
+                    "width": width,
+                }
+            ]
+        for ap in approaches:
+            stop_x, stop_y = float(ap["stop_x"]), float(ap["stop_y"])
+            if any(_dist(stop_x, stop_y, ux, uy) < 5.5 for ux, uy in used):
+                continue
+            used.append((stop_x, stop_y))
+            tx, ty = float(ap["tx"]), float(ap["ty"])
+            width = float(ap["width"])
+            half = width * 0.5
+            rx, ry = ty, -tx
+            out.append(
+                {
+                    "id": cluster[0][2],
+                    "x": stop_x + rx * (half + 0.85),
+                    "y": stop_y + ry * (half + 0.85),
+                    "stopX": stop_x,
+                    "stopY": stop_y,
+                    "tx": tx,
+                    "ty": ty,
+                    "width": width,
+                    "kind": "traffic_signals",
+                }
+            )
+    return out[:36]
+
+
+def _runtime_nearest_road(
+    px: float, py: float, roads: list[dict[str, Any]]
+) -> tuple[float, float, float, float, float] | None:
+    best: tuple[float, float, float, float, float, float] | None = None
+    for road in roads:
+        pts = road.get("points") or []
+        width = float(road.get("width") or 6.0)
+        for i in range(len(pts) - 1):
+            ax, ay = float(pts[i][0]), float(pts[i][1])
+            bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+            dx, dy = bx - ax, by - ay
+            len2 = dx * dx + dy * dy
+            if len2 < 1e-6:
+                continue
+            t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len2))
+            cx, cy = ax + t * dx, ay + t * dy
+            dist = _dist(px, py, cx, cy)
+            if best is None or dist < best[5]:
+                length = math.sqrt(len2)
+                best = (cx, cy, dx / length, dy / length, width, dist)
+    if best is None:
+        return None
+    return best[0], best[1], best[2], best[3], best[4]
+
+
+def _runtime_approaches(
+    jx: float, jy: float, roads: list[dict[str, Any]], search_r: float = 16.0
+) -> list[dict[str, Any]]:
+    raw: list[dict[str, Any]] = []
+    for road in roads:
+        pts = road.get("points") or []
+        width = float(road.get("width") or 6.0)
+        for i in range(len(pts) - 1):
+            ax, ay = float(pts[i][0]), float(pts[i][1])
+            bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+            for ex, ey, ox, oy in ((ax, ay, bx, by), (bx, by, ax, ay)):
+                if _dist(ex, ey, jx, jy) > search_r:
+                    continue
+                dx, dy = ex - ox, ey - oy
+                length = math.hypot(dx, dy) or 1.0
+                tx, ty = dx / length, dy / length
+                raw.append(
+                    {
+                        "tx": tx,
+                        "ty": ty,
+                        "stop_x": ex - tx * 3.2,
+                        "stop_y": ey - ty * 3.2,
+                        "width": width,
+                    }
+                )
+    bins: dict[int, dict[str, Any]] = {}
+    for ap in raw:
+        key = int(round(math.atan2(ap["ty"], ap["tx"]) / (math.pi / 4.0))) % 8
+        prev = bins.get(key)
+        if prev is None:
+            bins[key] = ap
+            continue
+        d_new = abs(_dist(ap["stop_x"], ap["stop_y"], jx, jy) - 3.2)
+        d_old = abs(_dist(prev["stop_x"], prev["stop_y"], jx, jy) - 3.2)
+        if d_new < d_old:
+            bins[key] = ap
+    return list(bins.values())[:4]
 
 
 def export_transit_near_spawn(
