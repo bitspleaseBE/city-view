@@ -87,7 +87,7 @@
     </style>
   </head>
   <body>
-    <div id="hint">Walk: click + WASD · Free: drag orbit · V toggles</div>
+    <div id="hint">Walk: click + WASD · Shift sprint · Free: drag · V toggles</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Walk</button>
       <button type="button" id="btn-free">Free view</button>
@@ -119,10 +119,22 @@
       const btnWalk = document.getElementById("btn-walk");
       const btnFree = document.getElementById("btn-free");
 
-      const SKY = 0x5eb0ff;
+      const SKY = 0x6eb6ff;
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(SKY);
-      scene.fog = new THREE.FogExp2(SKY, 0.00115);
+      // Soft zenith→horizon gradient so pedestrian POV feels like a real clear day.
+      const skyCanvas = document.createElement("canvas");
+      skyCanvas.width = 2;
+      skyCanvas.height = 256;
+      const skyCtx = skyCanvas.getContext("2d");
+      const grad = skyCtx.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0, "#4aa0ff");
+      grad.addColorStop(0.45, "#6eb6ff");
+      grad.addColorStop(0.78, "#a8d4ff");
+      grad.addColorStop(1, "#d8e8f4");
+      skyCtx.fillStyle = grad;
+      skyCtx.fillRect(0, 0, 2, 256);
+      scene.background = new THREE.CanvasTexture(skyCanvas);
+      scene.fog = new THREE.FogExp2(0x9ec9ef, 0.00105);
 
       const camera = new THREE.PerspectiveCamera(
         68,
@@ -158,7 +170,7 @@
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;
       const walkSpeed = 7.5;
-      const keys = { w: false, a: false, s: false, d: false };
+      const keys = { w: false, a: false, s: false, d: false, shift: false };
       let prevTime = performance.now();
       let cityRoot = null;
       let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
@@ -217,12 +229,14 @@
         if (e.code === "KeyA") keys.a = true;
         if (e.code === "KeyS") keys.s = true;
         if (e.code === "KeyD") keys.d = true;
+        if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = true;
       });
       window.addEventListener("keyup", (e) => {
         if (e.code === "KeyW") keys.w = false;
         if (e.code === "KeyA") keys.a = false;
         if (e.code === "KeyS") keys.s = false;
         if (e.code === "KeyD") keys.d = false;
+        if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = false;
       });
 
       function applySpawnFromNode(node) {
@@ -303,7 +317,7 @@
         prevTime = time;
 
         if (mode === "walk" && walkControls.isLocked) {
-          const step = walkSpeed * dt;
+          const step = walkSpeed * (keys.shift ? 1.85 : 1.0) * dt;
           if (keys.w) walkControls.moveForward(step);
           if (keys.s) walkControls.moveForward(-step);
           if (keys.a) walkControls.moveRight(-step);
