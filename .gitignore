@@ -8,7 +8,9 @@ dist/
 build/
 output/
 viewer/*.glb
-assets/osm/
+# Cache most OSM downloads; commit Harmonie for reproducible Pages builds.
+assets/osm/*
+!assets/osm/harmonie.json
 *.blend1
 *.blend2
 .python-version

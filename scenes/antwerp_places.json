@@ -3,18 +3,43 @@
     "title": "Historisch centrum and Scheldekaaien",
     "description": "Scheldt waterfront, Het Steen, Groenplaats grain. The part of the poster map that reads as Antwerp.",
     "bbox": [51.2180, 4.3880, 51.2265, 4.4055],
-    "origin": [51.2214, 4.3978]
+    "origin": [51.2214, 4.3978],
+    "style_policy": "default"
   },
   "eilandje": {
     "title": "Eilandje docklands",
     "description": "Bonaparte and Willemdok, MAS, Kattendijk. The harbour blocks from the north of the poster.",
     "bbox": [51.2280, 4.4020, 51.2370, 4.4180],
-    "origin": [51.2325, 4.4095]
+    "origin": [51.2325, 4.4095],
+    "style_policy": "default"
   },
   "harmonie": {
     "title": "Harmoniewijk and Harmoniepark",
-    "description": "19th-century belt around Harmoniepark, Mechelsesteenweg, Harmoniestraat, and Van Schoonbekestraat.",
+    "description": "19th-century belt around Harmoniepark — Klein Antwerpen rows with LOD2 roofs and street facades.",
     "bbox": [51.1970, 4.4040, 51.2075, 4.4195],
-    "origin": [51.2017, 4.4114]
+    "origin": [51.2017, 4.4114],
+    "style_policy": "historic",
+    "osm_cache": "harmonie",
+    "spawn": {
+      "label": "Gounodstraat 13",
+      "lat": 51.2054749,
+      "lon": 4.4083343,
+      "eye_height": 1.7
+    }
+  },
+  "klein-antwerpen": {
+    "title": "Klein Antwerpen · Harmonie · 2018",
+    "description": "Human spawn at Gounodstraat 13. LOD2 roofs and style-driven procedural facades on street-facing edges.",
+    "bbox": [51.1970, 4.4040, 51.2075, 4.4195],
+    "origin": [51.2017, 4.4114],
+    "style_policy": "historic",
+    "osm_cache": "harmonie",
+    "viewer_glb": "klein_antwerpen.glb",
+    "spawn": {
+      "label": "Gounodstraat 13",
+      "lat": 51.2054749,
+      "lon": 4.4083343,
+      "eye_height": 1.7
+    }
   }
 }

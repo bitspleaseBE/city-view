@@ -1,22 +1,42 @@
 # City View
 
-Generate a walkable Antwerp side street in Blender from facade photos. The first block is a late-70s / early-80s Flemish rijhuis street: shopfronts, plaster, brick, and black aluminum frames.
+Generate walkable Antwerp streets and orbitable district tiles in Blender from facade photos and OpenStreetMap. The hero deliverable is **Klein Antwerpen / Harmonie · 2018**: LOD1 footprints coloured with historic neighbourhood palettes.
 
 Generation can run headless through the local Blender binary, or live through the official Blender Lab MCP add-on (Blender 5.1+).
 
 ## What you get
 
-- A photo-textured hero building from a street photo
-- Procedural neighbors in period Antwerp styles
-- Sidewalks, asphalt, lamps, overcast light
-- `.blend`, `.glb`, a preview render, and a Three.js viewer
+- **District orbit** — Harmonie / Klein Antwerpen from OSM, with neoclassical, eclectic, neo-Flemish, Art Nouveau, Art Deco, International Style, and modern-infill colours
+- A photo-textured hero building street mode (late 70s / early 80s rijhuizen)
+- Procedural neighbors, sidewalks, asphalt, lamps
+- `.blend`, `.glb`, preview renders, and a Three.js viewer
+- GitHub Pages deploy of the Klein Antwerpen orbit viewer
 
 ## Requirements
 
 - macOS with Blender 5.1+ at `/Applications/Blender.app` (or set `BLENDER_BIN`)
 - Python 3.11+
 
-## Build the street
+## Klein Antwerpen district (2018)
+
+```bash
+python3 -m cityview city --place klein-antwerpen
+python3 -m cityview serve
+```
+
+Open http://127.0.0.1:8765/ — you spawn at **Gounodstraat 13** at eye height. Click to walk (WASD + mouse look). The tile uses LOD2 roofs (gable / hip / mansard / flat from OSM + style) and style-driven procedural facades on street-facing edges. Colours come from [`assets/styles/klein_antwerpen_2018.json`](assets/styles/klein_antwerpen_2018.json).
+
+Alias: `--place harmonie` uses the same bbox, spawn, and historic style policy. OSM for this tile is cached at [`assets/osm/harmonie.json`](assets/osm/harmonie.json) (committed for reproducible CI).
+
+```bash
+python3 -m cityview city --place centrum
+python3 -m cityview city --place eilandje
+python3 -m cityview city --bbox 51.218,4.388,51.226,4.405
+```
+
+Presets live in `scenes/antwerp_places.json`. Other OSM downloads cache under `assets/osm/` (gitignored except Harmonie).
+
+## Build a side street
 
 ```bash
 python3 -m cityview build
@@ -36,21 +56,19 @@ python3 -m cityview build --photo ./shot.jpg --crop 0.0,0.24,0.80,0.99
 
 Outputs land in `output/`:
 
-- `antwerp_street.blend`
-- `antwerp_street.glb`
-- `antwerp_street_preview.jpg`
+- `antwerp_street.blend` / `.glb` (street mode)
+- `antwerp_harmonie.blend` / `.glb` (district mode)
+- preview JPEGs
 
-## View it
+## GitHub Pages
 
-```bash
-python3 -m cityview serve
-```
+CI (`.github/workflows/pages.yml`) downloads Blender on Ubuntu, rebuilds `--place klein-antwerpen --no-render`, and deploys `viewer/` (including `klein_antwerpen.glb`).
 
-Open http://127.0.0.1:8765/
+1. Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**
+2. Push to `main` or `klein-antwerpen-2018`, or run the workflow manually
+3. Site URL: `https://<org>.github.io/city-view/`
 
-## Whole city from the Antwerp map
-
-The poster map is the silhouette we want — Scheldt, docks, dense street grain — but it is not geometry. Tracing it would fake the city. Real Antwerp comes from map data, then we dress it with the 70s-80s building language.
+## Whole city LOD strategy
 
 ```
 OpenStreetMap (now) / GRB + Stad Antwerpen 3D (later)
@@ -62,23 +80,14 @@ OpenStreetMap (now) / GRB + Stad Antwerpen 3D (later)
 Do not generate every house in Flanders at street-photo detail. Tile the city (~1 km) and use three levels:
 
 1. **Far** — water and road skeleton. This is what makes it *read* as Antwerp.
-2. **Mid** — footprint extrusions with period styles (this `city` command).
-3. **Near** — the existing `build` street generator plus geolocated facade photos.
-
-```bash
-python3 -m cityview city --place centrum
-python3 -m cityview city --place eilandje
-python3 -m cityview city --place harmonie
-python3 -m cityview city --bbox 51.218,4.388,51.226,4.405
-```
-
-Presets live in `scenes/antwerp_places.json`. OSM downloads cache under `assets/osm/`.
+2. **Mid** — LOD2 footprints with roof shapes + street-edge procedural facades (`city` command).
+3. **Near** — denser facades within ~180 m of the human spawn; photo street generator for hero blocks.
 
 Later upgrades: Flemish **GRB** footprints and the city's own 1 km² GLB/CityGML tiles for real roof heights, then snap facade photos onto street-facing edges.
 
-Edit `scenes/antwerp_side_street.json`. A photo building needs a facade image and a crop rectangle. Procedural buildings take `style`, `floors`, `bays`, and `ground` (`shop` or `door`).
+Edit `scenes/antwerp_side_street.json` for street mode. Styles for the 70s street: `yellow-brick`, `cream-tile`, `white-modern`, `prefab-70s`, `red-brick`, `brown-tile`, `antwerp-70s`.
 
-Styles: `yellow-brick`, `cream-tile`, `white-modern`, `prefab-70s`, `red-brick`, `brown-tile`, `antwerp-70s`.
+Historic district styles: `neoclassical`, `eclectic`, `neo-flemish`, `neo-gothic`, `art-nouveau`, `art-deco`, `international`, `modern-infill`.
 
 ## Blender MCP
 

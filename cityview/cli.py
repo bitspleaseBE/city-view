@@ -20,6 +20,7 @@ from cityview.paths import (
     ROOT,
     VIEWER,
 )
+from cityview.streetscape import spawn_from_place
 
 
 def blender_bin() -> Path:
@@ -85,6 +86,9 @@ def build_command(args: argparse.Namespace) -> int:
 
 def city_command(args: argparse.Namespace) -> int:
     places = load_scene(Path(args.places))
+    style_policy = "default"
+    viewer_glb = "antwerp_street.glb"
+    place: dict = {}
     if args.bbox:
         parts = [float(v) for v in args.bbox.split(",")]
         if len(parts) != 4:
@@ -92,6 +96,7 @@ def city_command(args: argparse.Namespace) -> int:
         bbox = (parts[0], parts[1], parts[2], parts[3])
         origin = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
         place_name = args.place or "custom"
+        style_policy = args.style_policy or "default"
     else:
         place_name = args.place or "centrum"
         place = places.get(place_name)
@@ -100,40 +105,68 @@ def city_command(args: argparse.Namespace) -> int:
             raise ValueError(f"Unknown place {place_name!r}. Known: {known}")
         bbox = tuple(place["bbox"])
         origin = tuple(place.get("origin") or ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0))
+        style_policy = args.style_policy or place.get("style_policy") or "default"
+        viewer_glb = place.get("viewer_glb") or (
+            "klein_antwerpen.glb" if style_policy == "historic" else "antwerp_street.glb"
+        )
 
-    cache = OSM_CACHE / f"{place_name}.json"
+    cache_key = place.get("osm_cache") if place else None
+    cache = OSM_CACHE / f"{cache_key or place_name}.json"
     if args.refresh and cache.exists():
         cache.unlink()
     osm = fetch_osm(bbox, cache)
-    layout = layout_from_osm(osm, origin)
+    layout = layout_from_osm(osm, origin, style_policy=style_policy)
+    spawn = spawn_from_place(place, origin, layout) if place else None
+    if spawn:
+        layout["spawn"] = spawn
+    edged = sum(1 for b in layout["buildings"] if b.get("street_edges"))
     print(
         f"{place_name}: {len(layout['buildings'])} buildings, "
         f"{len(layout['roads'])} roads, {len(layout['water'])} water, "
-        f"{len(layout.get('parks') or [])} parks"
+        f"{len(layout.get('parks') or [])} parks, "
+        f"{edged} with street facades "
+        f"(style_policy={style_policy})"
     )
+    if spawn:
+        print(
+            f"spawn {spawn['label']}: "
+            f"({spawn['x']:.1f}, {spawn['y']:.1f}, {spawn['z']:.1f}) "
+            f"yaw={spawn['yaw']:.2f} rad"
+        )
 
     output_dir = Path(args.out).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    scene_name = args.street_name or f"antwerp_{place_name}"
+    default_scene = "antwerp_harmonie" if place_name in {"harmonie", "klein-antwerpen"} else f"antwerp_{place_name}"
+    scene_name = args.street_name or default_scene
     layout_path = output_dir / f"{scene_name}_layout.json"
     layout_path.write_text(json.dumps(layout))
     job_path = output_dir / f"{scene_name}_job.json"
-    write_job(
-        job_path,
-        {
-            "root": str(ROOT),
-            "output_dir": str(output_dir),
-            "scene_name": scene_name,
-            "render": not args.no_render,
-            "layout_path": str(layout_path),
-        },
-    )
+    job = {
+        "root": str(ROOT),
+        "output_dir": str(output_dir),
+        "scene_name": scene_name,
+        "render": not args.no_render,
+        "layout_path": str(layout_path),
+        "style_policy": style_policy,
+    }
+    if spawn:
+        job["spawn"] = spawn
+    write_job(job_path, job)
     run_blender(job_path, BLENDER_SCRIPTS / "build_city.py")
     glb = output_dir / f"{scene_name}.glb"
     if glb.exists():
-        dest = VIEWER / "antwerp_street.glb"
+        dest = VIEWER / viewer_glb
         shutil.copy2(glb, dest)
         print(f"Copied {glb} -> {dest}")
+        # Keep a stable Pages filename for the Klein Antwerpen hero.
+        if viewer_glb != "klein_antwerpen.glb" and style_policy == "historic":
+            hero = VIEWER / "klein_antwerpen.glb"
+            shutil.copy2(glb, hero)
+            print(f"Copied {glb} -> {hero}")
+    if spawn:
+        spawn_path = VIEWER / "spawn.json"
+        spawn_path.write_text(json.dumps(spawn, indent=2) + "\n")
+        print(f"Wrote {spawn_path}")
     print(f"Outputs in {output_dir}")
     return 0
 
@@ -176,6 +209,12 @@ def build_parser() -> argparse.ArgumentParser:
     city.add_argument("--place", default="centrum", help="Preset from scenes/antwerp_places.json")
     city.add_argument("--places", default=str(DEFAULT_PLACES))
     city.add_argument("--bbox", help="south,west,north,east in WGS84")
+    city.add_argument(
+        "--style-policy",
+        choices=("default", "historic"),
+        default=None,
+        help="Facade palette policy (default: from place preset)",
+    )
     city.add_argument("--out", default=str(OUTPUT))
     city.add_argument("--street-name", default="")
     city.add_argument("--refresh", action="store_true", help="Ignore cached OSM download")

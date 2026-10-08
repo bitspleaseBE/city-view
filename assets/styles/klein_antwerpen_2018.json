@@ -1,0 +1,93 @@
+{
+  "title": "Klein Antwerpen / Harmonie historic LOD1 palettes, 2018",
+  "description": "Wall colors sampled from street photos taken in the neighbourhood. Used for district orbit LOD1, not photo-textured facades.",
+  "references_dir": "assets/references/klein-antwerpen",
+  "styles": {
+    "neoclassical": {
+      "wall": [0.88, 0.85, 0.78, 1.0],
+      "roof": [0.22, 0.21, 0.20, 1.0],
+      "rough": 0.86,
+      "roof_kind": "mansard",
+      "notes": "Off-white / cream stucco, sober cornices, rusticated ground floors.",
+      "references": ["ref_06.jpg", "ref_10.jpg", "ref_17.jpg"]
+    },
+    "eclectic": {
+      "wall": [0.78, 0.72, 0.60, 1.0],
+      "roof": [0.20, 0.19, 0.18, 1.0],
+      "rough": 0.88,
+      "roof_kind": "mansard",
+      "notes": "Buff stone and mixed plaster — dominant Lange Leemstraat / Belgiëlei body.",
+      "references": ["ref_01.jpg", "ref_04.jpg", "ref_15.jpg", "ref_12.jpg"]
+    },
+    "neo-flemish": {
+      "wall": [0.48, 0.22, 0.18, 1.0],
+      "roof": [0.18, 0.16, 0.15, 1.0],
+      "rough": 0.92,
+      "roof_kind": "mansard",
+      "notes": "Red brick with light stone banding (speklagen), corner turrets.",
+      "references": ["ref_11.jpg", "ref_08.jpg", "ref_16.jpg"]
+    },
+    "neo-gothic": {
+      "wall": [0.42, 0.38, 0.34, 1.0],
+      "roof": [0.16, 0.15, 0.14, 1.0],
+      "rough": 0.9,
+      "roof_kind": "mansard",
+      "notes": "Darker stone/brick for churches and rare pointed-arch houses.",
+      "references": ["ref_14.jpg"]
+    },
+    "art-nouveau": {
+      "wall": [0.72, 0.62, 0.42, 1.0],
+      "roof": [0.19, 0.18, 0.17, 1.0],
+      "rough": 0.87,
+      "roof_kind": "mansard",
+      "notes": "Yellow/buff brick with green-glaze accent tone; organic ironwork.",
+      "references": ["ref_05.jpg", "ref_07.jpg", "ref_09.jpg", "ref_21.jpg"]
+    },
+    "art-deco": {
+      "wall": [0.84, 0.82, 0.76, 1.0],
+      "roof": [0.24, 0.24, 0.25, 1.0],
+      "rough": 0.78,
+      "roof_kind": "flat",
+      "notes": "Pale geometric stone/cream; stepped silhouettes, interbellum towers.",
+      "references": ["ref_03.jpg", "ref_13.jpg"]
+    },
+    "international": {
+      "wall": [0.72, 0.72, 0.70, 1.0],
+      "roof": [0.28, 0.28, 0.29, 1.0],
+      "rough": 0.74,
+      "roof_kind": "flat",
+      "notes": "Flat grey/white modern inserts; horizontal windows, no ornament.",
+      "references": ["ref_13.jpg", "ref_19.jpg", "ref_20.jpg"]
+    },
+    "modern-infill": {
+      "wall": [0.92, 0.93, 0.90, 1.0],
+      "roof": [0.18, 0.18, 0.19, 1.0],
+      "rough": 0.7,
+      "roof_kind": "flat",
+      "notes": "Late white render / garage insertions breaking historic rows.",
+      "references": ["ref_14.jpg", "ref_19.jpg"]
+    }
+  },
+  "manifest": [
+    {"file": "ref_01.jpg", "usable": true, "note": "Helenalei corner — eclectic mansard + art-nouveau neighbour", "styles": ["eclectic", "art-nouveau"]},
+    {"file": "ref_03.jpg", "usable": true, "note": "Porthole modernist facade", "styles": ["international", "art-deco"]},
+    {"file": "ref_04.jpg", "usable": true, "note": "Eclectic stone walk-up with balcony", "styles": ["eclectic", "neoclassical"]},
+    {"file": "ref_05.jpg", "usable": true, "note": "Art Nouveau arched window and cornice", "styles": ["art-nouveau"]},
+    {"file": "ref_06.jpg", "usable": true, "note": "Neoclassical cream row with ivy", "styles": ["neoclassical"]},
+    {"file": "ref_07.jpg", "usable": true, "note": "Yellow brick + green glaze arches", "styles": ["art-nouveau"]},
+    {"file": "ref_08.jpg", "usable": true, "note": "Neo-Flemish red brick corner turret", "styles": ["neo-flemish"]},
+    {"file": "ref_09.jpg", "usable": true, "note": "Curved street yellow/green brick", "styles": ["art-nouveau", "eclectic"]},
+    {"file": "ref_10.jpg", "usable": true, "note": "Mixed row with white bay window", "styles": ["neoclassical", "eclectic"]},
+    {"file": "ref_11.jpg", "usable": true, "note": "Red brick arched garage row", "styles": ["neo-flemish", "eclectic"]},
+    {"file": "ref_12.jpg", "usable": true, "note": "Three-bay eclectic plaster row", "styles": ["eclectic", "neoclassical"]},
+    {"file": "ref_13.jpg", "usable": true, "note": "Lime green modern + cream brick", "styles": ["modern-infill", "international"]},
+    {"file": "ref_14.jpg", "usable": true, "note": "BOBBY corner white neoclassical commercial", "styles": ["neoclassical", "modern-infill"]},
+    {"file": "ref_15.jpg", "usable": true, "note": "Buff brick entrance with iron gate", "styles": ["eclectic"]},
+    {"file": "ref_16.jpg", "usable": true, "note": "Curved street warm brick mix", "styles": ["neo-flemish", "eclectic"]},
+    {"file": "ref_17.jpg", "usable": true, "note": "Neoclassical lintels and cornice", "styles": ["neoclassical"]},
+    {"file": "ref_18.jpg", "usable": true, "note": "Streetscape mix — use for rhythm", "styles": ["eclectic", "neoclassical"]},
+    {"file": "ref_19.jpg", "usable": true, "note": "White garage modern insert", "styles": ["modern-infill", "international"]},
+    {"file": "ref_20.jpg", "usable": true, "note": "International thin-brick portholes", "styles": ["international"]},
+    {"file": "ref_21.jpg", "usable": true, "note": "Art Nouveau / eclectic townhouse", "styles": ["art-nouveau", "eclectic"]}
+  ]
+}
