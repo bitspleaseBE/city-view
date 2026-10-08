@@ -368,24 +368,29 @@ def enrich_layout_transit(
         if best_lines:
             line["lines"] = _merge_lines(line.get("lines"), best_lines)
 
-    # Add bus (and missing tram) motion paths from GTFS shapes.
+    # Add bus (and missing tram) motion paths from GTFS shapes near the tile origin.
     existing_ids = {str(line.get("id")) for line in lines}
-    bus_added = 0
+    bus_candidates: list[tuple[float, dict[str, Any]]] = []
     for shape in gtfs_shapes:
         sid = str(shape.get("id"))
         if sid in existing_ids:
             continue
+        pts = shape.get("points") or []
+        if len(pts) < 2:
+            continue
         mode = shape.get("mode") or "bus"
+        mid = pts[len(pts) // 2]
+        mx, my = float(mid[0]), float(mid[1])
+        d_origin = _local_dist(mx, my, 0.0, 0.0)
+        if d_origin > 900.0:
+            continue
         # Prefer OSM track geometry for trams; only inject GTFS tram shapes if none nearby.
         if mode in {"tram", "subway"}:
-            mid = (shape.get("points") or [None])[len(shape.get("points") or []) // 2]
-            if mid is None:
-                continue
             nearby_osm = any(
                 ln.get("mode") in {"tram", "subway"}
                 and ln.get("source") != "gtfs"
                 and min(
-                    _local_dist(float(mid[0]), float(mid[1]), float(p[0]), float(p[1]))
+                    _local_dist(mx, my, float(p[0]), float(p[1]))
                     for p in (ln.get("points") or [[1e9, 1e9]])
                 )
                 < 40.0
@@ -393,20 +398,27 @@ def enrich_layout_transit(
             )
             if nearby_osm:
                 continue
-        lines.append(
-            {
-                "id": sid,
-                "mode": mode,
-                "points": shape["points"],
-                "lines": list(shape.get("lines") or []),
-                "refs": list(shape.get("lines") or []),
-                "name": "",
-                "source": "gtfs",
-            }
+        bus_candidates.append(
+            (
+                d_origin,
+                {
+                    "id": sid,
+                    "mode": mode,
+                    "points": pts,
+                    "lines": list(shape.get("lines") or []),
+                    "refs": list(shape.get("lines") or []),
+                    "name": "",
+                    "source": "gtfs",
+                },
+            )
         )
-        if mode == "bus":
+    bus_candidates.sort(key=lambda item: item[0])
+    bus_added = 0
+    for _d, entry in bus_candidates[:60]:
+        lines.append(entry)
+        if entry["mode"] == "bus":
             bus_added += 1
-        existing_ids.add(sid)
+        existing_ids.add(str(entry["id"]))
 
     layout["transit_stops"] = stops
     layout["transit_lines"] = lines

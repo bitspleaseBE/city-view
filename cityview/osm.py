@@ -157,7 +157,10 @@ def _stop_mode(tags: dict[str, str]) -> str | None:
 
 
 def _dedupe_stops(stops: list[dict[str, Any]], merge_m: float = 22.0) -> list[dict[str, Any]]:
-    """Collapse nearby stop_position/platform duplicates; prefer named + platform."""
+    """Collapse nearby stop_position/platform duplicates; prefer named + platform.
+
+    Never merge different modes (tram platform next to a bus shelter at Harmonie).
+    """
     ranked = sorted(
         stops,
         key=lambda s: (
@@ -169,12 +172,14 @@ def _dedupe_stops(stops: list[dict[str, Any]], merge_m: float = 22.0) -> list[di
     kept: list[dict[str, Any]] = []
     for stop in ranked:
         sx, sy = float(stop["x"]), float(stop["y"])
+        mode = stop.get("mode")
         duplicate = False
         for existing in kept:
+            if existing.get("mode") != mode:
+                continue
             if abs(float(existing["x"]) - sx) > merge_m or abs(float(existing["y"]) - sy) > merge_m:
                 continue
             if (float(existing["x"]) - sx) ** 2 + (float(existing["y"]) - sy) ** 2 <= merge_m * merge_m:
-                # Merge refs into the kept stop.
                 refs = list(existing.get("refs") or [])
                 for ref in stop.get("refs") or []:
                     if ref not in refs:
@@ -188,6 +193,18 @@ def _dedupe_stops(stops: list[dict[str, Any]], merge_m: float = 22.0) -> list[di
             clean = {k: v for k, v in stop.items() if k != "role"}
             kept.append(clean)
     return kept
+
+
+def _stop_refs(tags: dict[str, str]) -> list[str]:
+    refs = _split_refs(tags.get("ref") or tags.get("route_ref"))
+    for key in ("route_ref:De_Lijn", "ref:De_Lijn"):
+        for ref in _split_refs(tags.get(key)):
+            # ref:De_Lijn is a stop id (numeric long); keep route_ref lines only.
+            if key.startswith("ref:") and ref.isdigit() and len(ref) > 3:
+                continue
+            if ref not in refs:
+                refs.append(ref)
+    return refs
 
 
 def _route_refs_by_way(
@@ -579,7 +596,7 @@ def layout_from_osm(
                     "x": round(x, 3),
                     "y": round(y, 3),
                     "name": tags.get("name") or tags.get("ref") or "",
-                    "refs": _split_refs(tags.get("ref") or tags.get("route_ref")),
+                    "refs": _stop_refs(tags),
                     "role": role,
                     "source": "osm",
                 }
