@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from cityview.geo import project
-from cityview.streetscape import annotate_layout, floors_from_height, height_truth, roof_shape_for
+from cityview.streetscape import (
+    annotate_layout,
+    floors_from_height,
+    height_truth,
+    roof_shape_for,
+    safe_roof_shape,
+)
 
 OVERPASS_URLS = (
     "https://overpass.private.coffee/api/interpreter",
@@ -42,7 +48,7 @@ ROAD_WIDTHS = {
 
 SKIP_HIGHWAYS = {"corridor", "proposed", "construction", "raceway", "bus_guideway"}
 
-# Late-70s / early-80s palette (centrum / eilandje default).
+# Late-70s / early-80s building types (centrum / eilandje default).
 BUILDING_STYLES = [
     "cream-tile",
     "yellow-brick",
@@ -52,14 +58,18 @@ BUILDING_STYLES = [
     "brown-tile",
 ]
 
-# Klein Antwerpen / Harmonie 2018 historic LOD1 mix (stable weighted hash).
+# Klein Antwerpen / Harmonie — weighted building types (photo-remixed looks).
+# Kept in sync with cityview.building_types.TYPE_SPECS weight_historic.
 HISTORIC_STYLES = [
-    ("eclectic", 40),
-    ("neoclassical", 25),
-    ("neo-flemish", 12),
-    ("art-nouveau", 8),
-    ("art-deco", 7),
-    ("international", 5),
+    ("eclectic", 28),
+    ("neoclassical", 18),
+    ("neo-flemish", 11),
+    ("cream-tile", 8),
+    ("yellow-brick", 7),
+    ("red-brick", 7),
+    ("art-nouveau", 7),
+    ("art-deco", 6),
+    ("international", 4),
     ("modern-infill", 3),
 ]
 
@@ -79,16 +89,129 @@ def overpass_query(south: float, west: float, north: float, east: float) -> str:
   way["waterway"="dock"]({bbox});
   way["landuse"="basin"]({bbox});
   way["water"]({bbox});
+  way["railway"="tram"]({bbox});
+  way["railway"="subway"]({bbox});
+  way["railway"="light_rail"]({bbox});
   node["highway"="traffic_signals"]({bbox});
   node["highway"="crossing"]["crossing"="traffic_signals"]({bbox});
+  node["highway"="bus_stop"]({bbox});
+  node["railway"="tram_stop"]({bbox});
+  node["public_transport"="platform"]({bbox});
+  node["public_transport"="stop_position"]({bbox});
   relation["natural"="water"]({bbox});
   relation["water"]({bbox});
   relation["landuse"="basin"]({bbox});
   relation["leisure"="park"]({bbox});
+  relation["route"~"^(tram|bus|subway|light_rail)$"]({bbox});
 );
 (._;>;);
 out body;
 """.strip()
+
+
+RAILWAY_MODES = {
+    "tram": "tram",
+    "subway": "subway",
+    "light_rail": "tram",
+}
+
+ROUTE_MODES = {
+    "tram": "tram",
+    "bus": "bus",
+    "subway": "subway",
+    "light_rail": "tram",
+}
+
+
+def _split_refs(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    refs: list[str] = []
+    for part in raw.replace(";", ",").replace("/", ",").split(","):
+        ref = part.strip()
+        if ref and ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def _stop_mode(tags: dict[str, str]) -> str | None:
+    railway = tags.get("railway")
+    if railway == "tram_stop":
+        return "tram"
+    if railway in {"subway_entrance", "station"} and tags.get("station") == "subway":
+        return "subway"
+    if tags.get("highway") == "bus_stop":
+        return "bus"
+    if tags.get("public_transport") in {"platform", "stop_position", "station"}:
+        if tags.get("tram") == "yes" or railway == "tram":
+            return "tram"
+        if tags.get("subway") == "yes" or railway == "subway":
+            return "subway"
+        if tags.get("bus") == "yes" or tags.get("highway") == "bus_stop":
+            return "bus"
+        # Platforms along tram tracks often omit mode tags in Antwerp.
+        if railway in {"platform", "tram_stop"}:
+            return "tram"
+        return "bus"
+    return None
+
+
+def _dedupe_stops(stops: list[dict[str, Any]], merge_m: float = 22.0) -> list[dict[str, Any]]:
+    """Collapse nearby stop_position/platform duplicates; prefer named + platform."""
+    ranked = sorted(
+        stops,
+        key=lambda s: (
+            0 if s.get("name") else 1,
+            0 if s.get("role") == "platform" else 1,
+            s.get("id") or 0,
+        ),
+    )
+    kept: list[dict[str, Any]] = []
+    for stop in ranked:
+        sx, sy = float(stop["x"]), float(stop["y"])
+        duplicate = False
+        for existing in kept:
+            if abs(float(existing["x"]) - sx) > merge_m or abs(float(existing["y"]) - sy) > merge_m:
+                continue
+            if (float(existing["x"]) - sx) ** 2 + (float(existing["y"]) - sy) ** 2 <= merge_m * merge_m:
+                # Merge refs into the kept stop.
+                refs = list(existing.get("refs") or [])
+                for ref in stop.get("refs") or []:
+                    if ref not in refs:
+                        refs.append(ref)
+                existing["refs"] = refs
+                if not existing.get("name") and stop.get("name"):
+                    existing["name"] = stop["name"]
+                duplicate = True
+                break
+        if not duplicate:
+            clean = {k: v for k, v in stop.items() if k != "role"}
+            kept.append(clean)
+    return kept
+
+
+def _route_refs_by_way(
+    rels: dict[int, dict],
+) -> dict[int, list[str]]:
+    """Map OSM way id → route line refs from tram/bus route relations."""
+    by_way: dict[int, list[str]] = {}
+    for rel in rels.values():
+        tags = rel.get("tags") or {}
+        mode = ROUTE_MODES.get(tags.get("route") or "")
+        if not mode:
+            continue
+        refs = _split_refs(tags.get("ref"))
+        if not refs:
+            continue
+        for member in rel.get("members") or []:
+            if member.get("type") != "way":
+                continue
+            wid = int(member["ref"])
+            bucket = by_way.setdefault(wid, [])
+            for ref in refs:
+                if ref not in bucket:
+                    bucket.append(ref)
+    return by_way
 
 
 def _osm_xml_to_elements(xml_text: str) -> list[dict[str, Any]]:
@@ -252,9 +375,15 @@ def _levels(tags: dict[str, str]) -> float | None:
 
 
 def style_for(osm_id: int, tags: dict[str, str], policy: str = "default") -> str:
-    """Assign a facade palette. policy: 'default' (70s) or 'historic' (Klein Antwerpen)."""
+    """Assign a building type / facade look. policy: 'default' or 'historic'."""
+    return building_type_for(osm_id, tags, policy)
+
+
+def building_type_for(osm_id: int, tags: dict[str, str], policy: str = "default") -> str:
+    """Assign a building type id for photo-remixed facades and roof preference."""
     kind = tags.get("building", "")
     amenity = tags.get("amenity", "")
+    shop = tags.get("shop", "")
     levels = _levels(tags)
 
     if policy == "historic":
@@ -266,6 +395,9 @@ def style_for(osm_id: int, tags: dict[str, str], policy: str = "default") -> str
             return "art-deco" if _stable_unit(osm_id + 17) < 0.55 else "international"
         if kind in {"garage", "garages", "shed", "service"}:
             return "modern-infill"
+        if shop or kind in {"retail", "commercial"} or amenity in {"cafe", "restaurant", "pharmacy"}:
+            # Ground-floor shops lean cream-tile / buff eclectic.
+            return "cream-tile" if _stable_unit(osm_id + 3) < 0.6 else "eclectic"
         return _weighted_historic(osm_id)
 
     if kind in {"industrial", "warehouse", "manufacture"}:
@@ -273,6 +405,8 @@ def style_for(osm_id: int, tags: dict[str, str], policy: str = "default") -> str
     if kind in {"apartments", "office"}:
         return "white-modern"
     if kind in {"church", "cathedral", "chapel"}:
+        return "cream-tile"
+    if shop or kind in {"retail", "commercial"}:
         return "cream-tile"
     return BUILDING_STYLES[osm_id % len(BUILDING_STYLES)]
 
@@ -324,24 +458,46 @@ def layout_from_osm(
     roads: list[dict[str, Any]] = []
     water: list[dict[str, Any]] = []
     parks: list[dict[str, Any]] = []
+    transit_lines: list[dict[str, Any]] = []
+    transit_stops_raw: list[dict[str, Any]] = []
+    way_refs = _route_refs_by_way(rels)
 
     for way in ways.values():
         tags = way.get("tags") or {}
         pts = _way_xy(way, nodes, origin)
         if len(pts) < 2:
             continue
+        railway = tags.get("railway")
+        if railway in RAILWAY_MODES and "building" not in tags:
+            mode = RAILWAY_MODES[railway]
+            refs = list(way_refs.get(int(way["id"])) or [])
+            for ref in _split_refs(tags.get("ref")):
+                if ref not in refs:
+                    refs.append(ref)
+            transit_lines.append(
+                {
+                    "id": int(way["id"]),
+                    "mode": mode,
+                    "points": pts,
+                    "refs": refs,
+                    "name": tags.get("name") or "",
+                    "source": "osm",
+                }
+            )
+            # Tram tracks are not roads; continue so they are not double-counted.
+            continue
         if "building" in tags:
             ring = _closed(pts)
             area = _area(ring)
             if len(ring) >= 3 and 20.0 <= area <= 12000.0:
                 osm_id = int(way["id"])
-                style = style_for(osm_id, tags, style_policy)
+                btype = building_type_for(osm_id, tags, style_policy)
                 eaves, roof_h, floors = height_truth(tags)
                 if style_policy == "historic":
                     eaves = height_jitter(osm_id, eaves, amount=0.04)
                     if roof_h <= 0.0:
                         roof_h = min(3.8, max(1.3, eaves * 0.15))
-                roof_shape = roof_shape_for(tags, style, osm_id)
+                roof_shape = safe_roof_shape(roof_shape_for(tags, btype, osm_id), ring)
                 if roof_shape == "flat":
                     roof_h = max(0.35, min(roof_h, 0.6)) if roof_h else 0.4
                 buildings.append(
@@ -352,7 +508,8 @@ def layout_from_osm(
                         "roof_height": roof_h,
                         "floors": floors or floors_from_height(eaves, tags),
                         "roof_shape": roof_shape,
-                        "style": style,
+                        "building_type": btype,
+                        "style": btype,
                         "name": tags.get("name") or tags.get("addr:housenumber") or "",
                     }
                 )
@@ -405,13 +562,28 @@ def layout_from_osm(
     signals: list[dict[str, Any]] = []
     for node in nodes.values():
         tags = node.get("tags") or {}
+        lat = float(node["lat"])
+        lon = float(node["lon"])
+        x, y = project(lat, lon, origin[0], origin[1])
         if tags.get("highway") == "traffic_signals" or (
             tags.get("highway") == "crossing" and tags.get("crossing") == "traffic_signals"
         ):
-            lat = float(node["lat"])
-            lon = float(node["lon"])
-            x, y = project(lat, lon, origin[0], origin[1])
             signals.append({"id": int(node["id"]), "x": x, "y": y, "kind": "traffic_signals"})
+        mode = _stop_mode(tags)
+        if mode:
+            role = "platform" if tags.get("public_transport") == "platform" else "stop"
+            transit_stops_raw.append(
+                {
+                    "id": int(node["id"]),
+                    "mode": mode,
+                    "x": round(x, 3),
+                    "y": round(y, 3),
+                    "name": tags.get("name") or tags.get("ref") or "",
+                    "refs": _split_refs(tags.get("ref") or tags.get("route_ref")),
+                    "role": role,
+                    "source": "osm",
+                }
+            )
 
     layout = {
         "origin": list(origin),
@@ -420,5 +592,7 @@ def layout_from_osm(
         "water": water,
         "parks": parks,
         "signals": signals,
+        "transit_lines": transit_lines,
+        "transit_stops": _dedupe_stops(transit_stops_raw),
     }
     return annotate_layout(layout)

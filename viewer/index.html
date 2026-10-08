@@ -96,8 +96,8 @@
     <div id="hud">
       <h1>Gounodstraat 13 · Klein Antwerpen · 2018</h1>
       <p>
-        A bright day over century-old façades — stylish, a little grudgy.
-        Parks with trees, street signals, human-scale streets.
+        Photo-remixed century façades — brick, stucco, tile types from the Harmonie refs.
+        Walk the sunny streets; V toggles free view.
       </p>
     </div>
     <script type="importmap">
@@ -113,6 +113,7 @@
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+      import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
       import { createTraffic } from "./traffic.js";
 
       const status = document.getElementById("status");
@@ -146,19 +147,26 @@
       camera.position.set(-218.5, 1.7, -432.1);
 
       const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.15));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.28;
+      renderer.toneMappingExposure = 1.18;
       document.body.appendChild(renderer.domElement);
 
-      // Hemisphere = blue sky + warm ground bounce
-      scene.add(new THREE.HemisphereLight(0x9ec9ff, 0xc4b49a, 0.95));
-      const sun = new THREE.DirectionalLight(0xfff2d6, 1.55);
+      // Cheap IBL so glass/metal catch sky instead of looking like flat stickers.
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      pmrem.dispose();
+
+      scene.add(new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85));
+      const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
       sun.position.set(220, 320, -160);
       scene.add(sun);
       scene.add(sun.target);
+      const fill = new THREE.DirectionalLight(0xcfe4ff, 0.35);
+      fill.position.set(-160, 120, 200);
+      scene.add(fill);
 
       // Visible sun disc + soft haze
       const sunMesh = new THREE.Mesh(
@@ -326,16 +334,25 @@
               if (obj.material) {
                 const bias = layerBias(obj.name);
                 const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+                const n = (obj.name || "").toLowerCase();
+                const isFacade =
+                  n.includes("facade") || n.includes("bldg_") || n.includes("chim") || n.includes("roof");
                 for (const m of mats) {
-                  if (m) {
-                    m.flatShading = true;
-                    if (bias) {
-                      m.polygonOffset = true;
-                      m.polygonOffsetFactor = bias.factor;
-                      m.polygonOffsetUnits = bias.units;
-                    }
-                    m.needsUpdate = true;
+                  if (!m) continue;
+                  m.flatShading = !isFacade;
+                  if (m.name && /glass/i.test(m.name)) {
+                    m.metalness = Math.max(m.metalness ?? 0, 0.45);
+                    m.roughness = Math.min(m.roughness ?? 1, 0.18);
+                    m.envMapIntensity = 1.1;
+                  } else if (isFacade && m.roughness != null) {
+                    m.envMapIntensity = 0.35;
                   }
+                  if (bias) {
+                    m.polygonOffset = true;
+                    m.polygonOffsetFactor = bias.factor;
+                    m.polygonOffsetUnits = bias.units;
+                  }
+                  m.needsUpdate = true;
                 }
               }
             }

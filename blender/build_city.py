@@ -195,7 +195,60 @@ def assign(obj: bpy.types.Object, mat: bpy.types.Material) -> None:
 
 
 def style_of(name: str) -> dict:
-    return STYLES.get(name, STYLES["eclectic"])
+    return STYLES.get(name, STYLES.get("eclectic") or next(iter(STYLES.values())))
+
+
+def _as_rgba(value, fallback=(0.5, 0.5, 0.5, 1.0)):
+    if not value:
+        return fallback
+    vals = list(value)
+    while len(vals) < 4:
+        vals.append(1.0)
+    return (float(vals[0]), float(vals[1]), float(vals[2]), float(vals[3]))
+
+
+def merge_building_types(types_doc: dict | None) -> None:
+    """Overlay photo-remixed building types onto STYLES (base + __vN variants)."""
+    if not types_doc:
+        return
+    for type_id, entry in (types_doc.get("types") or {}).items():
+        pal = entry.get("palette") or {}
+        window = entry.get("window") or "rect"
+        base = {
+            "wall": _as_rgba(pal.get("wall"), STYLES.get(type_id, {}).get("wall", (0.6, 0.55, 0.45, 1.0))),
+            "roof": _as_rgba(pal.get("roof"), STYLES.get(type_id, {}).get("roof", (0.18, 0.17, 0.16, 1.0))),
+            "frame": _as_rgba(pal.get("frame"), STYLES.get(type_id, {}).get("frame", (0.15, 0.12, 0.1, 1.0))),
+            "glass": _as_rgba(pal.get("glass"), STYLES.get(type_id, {}).get("glass", (0.25, 0.3, 0.32, 1.0))),
+            "plinth": _as_rgba(pal.get("plinth"), STYLES.get(type_id, {}).get("plinth", (0.35, 0.32, 0.28, 1.0))),
+            "trim": _as_rgba(pal.get("trim"), STYLES.get(type_id, {}).get("trim", (0.75, 0.7, 0.6, 1.0))),
+            "window": window,
+        }
+        STYLES[type_id] = base
+        for vi, variant in enumerate(entry.get("variants") or []):
+            STYLES[f"{type_id}__v{vi}"] = {
+                "wall": _as_rgba(variant.get("wall"), base["wall"]),
+                "roof": _as_rgba(variant.get("roof"), base["roof"]),
+                "frame": _as_rgba(variant.get("frame"), base["frame"]),
+                "glass": _as_rgba(variant.get("glass"), base["glass"]),
+                "plinth": _as_rgba(variant.get("plinth"), base["plinth"]),
+                "trim": _as_rgba(variant.get("trim"), base["trim"]),
+                "window": window,
+            }
+
+
+def style_key_for(bldg: dict) -> str:
+    """Prefer typed variant key so streets share materials but vary within a type."""
+    type_id = bldg.get("building_type") or bldg.get("style") or "eclectic"
+    if bldg.get("palette") and "window" in (bldg.get("palette") or {}):
+        # Window rhythm always comes from the building type.
+        pass
+    variant = bldg.get("type_variant")
+    if variant is None:
+        return type_id if type_id in STYLES else "eclectic"
+    keyed = f"{type_id}__v{int(variant)}"
+    if keyed in STYLES:
+        return keyed
+    return type_id if type_id in STYLES else "eclectic"
 
 
 def add_box(name: str, size, loc, rot_z: float = 0.0) -> bpy.types.Object:
@@ -237,18 +290,71 @@ def ring_mesh(name: str, ring: list[list[float]], height: float, z: float = 0.0)
     return mesh
 
 
+def _ring_signed_area(ring: list[list[float]]) -> float:
+    n = len(ring)
+    if n < 3:
+        return 0.0
+    area = 0.0
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        area += x1 * y2 - x2 * y1
+    return area * 0.5
+
+
 def inset_ring(ring: list[list[float]], inset: float) -> list[list[float]]:
+    """Offset polygon inward along edge normals; never expand past the wall ring."""
     if len(ring) < 3 or inset <= 0:
-        return ring
-    cx = sum(p[0] for p in ring) / len(ring)
-    cy = sum(p[1] for p in ring) / len(ring)
+        return [list(p) for p in ring]
+    area = _ring_signed_area(ring)
+    pts = [list(p) for p in ring]
+    if area < 0:
+        pts.reverse()
+        area = -area
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    char = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+    inset = min(inset, char * 0.22)
+    n = len(pts)
     out: list[list[float]] = []
-    for x, y in ring:
-        dx, dy = x - cx, y - cy
-        dist = math.hypot(dx, dy) or 1.0
-        scale = max(0.35, 1.0 - inset / dist)
-        out.append([cx + dx * scale, cy + dy * scale])
-    return out
+    for i in range(n):
+        p0 = pts[(i - 1) % n]
+        p1 = pts[i]
+        p2 = pts[(i + 1) % n]
+        e0x, e0y = p1[0] - p0[0], p1[1] - p0[1]
+        e1x, e1y = p2[0] - p1[0], p2[1] - p1[1]
+        l0 = math.hypot(e0x, e0y) or 1.0
+        l1 = math.hypot(e1x, e1y) or 1.0
+        n0x, n0y = -e0y / l0, e0x / l0  # inward for CCW
+        n1x, n1y = -e1y / l1, e1x / l1
+        bx, by = n0x + n1x, n0y + n1y
+        bl = math.hypot(bx, by)
+        if bl < 1e-9:
+            bx, by = n0x, n0y
+            bl = 1.0
+        bx, by = bx / bl, by / bl
+        cos_half = max(0.2, min(1.0, n0x * bx + n0y * by))
+        d = inset / cos_half
+        out.append([p1[0] + bx * d, p1[1] + by * d])
+    new_area = abs(_ring_signed_area(out))
+    cx = sum(p[0] for p in pts) / n
+    cy = sum(p[1] for p in pts) / n
+    if new_area < area * 0.12 or new_area > area * 0.99:
+        scale = max(0.55, 1.0 - inset / max(char * 0.5, 1.0))
+        return [[cx + (p[0] - cx) * scale, cy + (p[1] - cy) * scale] for p in pts]
+    fixed: list[list[float]] = []
+    for x, y in out:
+        if _point_in_ring(x, y, pts):
+            fixed.append([x, y])
+            continue
+        fx, fy = x, y
+        for _ in range(8):
+            fx = cx + (fx - cx) * 0.7
+            fy = cy + (fy - cy) * 0.7
+            if _point_in_ring(fx, fy, pts):
+                break
+        fixed.append([fx, fy])
+    return fixed
 
 
 def add_ring(name: str, ring: list[list[float]], height: float, z: float, mat: bpy.types.Material) -> bpy.types.Object | None:
@@ -295,10 +401,45 @@ def _obb(ring: list[list[float]]):
     return cx, cy, ux, uy, vx, vy, max(hu, 0.8), max(hv, 0.8)
 
 
+def _prism_roof_ok(ring: list[list[float]], min_fill: float = 0.82) -> bool:
+    """Gable OBB prism only when the footprint nearly fills its OBB (no L-corners)."""
+    if len(ring) < 3:
+        return False
+    cx, cy, ux, uy, vx, vy, hu, hv = _obb(ring)
+    ring_area = abs(_ring_signed_area(ring))
+    obb_area = 4.0 * hu * hv
+    if obb_area < 1e-3 or ring_area / obb_area < min_fill:
+        return False
+    for su, sv in ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)):
+        ix = cx + su * hu * 0.92 * ux + sv * hv * 0.92 * vx
+        iy = cy + su * hu * 0.92 * uy + sv * hv * 0.92 * vy
+        if not _point_in_ring(ix, iy, ring):
+            return False
+    return True
+
+
 def add_gable_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, mat) -> None:
     cx, cy, ux, uy, vx, vy, hu, hv = _obb(ring)
+    # Clamp half-extents so eave corners stay inside the wall ring.
+    hu = max(0.45, hu - 0.08)
+    hv = max(0.45, hv - 0.08)
+    for _ in range(28):
+        ok = True
+        for su, sv in ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)):
+            ix = cx + su * hu * 0.98 * ux + sv * hv * 0.98 * vx
+            iy = cy + su * hu * 0.98 * uy + sv * hv * 0.98 * vy
+            if not _point_in_ring(ix, iy, ring):
+                ok = False
+                break
+        if ok:
+            break
+        hu *= 0.9
+        hv *= 0.9
+        if hu < 0.45 or hv < 0.45:
+            add_mansard_roof(name, ring, z0, roof_h, mat)
+            return
     h = max(1.0, roof_h)
-    # Four eave corners + ridge line along long axis.
+    # Four eave corners + ridge line along long axis — base exactly at eaves_z (z0).
     corners = [
         (cx - hu * ux - hv * vx, cy - hu * uy - hv * vy, z0),
         (cx + hu * ux - hv * vx, cy + hu * uy - hv * vy, z0),
@@ -323,10 +464,14 @@ def add_gable_roof(name: str, ring: list[list[float]], z0: float, roof_h: float,
 def add_hip_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, mat) -> None:
     if len(ring) < 3:
         return
-    cx = sum(p[0] for p in ring) / len(ring)
-    cy = sum(p[1] for p in ring) / len(ring)
+    # Use a slight inset so hip faces sit on the wall plate, not past it.
+    base_ring = inset_ring(ring, 0.05)
+    if len(base_ring) < 3:
+        base_ring = ring
+    cx = sum(p[0] for p in base_ring) / len(base_ring)
+    cy = sum(p[1] for p in base_ring) / len(base_ring)
     peak = (cx, cy, z0 + max(1.0, roof_h))
-    base = [(p[0], p[1], z0) for p in ring]
+    base = [(p[0], p[1], z0) for p in base_ring]
     verts = base + [peak]
     apex = len(base)
     faces = []
@@ -339,36 +484,55 @@ def add_hip_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, m
     assign(link(obj), mat)
 
 
+def add_mansard_roof(name: str, ring: list[list[float]], z0: float, roof_h: float, mat) -> None:
+    """Two inset extruded plates — stays inside footprint for irregular rings."""
+    h = max(0.35, roof_h)
+    lower = inset_ring(ring, 0.55)
+    add_ring(f"{name}_a", lower, h * 0.55, z0, mat)
+    upper = inset_ring(ring, 1.25)
+    add_ring(f"{name}_b", upper, h * 0.45, z0 + h * 0.55, mat)
+
+
 def add_lod2_roof(name: str, ring, eaves_z: float, roof_h: float, shape: str, mat) -> None:
     h = max(0.35, roof_h)
+    # Irregular / L-shaped footprints: OBB gables spill past walls — use mansard.
+    if shape in {"gable", "hip"} and not _prism_roof_ok(ring):
+        shape = "mansard"
     if shape == "flat":
-        add_ring(name, ring, min(0.55, h), eaves_z, mat)
+        # Slight inset so flat caps don't Z-fight or overhang sidewalks.
+        add_ring(name, inset_ring(ring, 0.04), min(0.55, h), eaves_z, mat)
     elif shape == "hip":
         add_hip_roof(name, ring, eaves_z, h, mat)
     elif shape == "gable":
         add_gable_roof(name, ring, eaves_z, h, mat)
     else:  # mansard
-        lower = inset_ring(ring, 0.7)
-        add_ring(f"{name}_a", lower, h * 0.55, eaves_z, mat)
-        upper = inset_ring(ring, 1.5)
-        add_ring(f"{name}_b", upper, h * 0.45, eaves_z + h * 0.55, mat)
+        add_mansard_roof(name, ring, eaves_z, h, mat)
 
 
 def add_chimneys(name: str, ring: list[list[float]], eaves_z: float, roof_h: float, mat, seed: int) -> int:
     """Brick chimney stubs — GTA3 skyline grit, only a few per roof."""
     if len(ring) < 3:
         return 0
-    cx = sum(p[0] for p in ring) / len(ring)
-    cy = sum(p[1] for p in ring) / len(ring)
+    safe = inset_ring(ring, 1.15)
+    if len(safe) < 3:
+        safe = inset_ring(ring, 0.6)
+    if len(safe) < 3:
+        return 0
+    cx = sum(p[0] for p in safe) / len(safe)
+    cy = sum(p[1] for p in safe) / len(safe)
+    if not _point_in_ring(cx, cy, safe):
+        return 0
     n = 1 + (seed % 3)
     placed = 0
     for i in range(n):
         u = ((seed * 1103515245 + i * 9973) & 0x7FFFFFFF) / 0x7FFFFFFF
         v = ((seed * 1664525 + i * 4243) & 0x7FFFFFFF) / 0x7FFFFFFF
-        x = cx + (u - 0.5) * 3.2
-        y = cy + (v - 0.5) * 3.2
-        if not _point_in_ring(x, y, ring):
+        x = cx + (u - 0.5) * 2.4
+        y = cy + (v - 0.5) * 2.4
+        if not _point_in_ring(x, y, safe):
             x, y = cx, cy
+        if not _point_in_ring(x, y, safe):
+            continue
         z = eaves_z + roof_h * 0.85 + 0.7
         stack = add_box(f"{name}_chim{i}", (0.55, 0.45, 1.4), (x, y, z), u * 0.2)
         assign(stack, mat)
@@ -424,9 +588,15 @@ def add_street_facade(
     style_name: str,
     mats: dict,
     detail: str = "full",
+    window_kind: str | None = None,
 ) -> None:
     """One batched mesh per street edge (skin, plinth, cornice, windows)."""
     style = style_of(style_name)
+    mat_key = style_name if style_name in mats["wall"] else (
+        style_name.split("__v")[0] if "__v" in style_name else "eclectic"
+    )
+    if mat_key not in mats["wall"]:
+        mat_key = "eclectic" if "eclectic" in mats["wall"] else next(iter(mats["wall"]))
     x0, y0 = p0
     x1, y1 = p1
     length = math.hypot(x1 - x0, y1 - y0)
@@ -440,22 +610,23 @@ def add_street_facade(
     mesh = bpy.data.meshes.new(name)
     # Slot order matches material_index below.
     for key in ("wall", "plinth", "trim", "frame", "glass"):
-        mesh.materials.append(mats[key][style_name])
+        mesh.materials.append(mats[key].get(style_name) or mats[key][mat_key])
 
     bm = bmesh.new()
-    plinth_h = min(1.15, eaves_z * 0.12)
-    _append_box(bm, ox, oy, eaves_z * 0.5, length * 0.98, 0.08, eaves_z, yaw, 0)
-    _append_box(bm, ox + nx * 0.04, oy + ny * 0.04, plinth_h * 0.5, length * 0.98, 0.12, plinth_h, yaw, 1)
-    _append_box(bm, ox + nx * 0.08, oy + ny * 0.08, eaves_z + 0.05, length * 1.02, 0.22, 0.28, yaw, 2)
+    plinth_h = min(1.25, max(0.9, eaves_z * 0.11))
+    # Skin slightly proud of the LOD1 block so façades cast readable depth.
+    _append_box(bm, ox, oy, eaves_z * 0.5, length * 0.98, 0.1, eaves_z, yaw, 0)
+    _append_box(bm, ox + nx * 0.05, oy + ny * 0.05, plinth_h * 0.5, length * 0.98, 0.16, plinth_h, yaw, 1)
+    _append_box(bm, ox + nx * 0.1, oy + ny * 0.1, eaves_z + 0.08, length * 1.02, 0.28, 0.34, yaw, 2)
     # Vertical soot / rain-stain streaks — century façades aren't pristine.
     if detail == "full" and length > 5.0:
         for si in range(1 + int(length // 7.0)):
             along = -length * 0.35 + si * 2.8
-            sx = ox + math.cos(yaw) * along + nx * 0.09
-            sy = oy + math.sin(yaw) * along + ny * 0.09
-            _append_box(bm, sx, sy, eaves_z * 0.42, 0.35, 0.05, eaves_z * 0.75, yaw, 1)
+            sx = ox + math.cos(yaw) * along + nx * 0.11
+            sy = oy + math.sin(yaw) * along + ny * 0.11
+            _append_box(bm, sx, sy, eaves_z * 0.42, 0.32, 0.06, eaves_z * 0.75, yaw, 1)
 
-    kind = style.get("window", "rect")
+    kind = window_kind or style.get("window", "rect")
     floors = max(1, min(8, int(floors)))
     if detail == "simple":
         floors = min(floors, 3)
@@ -466,38 +637,64 @@ def add_street_facade(
     win_w = max(0.55, bay_w * (0.85 if kind == "ribbon" else 0.64))
     door_bay = bays // 2
 
+    # Speklagen / string courses between floors — biggest cheap depth read vs flat boxes.
+    if detail == "full":
+        for fi in range(1, floors):
+            z_band = fi * floor_h
+            _append_box(
+                bm,
+                ox + nx * 0.12,
+                oy + ny * 0.12,
+                z_band,
+                length * 0.98,
+                0.14,
+                0.16,
+                yaw,
+                2,
+            )
+
     for fi in range(floors):
         z_base = fi * floor_h
         for bi in range(bays):
             along = -length * 0.5 + (bi + 0.5) * bay_w
-            px = ox + math.cos(yaw) * along + nx * 0.12
-            py = oy + math.sin(yaw) * along + ny * 0.12
+            px = ox + math.cos(yaw) * along + nx * 0.14
+            py = oy + math.sin(yaw) * along + ny * 0.14
             if fi == 0 and bi == door_bay:
-                dh = min(2.3, floor_h * 0.72)
-                _append_box(bm, px, py, plinth_h + dh * 0.5, min(1.1, win_w * 0.85), 0.1, dh, yaw, 3)
+                dh = min(2.35, floor_h * 0.75)
+                door_w = min(1.15, win_w * 0.9)
+                # Recessed door plane — stoop starts at the reveal and steps out.
+                _append_box(
+                    bm,
+                    px - nx * 0.06,
+                    py - ny * 0.06,
+                    plinth_h + dh * 0.5,
+                    door_w,
+                    0.12,
+                    dh,
+                    yaw,
+                    3,
+                )
                 if detail == "full":
-                    # Stone stoop steps — flush to door threshold, not sidewalk furniture.
-                    # px/py already sit ~0.12m out (door plane); keep steps shallow against that.
-                    door_w = min(1.1, win_w * 0.85)
+                    # Continuous stoop: top tread at door sill, lower tread toward sidewalk.
                     _append_box(
                         bm,
-                        px + nx * 0.05,
-                        py + ny * 0.05,
-                        0.20,
-                        door_w,
-                        0.18,
-                        0.20,
+                        px + nx * 0.02,
+                        py + ny * 0.02,
+                        0.22,
+                        door_w * 1.05,
+                        0.2,
+                        0.22,
                         yaw,
                         1,
                     )
                     _append_box(
                         bm,
-                        px + nx * 0.20,
-                        py + ny * 0.20,
-                        0.155,
-                        min(1.2, door_w * 1.08),
-                        0.22,
-                        0.12,
+                        px + nx * 0.16,
+                        py + ny * 0.16,
+                        0.14,
+                        door_w * 1.12,
+                        0.24,
+                        0.14,
                         yaw,
                         1,
                     )
@@ -506,11 +703,11 @@ def add_street_facade(
             if detail == "full" and fi == 0 and bi % 3 == 1 and kind != "ribbon":
                 _append_box(
                     bm,
-                    px + nx * 0.55,
-                    py + ny * 0.55,
+                    px + nx * 0.45,
+                    py + ny * 0.45,
                     plinth_h + floor_h * 0.55,
-                    win_w * 1.15,
-                    0.7,
+                    win_w * 1.1,
+                    0.55,
                     0.08,
                     yaw,
                     2,
@@ -524,41 +721,63 @@ def add_street_facade(
             else:
                 wh, ww = floor_h * (0.42 if fi == 0 else 0.5), win_w
             sill = (plinth_h + 0.35) if fi == 0 else (z_base + floor_h * 0.22)
-            _append_box(bm, px, py, sill + wh * 0.5, ww + 0.1, 0.1, wh + 0.1, yaw, 3)
+            # Deep reveal: thick frame, glass inset, sill + lintel — windows as holes.
+            _append_box(bm, px, py, sill + wh * 0.5, ww + 0.14, 0.14, wh + 0.14, yaw, 3)
             _append_box(
                 bm,
-                px + nx * 0.03,
-                py + ny * 0.03,
+                px + nx * 0.05,
+                py + ny * 0.05,
                 sill + wh * 0.5,
-                ww,
-                0.06,
-                wh,
+                ww * 0.92,
+                0.05,
+                wh * 0.92,
                 yaw,
                 4,
             )
-            # Weathered lintel / sill shelf — century grit, not showroom clean.
             if detail == "full":
+                # Mullion + sill shelf + lintel for century grit.
                 _append_box(
                     bm,
-                    px + nx * 0.05,
-                    py + ny * 0.05,
+                    px + nx * 0.06,
+                    py + ny * 0.06,
+                    sill + wh * 0.5,
+                    0.08,
+                    0.04,
+                    wh * 0.9,
+                    yaw,
+                    3,
+                )
+                _append_box(
+                    bm,
+                    px + nx * 0.08,
+                    py + ny * 0.08,
+                    sill - 0.04,
+                    ww + 0.2,
+                    0.16,
+                    0.08,
+                    yaw,
+                    2,
+                )
+                _append_box(
+                    bm,
+                    px + nx * 0.07,
+                    py + ny * 0.07,
                     sill + wh + 0.06,
-                    ww + 0.18,
-                    0.14,
+                    ww + 0.2,
+                    0.16,
                     0.1,
                     yaw,
                     2,
                 )
                 if fi >= 1 and bi % 2 == 0 and kind != "ribbon":
-                    # Tiny balcony rail stubs on upper floors.
                     _append_box(
                         bm,
-                        px + nx * 0.28,
-                        py + ny * 0.28,
-                        sill - 0.08,
-                        ww * 0.9,
-                        0.08,
-                        0.55,
+                        px + nx * 0.22,
+                        py + ny * 0.22,
+                        sill - 0.05,
+                        ww * 0.95,
+                        0.1,
+                        0.5,
                         yaw,
                         3,
                     )
@@ -570,7 +789,14 @@ def add_street_facade(
 
 
 def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = None) -> None:
-    style_name = bldg.get("style", "eclectic")
+    style_name = style_key_for(bldg)
+    type_id = bldg.get("building_type") or bldg.get("style") or "eclectic"
+    window_kind = None
+    pal = bldg.get("palette") or {}
+    if pal.get("window"):
+        window_kind = str(pal["window"])
+    elif type_id in STYLES:
+        window_kind = STYLES[type_id].get("window")
     ring = bldg.get("ring") or []
     if len(ring) < 3:
         return
@@ -579,9 +805,10 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     eaves = float(bldg.get("height", 12.0))
     roof_h = float(bldg.get("roof_height") or max(1.2, eaves * 0.15))
     floors = int(bldg.get("floors") or max(1, round(eaves / 3.15)))
-    shape = bldg.get("roof_shape") or "mansard"
-    wall = mats["wall"].get(style_name) or mats["wall"]["eclectic"]
-    roof = mats["roof"].get(style_name) or mats["roof"]["eclectic"]
+    type_roof = (bldg.get("palette") or {}).get("roof_kind") or STYLES.get(type_id, {}).get("roof_kind")
+    shape = bldg.get("roof_shape") or type_roof or "mansard"
+    wall = mats["wall"].get(style_name) or mats["wall"].get(type_id) or mats["wall"]["eclectic"]
+    roof = mats["roof"].get(style_name) or mats["roof"].get(type_id) or mats["roof"]["eclectic"]
 
     add_ring(name, ring, max(2.5, eaves), 0.0, wall)
     add_lod2_roof(f"{name}_roof", ring, max(2.5, eaves), roof_h, shape, roof)
@@ -617,6 +844,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             style_name,
             mats,
             detail=detail,
+            window_kind=window_kind,
         )
 
 
@@ -1245,8 +1473,20 @@ def setup_cameras(layout: dict, xmin: float, ymin: float, xmax: float, ymax: flo
     bpy.context.scene.camera = street_obj
 
 
-def build(layout: dict) -> None:
+def build(layout: dict, types_doc: dict | None = None) -> None:
     reset_scene()
+    if types_doc is None:
+        # Fallback: assets/styles/building_types.json next to the job root.
+        for candidate in (
+            layout.get("building_types_path"),
+            str(Path(__file__).resolve().parents[1] / "assets" / "styles" / "building_types.json"),
+        ):
+            if candidate and Path(candidate).exists():
+                types_doc = json.loads(Path(candidate).read_text())
+                break
+    merge_building_types(types_doc)
+    if types_doc:
+        print(f"Building types loaded: {len(types_doc.get('types') or {})}")
     xmin, ymin, xmax, ymax = bounds(layout)
     ground = bpy.data.meshes.new("ground")
     ground.from_pydata(
@@ -1302,15 +1542,27 @@ def build(layout: dict) -> None:
     bin_mat = principled("bin_green", (0.14, 0.28, 0.16, 1.0), 0.65, metallic=0.2)
     lamp_head_mat = principled("lamp_head", (0.75, 0.72, 0.55, 1.0), 0.35)
 
+    # Only bake materials for types/variants present in this tile — keeps GLB lean.
+    used_keys = {"eclectic"}
+    for bldg in layout.get("buildings") or []:
+        used_keys.add(style_key_for(bldg))
+        tid = bldg.get("building_type") or bldg.get("style")
+        if tid:
+            used_keys.add(str(tid))
+    style_items = [(n, s) for n, s in STYLES.items() if n in used_keys]
+    if not style_items:
+        style_items = list(STYLES.items())
     mats = {
-        "wall": {n: principled(f"wall_{n}", s["wall"], 0.92) for n, s in STYLES.items()},
-        "roof": {n: principled(f"roof_{n}", s["roof"], 0.6, metallic=0.08) for n, s in STYLES.items()},
-        "frame": {n: principled(f"frame_{n}", s["frame"], 0.55, metallic=0.15) for n, s in STYLES.items()},
-        "glass": {n: principled(f"glass_{n}", s["glass"], 0.2, metallic=0.05) for n, s in STYLES.items()},
-        "plinth": {n: principled(f"plinth_{n}", s["plinth"], 0.94) for n, s in STYLES.items()},
-        "trim": {n: principled(f"trim_{n}", s["trim"], 0.78) for n, s in STYLES.items()},
+        "wall": {n: principled(f"wall_{n}", s["wall"], 0.88) for n, s in style_items},
+        "roof": {n: principled(f"roof_{n}", s["roof"], 0.72, metallic=0.05) for n, s in style_items},
+        "frame": {n: principled(f"frame_{n}", s["frame"], 0.62, metallic=0.12) for n, s in style_items},
+        # Glazier glass — darker, slightly reflective so windows read as openings not stickers.
+        "glass": {n: principled(f"glass_{n}", s["glass"], 0.12, metallic=0.35) for n, s in style_items},
+        "plinth": {n: principled(f"plinth_{n}", s["plinth"], 0.9) for n, s in style_items},
+        "trim": {n: principled(f"trim_{n}", s["trim"], 0.7) for n, s in style_items},
         "chimney": chimney_mat,
     }
+    print(f"Facade material keys: {len(style_items)}")
 
     spawn = layout.get("spawn") or {}
     spawn_xy = (float(spawn["x"]), float(spawn["y"])) if spawn.get("x") is not None else None
@@ -1416,7 +1668,12 @@ def main() -> None:
         layout = json.loads(Path(job["layout_path"]).read_text())
     if job.get("spawn") and not layout.get("spawn"):
         layout["spawn"] = job["spawn"]
-    build(layout)
+    types_doc = job.get("building_types")
+    if not types_doc:
+        types_path = job.get("building_types_path") or layout.get("building_types_path")
+        if types_path and Path(types_path).exists():
+            types_doc = json.loads(Path(types_path).read_text())
+    build(layout, types_doc=types_doc)
     export_outputs(output_dir, job.get("scene_name", "antwerp_city"), job.get("render", True))
 
 

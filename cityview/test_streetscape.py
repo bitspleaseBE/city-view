@@ -3,9 +3,11 @@ import unittest
 from cityview.streetscape import (
     export_roads_near_spawn,
     floors_from_height,
+    footprint_supports_prism_roof,
     height_truth,
     nearest_road_pose,
     roof_shape_for,
+    safe_roof_shape,
     street_facing_edges,
 )
 
@@ -24,6 +26,26 @@ class HeightTruthTests(unittest.TestCase):
 
     def test_floors_from_height(self):
         self.assertEqual(floors_from_height(12.6), 4)
+
+    def test_prism_ok_on_rectangle(self):
+        ring = [[0.0, 0.0], [10.0, 0.0], [10.0, 6.0], [0.0, 6.0]]
+        self.assertTrue(footprint_supports_prism_roof(ring))
+        self.assertEqual(safe_roof_shape("gable", ring), "gable")
+
+    def test_prism_rejects_l_shape(self):
+        # Classic L footprint — OBB gable would overhang the missing corner.
+        ring = [
+            [0.0, 0.0],
+            [12.0, 0.0],
+            [12.0, 4.0],
+            [4.0, 4.0],
+            [4.0, 10.0],
+            [0.0, 10.0],
+        ]
+        self.assertFalse(footprint_supports_prism_roof(ring))
+        self.assertEqual(safe_roof_shape("gable", ring), "mansard")
+        self.assertEqual(safe_roof_shape("hip", ring), "mansard")
+        self.assertEqual(safe_roof_shape("flat", ring), "flat")
 
 
 class StreetEdgeTests(unittest.TestCase):
