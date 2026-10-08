@@ -6,8 +6,10 @@
  * Speeds: each road carries `speedKmh` (OSM maxspeed, else a Belgian urban
  * default by highway class) exported into roads.json. Cars cruise slightly
  * under that limit (per-driver variance) and brake kinematically for leaders,
- * red lights and the player. Waiting at a red is never treated as "stuck";
- * real blockages escalate: nudge -> ghost-through -> respawn.
+ * red lights, crossing traffic, trams/buses and the player. Waiting at a red is never
+ * treated as "stuck". Cars NEVER pass through each other: a car that is genuinely
+ * blocked for too long (gridlock, bad geometry) is despawned and respawned on a free
+ * road instead of sliding through its blocker and leaving a ghost behind.
  */
 
 const KMH = 1 / 3.6;
@@ -34,11 +36,20 @@ const CAR_LEN = 4.2;
 const STANDSTILL_GAP = 1.6; // bumper gap kept to the leader / stop line
 const STOP_LINE_SETBACK = CAR_LEN * 0.5 + 0.4;
 const TURN_SPEED = 5.0; // m/s through sharp junction turns
-const CREEP_SPEED = 2.2; // m/s minimum while ghosting through a jam
-const BLOCK_NUDGE_SEC = 1.5;
-const BLOCK_GHOST_SEC = 4;
-const GHOST_SEC = 5;
-const BLOCK_RESPAWN_SEC = 14;
+const TRANSIT_PATIENCE_SEC = 100; // longer than any halt dwell
+const ROADS_URL = "./roads.json";
+const PLAYER_PATIENCE_SEC = 15; // a player standing in the lane: wait, then clear the car
+const HEAD_ON_DOT = -0.5; // oncoming-ish headings share the braking distance
+const HEAD_ON_RESPAWN_SEC = 3; // the lower-priority car of a nose-to-nose deadlock is cleared quickly
+const BLOCK_RESPAWN_SEC = 8; // blocked this long by a car / crossing car -> despawn + respawn
+const RESPAWN_CLEARANCE = 14; // m of free space required around a respawn point
+const HALF_L = CAR_LEN * 0.5;
+const HALF_W = 0.875;
+const ZONE_HALF_W = HALF_W + 0.3; // swept corridor ahead of a car (oncoming lane stays clear of it)
+const NEXT_LOOKAHEAD = 34; // m before a junction: pick the next road early and check it is free
+const FUTURE_T = [0, 0.5, 1.0, 1.5]; // s: horizons for predicted footprint overlap
+const CROSS_REACH = 34; // m: ignore other vehicles beyond this
+const SIGNAL_CLUSTER_M = 32; // signal heads this close belong to one intersection controller
 const RED_QUEUE_PATIENCE_SEC = 22; // queue longer than a light cycle half = gridlock
 const RED_PATIENCE_SEC = 40; // a light that never turns green is ignored after this
 const FOLLOW_DIST = 9;
@@ -144,10 +155,81 @@ function buildPaths(roads, THREE) {
   return paths;
 }
 
-function buildSignals(raw, THREE, cycleSec) {
+/**
+ * Junction centres from the road graph: path end points that cluster within SNAP_M and have
+ * three or more arms. Each arm records the unit vector pointing *out* of the junction.
+ */
+function buildJunctions(paths, THREE) {
+  const ends = [];
+  for (const path of paths) {
+    ends.push({ path, atStart: true, v: path.start });
+    ends.push({ path, atStart: false, v: path.end });
+  }
+  const used = new Array(ends.length).fill(false);
+  const nodes = [];
+  for (let i = 0; i < ends.length; i++) {
+    if (used[i]) continue;
+    const group = [ends[i]];
+    used[i] = true;
+    for (let j = i + 1; j < ends.length; j++) {
+      if (!used[j] && ends[i].v.distanceTo(ends[j].v) < SNAP_M) {
+        group.push(ends[j]);
+        used[j] = true;
+      }
+    }
+    if (group.length < 3) continue;
+    const c = new THREE.Vector3();
+    for (const g of group) c.add(g.v);
+    c.multiplyScalar(1 / group.length);
+    const arms = [];
+    for (const g of group) {
+      const pts = g.path.points;
+      const from = g.atStart ? pts[0] : pts[pts.length - 1];
+      let to = from;
+      for (let k = 1; k < pts.length; k++) {
+        to = g.atStart ? pts[k] : pts[pts.length - 1 - k];
+        if (to.distanceTo(from) >= 6) break;
+      }
+      const dx = to.x - from.x;
+      const dz = to.z - from.z;
+      const len = Math.hypot(dx, dz);
+      if (len < 1e-3) continue;
+      arms.push({ ux: dx / len, uz: dz / len, width: g.path.width, hasHead: false });
+    }
+    if (arms.length >= 3) nodes.push({ c, arms, offset: null });
+  }
+  return nodes;
+}
+
+function buildSignals(raw, THREE, cycleSec, paths = []) {
   const signals = [];
   const tmp = new THREE.Vector3();
-  for (const s of raw || []) {
+  const nodes = buildJunctions(paths, THREE);
+  // Heads within one intersection must share a controller, otherwise each OSM node (often
+  // 2-3 per junction) gets its own phase and cross streets are green together.
+  const list = (raw || []).filter((s) => Number.isFinite(s.stopX ?? s.x) && Number.isFinite(s.stopY ?? s.y));
+  const parent = list.map((_, i) => i);
+  const find = (i) => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  for (let i = 0; i < list.length; i++) {
+    for (let j = i + 1; j < list.length; j++) {
+      const d = Math.hypot(list[i].x - list[j].x, list[i].y - list[j].y);
+      if (d < SIGNAL_CLUSTER_M) parent[find(j)] = find(i);
+    }
+  }
+  const controllerKey = new Map();
+  for (let i = 0; i < list.length; i++) {
+    const root = find(i);
+    const id = Math.abs(Number(list[i].id) || 0);
+    controllerKey.set(root, Math.min(controllerKey.get(root) ?? Infinity, id));
+  }
+  for (let k = 0; k < list.length; k++) {
+    const s = list[k];
     const stopX = s.stopX ?? s.x;
     const stopY = s.stopY ?? s.y;
     if (!Number.isFinite(stopX) || !Number.isFinite(stopY)) continue;
@@ -162,8 +244,41 @@ function buildSignals(raw, THREE, cycleSec) {
     } else {
       tan = new THREE.Vector3(1, 0, 0);
     }
-    const id = s.id ?? signals.length;
-    const phaseOffset = (Math.abs(Number(id) || signals.length) % 17) * 1.7;
+    const id = controllerKey.get(find(k)) || signals.length;
+    const phaseOffset = (id % 17) * 1.7;
+
+    // Orient the head along the road graph. Half of the exported heads point OUT of the
+    // junction (they sit on the exit lane): the approaching cars never saw them (red ignored),
+    // while cars that had already crossed the junction stopped at the "line" on the far side,
+    // parked inside the intersection. A stop line must face the traffic entering the junction.
+    let node = null;
+    let nodeD = 30;
+    for (const n of nodes) {
+      const d = Math.hypot(n.c.x - stop.x, n.c.z - stop.z);
+      if (d < nodeD) {
+        nodeD = d;
+        node = n;
+      }
+    }
+    if (node) {
+      const vx = stop.x - node.c.x;
+      const vz = stop.z - node.c.z;
+      const vl = Math.hypot(vx, vz) || 1;
+      let best = null;
+      let bestAlign = 0.7;
+      for (const arm of node.arms) {
+        const al = (arm.ux * vx + arm.uz * vz) / vl;
+        if (al > bestAlign) {
+          bestAlign = al;
+          best = arm;
+        }
+      }
+      if (best) {
+        if (-(best.ux * tan.x + best.uz * tan.z) < 0) tan.multiplyScalar(-1);
+        best.hasHead = true;
+        if (node.offset === null) node.offset = phaseOffset;
+      }
+    }
     // Axis group: NS vs EW for alternating greens within the 30s cycle.
     const ns = Math.abs(tan.z) >= Math.abs(tan.x);
     signals.push({
@@ -173,6 +288,25 @@ function buildSignals(raw, THREE, cycleSec) {
       phaseOffset,
       width: s.width || 6,
     });
+  }
+  // A signalised junction must control every arm, not only the arms that happened to carry an
+  // OSM signal node: add a stop line on each unguarded arm, sharing the junction's phase.
+  for (const node of nodes) {
+    if (node.offset === null) continue;
+    for (const arm of node.arms) {
+      if (arm.hasHead) continue;
+      const setback = Math.max(4.4, (arm.width || 6) * 0.6 + 1.2);
+      const stop = new THREE.Vector3(node.c.x + arm.ux * setback, 0, node.c.z + arm.uz * setback);
+      const tan = new THREE.Vector3(-arm.ux, 0, -arm.uz);
+      signals.push({
+        stop,
+        tan,
+        ns: Math.abs(tan.z) >= Math.abs(tan.x),
+        phaseOffset: node.offset,
+        width: arm.width || 6,
+        synthesized: true,
+      });
+    }
   }
   return { signals, cycleSec };
 }
@@ -196,12 +330,20 @@ function samplePath(path, s, THREE, outPos, outTan) {
   } else {
     outTan.normalize();
   }
-  const lane = path.laneOffset ?? LANE_OFFSET;
-  const rx = outTan.z;
-  const rz = -outTan.x;
-  outPos.x += rx * lane;
-  outPos.z += rz * lane;
   outPos.y = 0.75;
+}
+
+/**
+ * Offset a centreline sample into the driver's own lane: the right-hand side of the
+ * direction the car is actually travelling (Belgium drives on the right). `travelTan` is
+ * the car's heading, i.e. the path tangent flipped for reverse cars. Previously the offset
+ * was taken from the path's *forward* tangent for every car, so cars running a road in
+ * both directions shared one lane and drove straight through each other head-on.
+ */
+function applyLane(path, travelTan, outPos) {
+  const lane = path.laneOffset ?? LANE_OFFSET;
+  outPos.x += -travelTan.z * lane;
+  outPos.z += travelTan.x * lane;
 }
 
 function makeSharedParts(THREE) {
@@ -319,7 +461,9 @@ function createCar(paths, THREE, parts) {
     blocked: 0,
     queued: 0,
     redWait: 0,
-    ghostUntil: 0,
+    next: null, // planned hand-off onto the next road (see NEXT_LOOKAHEAD)
+    headOnLoser: false, // lower-priority half of a nose-to-nose standoff this frame
+    holdEntry: false, // waiting at the end of the road for the next road's entry to clear
     ignoreSignalsUntil: 0,
     wait: "",
   };
@@ -332,6 +476,7 @@ function placeCar(car, paths, THREE) {
   if (car.reverse) {
     car.tan.multiplyScalar(-1);
   }
+  applyLane(path, car.tan, car.pos);
   if (car.lateral) {
     car.pos.x += car.tan.z * car.lateral;
     car.pos.z += -car.tan.x * car.lateral;
@@ -356,13 +501,13 @@ function signalIsGreen(sig, nowSec, cycleSec) {
 /**
  * @param {import('three').Scene} scene
  * @param {typeof import('three')} THREE
- * @param {{ url?: string, count?: number }} [opts]
+ * @param {{ count?: number }} [opts]
  */
 export async function createTraffic(scene, THREE, opts = {}) {
-  const url = opts.url || "./roads.json";
+  // Fixed same-origin data file (no caller-supplied URL).
   let data;
   try {
-    const res = await fetch(url);
+    const res = await fetch(ROADS_URL);
     if (!res.ok) throw new Error(`roads.json ${res.status}`);
     data = await res.json();
   } catch (err) {
@@ -376,7 +521,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
   }
 
   const cycleSec = Number(data.cycleSeconds) || CYCLE_SEC;
-  const { signals } = buildSignals(data.signals || [], THREE, cycleSec);
+  const { signals } = buildSignals(data.signals || [], THREE, cycleSec, paths);
   const count = fleetCount(paths, opts.count);
 
   const root = new THREE.Group();
@@ -390,7 +535,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     let tries = 0;
     while (tries < 20) {
       placeCar(car, paths, THREE);
-      const clash = cars.some((c) => c.pos.distanceToSquared(car.pos) < 100);
+      const clash = cars.some((c) => c.pos.distanceToSquared(car.pos) < 256);
       if (!clash) break;
       car.pathIndex = (Math.random() * paths.length) | 0;
       car.s = 2 + Math.random() * Math.max(1, paths[car.pathIndex].length * 0.8 - 4);
@@ -406,10 +551,132 @@ export async function createTraffic(scene, THREE, opts = {}) {
 
   const playerPos = new THREE.Vector3();
   let simTime = Math.random() * cycleSec;
+  // Trams / buses are drawn by transit.js; cars give way to them via this provider.
+  let obstacleProvider = null;
+  const obstacleCache = [];
+  function obstacleList() {
+    obstacleCache.length = 0;
+    const src = obstacleProvider ? obstacleProvider() : null;
+    if (src) {
+      for (const v of src) {
+        if (!v || !v.pos || !v.tan) continue;
+        const tram = v.mode === "tram";
+        obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: v.velocity || 0, hl: tram ? 5.4 : 4.6, hw: 1.4 });
+      }
+    }
+    return obstacleCache;
+  }
 
-  function respawnCar(car) {
+  /** Is `o` (centre/tangent/half extents) intersecting the corridor `car` sweeps ahead? */
+  function inCorridor(car, lookahead, o) {
+    const dx = o.pos.x - car.pos.x;
+    const dz = o.pos.z - car.pos.z;
+    const ahead = dx * car.tan.x + dz * car.tan.z;
+    const side = dx * car.tan.z - dz * car.tan.x;
+    // Extent of the other footprint projected on our axes.
+    const c = o.tan.x * car.tan.x + o.tan.z * car.tan.z;
+    const sn = o.tan.x * car.tan.z - o.tan.z * car.tan.x;
+    const extAhead = o.hl * Math.abs(c) + o.hw * Math.abs(sn);
+    const extSide = o.hl * Math.abs(sn) + o.hw * Math.abs(c);
+    if (ahead <= 0.3) return null; // beside / behind: their problem, not ours
+    if (ahead - extAhead > HALF_L + lookahead) return null;
+    if (Math.abs(side) - extSide > ZONE_HALF_W) return null;
+    return { gap: ahead - extAhead - HALF_L };
+  }
+
+  /** SAT overlap of two oriented boxes (centre, unit tangent, half length/width, margin). */
+  function boxesOverlap(ax, az, at, ahl, ahw, bx, bz, bt, bhl, bhw, margin) {
+    const dx = bx - ax;
+    const dz = bz - az;
+    const axes = [at.x, at.z, at.z, -at.x, bt.x, bt.z, bt.z, -bt.x];
+    for (let k = 0; k < 8; k += 2) {
+      const ux = axes[k];
+      const uz = axes[k + 1];
+      const d = Math.abs(dx * ux + dz * uz);
+      const ra = ahl * Math.abs(at.x * ux + at.z * uz) + ahw * Math.abs(at.z * ux - at.x * uz);
+      const rb = bhl * Math.abs(bt.x * ux + bt.z * uz) + bhw * Math.abs(bt.z * ux - bt.x * uz);
+      if (d > ra + rb + margin) return false;
+    }
+    return true;
+  }
+
+  const _poseP = new THREE.Vector3();
+  const _poseT = new THREE.Vector3();
+  /**
+   * Where will `car` be after driving `dist` metres? Follows its planned hand-off onto the
+   * next road so turning cars are predicted along the turn, not along a straight line.
+   */
+  function poseAt(car, dist, out) {
+    let path = paths[car.pathIndex];
+    let reverse = car.reverse;
+    let s = car.s + dist;
+    if (s > path.length - 0.5) {
+      if (car.next) {
+        s = 1 + (s - (path.length - 0.5));
+        path = paths[car.next.index];
+        reverse = car.next.flip ? !reverse : car.next.reverse;
+      }
+      s = Math.min(s, path.length);
+    }
+    samplePath(path, reverse ? path.length - s : s, THREE, _poseP, _poseT);
+    if (reverse) _poseT.multiplyScalar(-1);
+    applyLane(path, _poseT, _poseP);
+    out.x = _poseP.x;
+    out.z = _poseP.z;
+    out.tan.x = _poseT.x;
+    out.tan.z = _poseT.z;
+  }
+  const _fa = { x: 0, z: 0, tan: { x: 0, z: 0 } };
+  const _fb = { x: 0, z: 0, tan: { x: 0, z: 0 } };
+
+  /**
+   * Will our footprint touch `other`'s within the next ~1.5 s if both keep driving their
+   * (planned) roads at the current speed? Catches turning / merging traffic that a straight
+   * corridor misses. Returns the along-heading gap to brake for, or null.
+   */
+  function futureConflict(car, other) {
+    const dx = other.pos.x - car.pos.x;
+    const dz = other.pos.z - car.pos.z;
+    const ahead = dx * car.tan.x + dz * car.tan.z;
+    if (ahead <= 0.3) return null;
+    for (let k = 0; k < FUTURE_T.length; k++) {
+      const t = FUTURE_T[k];
+      poseAt(car, Math.max(0, car.velocity) * t, _fa);
+      poseAt(other, Math.max(0, other.velocity) * t, _fb);
+      if (boxesOverlap(_fa.x, _fa.z, _fa.tan, HALF_L, HALF_W, _fb.x, _fb.z, _fb.tan, HALF_L, HALF_W, 0.15)) {
+        const c = other.tan.x * car.tan.x + other.tan.z * car.tan.z;
+        const sn = other.tan.x * car.tan.z - other.tan.z * car.tan.x;
+        const extAhead = HALF_L * Math.abs(c) + HALF_W * Math.abs(sn);
+        return { gap: ahead - extAhead - HALF_L };
+      }
+    }
+    return null;
+  }
+
+  /** Nearest other car / obstacle centre to a point (for clearance checks). */
+  function nearestOther(car, pos) {
+    let minD = Infinity;
+    for (const other of cars) {
+      if (other === car) continue;
+      minD = Math.min(minD, pos.distanceTo(other.pos));
+    }
+    for (const o of obstacleList()) {
+      minD = Math.min(minD, pos.distanceTo(o.pos));
+    }
+    return minD;
+  }
+
+  /**
+   * Despawn a dead car and put it back on a free road. Returns false (car stays put, caller
+   * retries next frame) when no spot with enough clearance exists, so a respawn can never
+   * drop a car on top of another one.
+   */
+  const respawnCounts = {};
+  function respawnCar(car, why = "blocked") {
+    if (globalThis.__DBG_RESP) globalThis.__DBG_RESP(car, why, cars, paths, simTime);
     let best = null;
-    for (let attempt = 0; attempt < 32; attempt++) {
+    const origin = { pathIndex: car.pathIndex, reverse: car.reverse, s: car.s };
+    for (let attempt = 0; attempt < 48; attempt++) {
       const pathIndex = (Math.random() * paths.length) | 0;
       const reverse = Math.random() < 0.5;
       const s = 2 + Math.random() * Math.max(1, paths[pathIndex].length * 0.85 - 4);
@@ -417,57 +684,132 @@ export async function createTraffic(scene, THREE, opts = {}) {
       car.reverse = reverse;
       car.s = s;
       placeCar(car, paths, THREE);
-      let minD = Infinity;
-      for (const other of cars) {
-        if (other === car) continue;
-        minD = Math.min(minD, car.pos.distanceTo(other.pos));
-      }
+      const minD = nearestOther(car, car.pos);
       const playerD = playerPos.lengthSq() > 0 ? car.pos.distanceTo(playerPos) : 80;
+      // Never respawn in front of the player's nose either.
+      if (minD < RESPAWN_CLEARANCE || playerD < 12) continue;
       const score = Math.min(minD, 40) + Math.min(playerD, 60) * 0.35;
       if (!best || score > best.score) {
-        best = { pathIndex, reverse, s, score, pos: car.pos.clone(), tan: car.tan.clone() };
+        best = { pathIndex, reverse, s, score };
       }
-      if (minD > 18 && playerD > 35) break;
+      if (minD > 24 && playerD > 35) break;
     }
-    if (best) {
-      car.pathIndex = best.pathIndex;
-      car.reverse = best.reverse;
-      car.s = best.s;
+    if (!best) {
+      car.pathIndex = origin.pathIndex;
+      car.reverse = origin.reverse;
+      car.s = origin.s;
+      placeCar(car, paths, THREE);
+      return false;
     }
+    car.pathIndex = best.pathIndex;
+    car.reverse = best.reverse;
+    car.s = best.s;
     const path = paths[car.pathIndex];
     car.velocity = path.speedLimit * car.driver * 0.7;
     car.stuck = 0;
     car.blocked = 0;
     car.queued = 0;
     car.redWait = 0;
-    car.ghostUntil = 0;
     car.ignoreSignalsUntil = simTime + 3;
     car.wait = "";
+    car.next = null;
+    car.holdEntry = false;
     car.lateral = 0;
+    respawnCounts[why] = (respawnCounts[why] || 0) + 1;
     placeCar(car, paths, THREE);
+    return true;
   }
 
+  const _entry = { pathIndex: 0, reverse: false, s: 0, next: null };
+  /** Would a car dropped onto (pathIndex, reverse, s) overlap any other car right now? */
+  function entryBlocked(car, pathIndex, reverse, s) {
+    _entry.pathIndex = pathIndex;
+    _entry.reverse = reverse;
+    _entry.s = s;
+    poseAt(_entry, 0, _fa);
+    const me = cars.indexOf(car);
+    for (let j = 0; j < cars.length; j++) {
+      const other = cars[j];
+      if (other === car) continue;
+      // Our own followers (same road, same way, behind us) are waiting for *us*; only a real
+      // overlap counts, otherwise leader and follower would block each other forever.
+      if (other.pathIndex === car.pathIndex && other.reverse === car.reverse && other.s < car.s) {
+        if (boxesOverlap(_fa.x, _fa.z, _fa.tan, HALF_L, HALF_W, other.pos.x, other.pos.z, other.tan, HALF_L, HALF_W, -0.4)) {
+          return other;
+        }
+        continue;
+      }
+      // Fixed priority again: a lower-index car only yields to a physical overlap, so two
+      // cars can never hold each other's drop points hostage.
+      const lowerPriority = j > me;
+      const margin = lowerPriority ? 0.1 : 0.5;
+      if (boxesOverlap(_fa.x, _fa.z, _fa.tan, HALF_L, HALF_W, other.pos.x, other.pos.z, other.tan, HALF_L, HALF_W, margin)) {
+        return other;
+      }
+      if (lowerPriority) continue;
+      // ...and where it is about to be (a car still rolling toward the drop point).
+      poseAt(other, Math.max(0, other.velocity) * 0.6, _fb);
+      if (boxesOverlap(_fa.x, _fa.z, _fa.tan, HALF_L, HALF_W, _fb.x, _fb.z, _fb.tan, HALF_L, HALF_W, 0.5)) {
+        return other;
+      }
+    }
+    for (const o of obstacleList()) {
+      if (boxesOverlap(_fa.x, _fa.z, _fa.tan, HALF_L, HALF_W, o.pos.x, o.pos.z, o.tan, o.hl, o.hw, 0.1)) return o;
+    }
+    return null;
+  }
+
+  /**
+   * Hand the car over to the next road. Returns false (car stays at the end of its road,
+   * stopped) when the drop point is occupied: teleporting onto another car is exactly how
+   * cars ended up sharing a footprint at junctions and dead-end U-turns.
+   */
   function advanceJunction(car, overshoot) {
     const path = paths[car.pathIndex];
     const atEnd = !car.reverse;
-    const next = pickNextPath(paths, path, atEnd, cars, car, THREE);
-    if (next.flip) {
-      car.reverse = !car.reverse;
-      car.s = 1.0;
-      car.velocity = Math.min(car.velocity, TURN_SPEED);
-      return;
-    }
+    const next = car.next || pickNextPath(paths, path, atEnd, cars, car, THREE);
     const nextPath = paths[next.index];
+    // Sharp turns / U-turns swing the car's body back across the road it came from, onto the
+    // car following it. Drop it a car-half-length further along so it clears that lane.
+    const sharp = next.flip || next.align < 0.3;
+    const entryS = Math.min(
+      Math.max(1.0, next.flip ? 1.0 : overshoot) + (sharp ? HALF_L + 0.6 : 0),
+      Math.max(1.0, nextPath.length - 1),
+    );
+    const newReverse = next.flip ? !car.reverse : next.reverse;
+    if (entryBlocked(car, next.index, newReverse, entryS)) {
+      car.next = next;
+      car.holdEntry = true;
+      car.s = path.length - 0.55;
+      car.velocity = 0;
+      return false;
+    }
+    car.holdEntry = false;
+    car.next = null;
     car.pathIndex = next.index;
-    car.reverse = next.reverse;
-    car.s = Math.min(Math.max(1.0, overshoot), Math.max(1.0, nextPath.length - 1));
-    // Slow through sharp turns; they re-accelerate toward the new road's limit.
-    if (next.align < 0.7) car.velocity = Math.min(car.velocity, TURN_SPEED);
+    car.reverse = newReverse;
+    car.s = entryS;
+    if (next.flip) {
+      car.velocity = Math.min(car.velocity, TURN_SPEED);
+    } else if (next.align < 0.7) {
+      // Slow through sharp turns; they re-accelerate toward the new road's limit.
+      car.velocity = Math.min(car.velocity, TURN_SPEED);
+    }
+    return true;
   }
 
   /** Max speed that still lets us stop within `gap` metres (v^2 = 2*a*d). */
   function stopSpeed(gap) {
     return gap <= 0 ? 0 : Math.sqrt(2 * BRAKE * gap);
+  }
+
+  /**
+   * Speed that keeps us behind a leader moving at `leaderV`: match it plus the braking
+   * headroom, but when we are already closer than the standstill gap drop *below* the
+   * leader's speed so the gap re-opens instead of persisting (or shrinking) forever.
+   */
+  function followSpeed(leaderV, gap) {
+    return Math.max(0, leaderV * 0.95 + (gap >= 0 ? stopSpeed(gap) : gap * 1.5));
   }
 
   function update(dt, walkObject) {
@@ -483,23 +825,69 @@ export async function createTraffic(scene, THREE, opts = {}) {
       const roadPath = paths[car.pathIndex];
       placeCar(car, paths, THREE);
 
-      const ghosting = simTime < car.ghostUntil;
       const cruise = roadPath.speedLimit * car.driver;
       car.speed = cruise;
       let desire = cruise;
       let lateralNudge = 0;
       let reason = "";
       let leader = null;
+      car.headOnLoser = false;
 
-      if (!ghosting) {
+      // Lookahead for the swept corridor: our braking distance plus a margin.
+      const lookahead = Math.min(22, Math.max(4, (car.velocity * car.velocity) / (2 * BRAKE) + 3.5));
+      {
         for (let j = 0; j < cars.length; j++) {
           if (i === j) continue;
           const other = cars[j];
           const dx = other.pos.x - car.pos.x;
           const dz = other.pos.z - car.pos.z;
           const distSq = dx * dx + dz * dz;
-          if (distSq > (FOLLOW_DIST + 14) ** 2) continue;
+          if (distSq > CROSS_REACH * CROSS_REACH) continue;
           const heading = other.tan.x * car.tan.x + other.tan.z * car.tan.z;
+          // Crossing / merging / turning traffic: never drive into a footprint that sits in
+          // our swept corridor. Priority is a fixed total order (lower index goes first) and
+          // only applies when both cars see each other, so it cannot deadlock in a cycle.
+          if (heading < 0.7) {
+            const mine = inCorridor(car, lookahead, { pos: other.pos, tan: other.tan, hl: HALF_L, hw: HALF_W });
+            if (mine) {
+              const theirs = inCorridor(
+                other,
+                Math.min(22, Math.max(4, (other.velocity * other.velocity) / (2 * BRAKE) + 3.5)),
+                { pos: car.pos, tan: car.tan, hl: HALF_L, hw: HALF_W },
+              );
+              const headOn = theirs && heading < HEAD_ON_DOT;
+              // Oncoming cars share the closing distance: both brake for half the gap each,
+              // so neither relies on the other to get out of the way in time.
+              const hasPriority = theirs && i < j && !headOn;
+              if (headOn) car.headOnLoser = i > j;
+              if (!hasPriority) {
+                const safe = stopSpeed(headOn ? (mine.gap - 1.0) * 0.5 : mine.gap - 1.2);
+                if (safe < desire) {
+                  desire = Math.max(0, safe);
+                  reason = "cross";
+                  leader = other;
+                }
+              }
+            } else {
+              const fut = futureConflict(car, other);
+              if (fut) {
+                // Overlap is symmetric: the car whose front half contains the other yields,
+                // and when both see each other the higher index gives way.
+                const otherSeesUs = futureConflict(other, car);
+                const headOn = !!otherSeesUs && heading < HEAD_ON_DOT;
+                if (headOn) car.headOnLoser = i > j;
+                if (!otherSeesUs || i > j || headOn) {
+                  const safe = stopSpeed(headOn ? (fut.gap - 1.0) * 0.5 : fut.gap - 1.0);
+                  if (safe < desire) {
+                    desire = Math.max(0, safe);
+                    reason = "cross";
+                    leader = other;
+                  }
+                }
+              }
+            }
+          }
+          if (distSq > (FOLLOW_DIST + 14) ** 2) continue;
           // Only follow leaders on a similar heading (same corridor / same way).
           if (heading < 0.35) continue;
           const ahead = dx * car.tan.x + dz * car.tan.z;
@@ -507,7 +895,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
           if (ahead > 0.5 && Math.abs(side) < 2.8) {
             const gap = ahead - CAR_LEN - STANDSTILL_GAP;
             // Match the leader's speed plus whatever braking distance remains.
-            const safe = other.velocity * 0.95 + stopSpeed(gap);
+            const safe = followSpeed(other.velocity, gap);
             if (safe < desire) {
               desire = Math.max(0, safe);
               reason = "car";
@@ -516,6 +904,117 @@ export async function createTraffic(scene, THREE, opts = {}) {
             if (Math.abs(side) < 1.6 && ahead < 6) {
               lateralNudge += side > 0 ? -0.3 : 0.3;
             }
+          }
+        }
+      }
+
+      // Junction hand-off: choose the next road early and do not roll onto it while its
+      // entry is occupied (another car just turned in, or is merging from a side road).
+      // Without this two cars spawn into the same spot of the next road and overlap.
+      const remaining = roadPath.length - 0.5 - car.s;
+      if (!car.next && remaining < NEXT_LOOKAHEAD) {
+        car.next = pickNextPath(paths, roadPath, !car.reverse, cars, car, THREE);
+      }
+      if (car.holdEntry) {
+        desire = 0;
+        reason = "cross";
+        if (car.next) {
+          const b = entryBlocked(
+            car,
+            car.next.index,
+            car.next.flip ? !car.reverse : car.next.reverse,
+            car.next.flip || car.next.align < 0.3 ? 1.0 + HALF_L + 0.6 : 1.0,
+          );
+          if (b && b.isObstacle) reason = "transit";
+          else if (b) leader = b;
+        }
+      }
+      if (car.next && remaining < NEXT_LOOKAHEAD) {
+        const nx = car.next;
+        // Do not roll up to the hand-off while the drop point is occupied: stop short of it
+        // smoothly instead of being held at the last moment (a hard stop gets us rear-ended).
+        {
+          const nReverse = nx.flip ? !car.reverse : nx.reverse;
+          const nEntryS = nx.flip || nx.align < 0.3 ? 1.0 + HALF_L + 0.6 : 1.0;
+          const blocker = entryBlocked(car, nx.index, nReverse, nEntryS);
+          if (blocker) {
+            const safe = stopSpeed(remaining - 1.5);
+            if (safe < desire) {
+              desire = safe;
+              reason = blocker.isObstacle ? "transit" : "cross";
+              leader = blocker.isObstacle ? null : blocker;
+            }
+          }
+        }
+        // Sharp turn / U-turn ahead: ease down to turning speed *before* the hand-off so the
+        // speed never snaps (a sudden drop makes the car behind rear-end it).
+        if (nx.flip || nx.align < 0.7) {
+          const eased = Math.sqrt(TURN_SPEED * TURN_SPEED + 2 * BRAKE * 0.7 * Math.max(0, remaining));
+          if (eased < desire) desire = eased;
+        }
+        for (let j = 0; j < cars.length; j++) {
+          if (i === j) continue;
+          const other = cars[j];
+          let gapS = null;
+          let leaderSpeed = other.velocity;
+          if (other.pathIndex === nx.index && other.reverse === nx.reverse) {
+            // Already driving the road we are about to enter.
+            gapS = remaining + Math.max(0, other.s - 1) - CAR_LEN - STANDSTILL_GAP;
+          } else if (
+            other.next &&
+            other.next.index === nx.index &&
+            other.next.reverse === nx.reverse &&
+            other.pathIndex !== car.pathIndex
+          ) {
+            // Competing for the same entry: whoever is closer (then lower index) goes first.
+            const oRem = paths[other.pathIndex].length - 0.5 - other.s;
+            if (oRem < remaining - 0.5 || (Math.abs(oRem - remaining) <= 0.5 && j < i)) {
+              gapS = remaining - oRem - CAR_LEN - STANDSTILL_GAP;
+              leaderSpeed = 0;
+            }
+          }
+          if (gapS === null) continue;
+          const safe = followSpeed(leaderSpeed, gapS);
+          if (safe < desire) {
+            desire = Math.max(0, safe);
+            reason = "cross";
+            leader = other;
+          }
+        }
+      }
+
+      // Trams and buses (transit.js) always have right of way over cars.
+      {
+        const obstacles = obstacleList();
+        for (let o = 0; o < obstacles.length; o++) {
+          const ob = obstacles[o];
+          const same = ob.tan.x * car.tan.x + ob.tan.z * car.tan.z > 0.5;
+          let hit;
+          if (same) {
+            // Same way: follow it like a leader.
+            hit = inCorridor(car, lookahead + 8, ob);
+            if (!hit) continue;
+            const safe = followSpeed(ob.velocity * 0.95, hit.gap - STANDSTILL_GAP);
+            if (safe < desire) {
+              desire = Math.max(0, safe);
+              reason = "transit";
+            }
+            continue;
+          }
+          // Crossing / oncoming: respect the ground it will sweep over in the next ~2.5 s.
+          const reach = ob.velocity > 0.5 ? ob.velocity * 2.5 + 1 : 0;
+          const swept = {
+            pos: { x: ob.pos.x + ob.tan.x * reach * 0.5, z: ob.pos.z + ob.tan.z * reach * 0.5 },
+            tan: ob.tan,
+            hl: ob.hl + reach * 0.5,
+            hw: ob.hw,
+          };
+          hit = inCorridor(car, lookahead + 2, swept);
+          if (!hit) continue;
+          const safe = stopSpeed(hit.gap - 1.5);
+          if (safe < desire) {
+            desire = Math.max(0, safe);
+            reason = "transit";
           }
         }
       }
@@ -538,7 +1037,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       }
 
       // Queueing behind a car that is itself waiting at a red / for the player is fine.
-      if (reason === "car" && leader && (leader.wait === "red" || leader.wait === "queue" || leader.wait === "player")) {
+      if ((reason === "car" || reason === "cross") && leader && (leader.wait === "red" || leader.wait === "queue" || leader.wait === "player")) {
         reason = "queue";
       }
 
@@ -568,9 +1067,6 @@ export async function createTraffic(scene, THREE, opts = {}) {
           }
         }
       }
-
-      // Escalating recovery when not waiting for a legitimate reason.
-      if (ghosting) desire = Math.max(desire, Math.min(cruise, CREEP_SPEED));
 
       // Kinematic follow: accelerate gently, brake as hard as needed.
       if (desire > car.velocity) {
@@ -609,24 +1105,32 @@ export async function createTraffic(scene, THREE, opts = {}) {
         car.redWait = 0;
         car.blocked = 0;
         car.stuck = 0;
-      } else if (crawling && (reason === "car" || reason === "player")) {
+      } else if (crawling && reason === "transit") {
+        // A tram/bus dwelling at a halt is a legitimate wait (up to a minute+ for the first tram).
         car.redWait = 0;
         car.blocked += step;
-        if (car.blocked > BLOCK_GHOST_SEC && reason === "car") {
-          // Soft push: slide through the blocker at a crawl, then flow on.
-          car.ghostUntil = simTime + GHOST_SEC;
-          car.blocked = BLOCK_NUDGE_SEC;
+        if (car.blocked > TRANSIT_PATIENCE_SEC && respawnCar(car, "transit")) {
+          continue;
         }
-        if (car.blocked > BLOCK_RESPAWN_SEC) {
-          respawnCar(car);
+      } else if (crawling && (reason === "car" || reason === "cross" || reason === "player")) {
+        car.redWait = 0;
+        car.blocked += step;
+        // Truly dead (gridlock / blocked far longer than any light or dwell): despawn
+        // it onto a free road. Never slide through the blocker and leave a ghost.
+        const limit =
+          car.headOnLoser && reason === "cross"
+            ? HEAD_ON_RESPAWN_SEC
+            : reason === "player"
+              ? PLAYER_PATIENCE_SEC
+              : BLOCK_RESPAWN_SEC;
+        if (car.blocked > limit && respawnCar(car, `${reason}${limit === HEAD_ON_RESPAWN_SEC ? "-headon" : ""}${car.holdEntry ? "-hold" : ""}`)) {
           continue;
         }
       } else if (crawling) {
         // Stopped with no explanation (bad data, zero-speed road): recover fast.
         car.redWait = 0;
         car.stuck += step;
-        if (car.stuck > STUCK_SEC) {
-          respawnCar(car);
+        if (car.stuck > STUCK_SEC && respawnCar(car, "stuck")) {
           continue;
         }
       } else {
@@ -648,13 +1152,13 @@ export async function createTraffic(scene, THREE, opts = {}) {
   function stats() {
     let moving = 0;
     let sum = 0;
-    const waits = { red: 0, queue: 0, car: 0, player: 0, "?": 0 };
+    const waits = { red: 0, queue: 0, car: 0, cross: 0, transit: 0, player: 0, "?": 0 };
     for (const c of cars) {
       if (c.velocity > 0.5) moving++;
       sum += c.velocity;
       if (c.wait) waits[c.wait] = (waits[c.wait] || 0) + 1;
     }
-    return { moving, total: cars.length, avgKmh: (sum / Math.max(1, cars.length)) * 3.6, waits };
+    return { moving, total: cars.length, avgKmh: (sum / Math.max(1, cars.length)) * 3.6, waits, respawns: { ...respawnCounts } };
   }
 
   function dispose() {
@@ -667,10 +1171,16 @@ export async function createTraffic(scene, THREE, opts = {}) {
     for (const m of parts.bodyMats) m.dispose();
   }
 
+  /** Let cars give way to other vehicle lists (trams/buses): `() => transit.vehicles`. */
+  function setObstacles(provider) {
+    obstacleProvider = typeof provider === "function" ? provider : null;
+  }
+
   return {
     update,
     dispose,
     stats,
+    setObstacles,
     cars,
     paths,
     count: cars.length,
