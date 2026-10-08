@@ -475,6 +475,30 @@ def add_street_facade(
             if fi == 0 and bi == door_bay:
                 dh = min(2.3, floor_h * 0.72)
                 _append_box(bm, px, py, plinth_h + dh * 0.5, min(1.1, win_w * 0.85), 0.1, dh, yaw, 3)
+                if detail == "full":
+                    # Stone stoop steps — Belgian townhouse entry.
+                    _append_box(
+                        bm,
+                        px + nx * 0.45,
+                        py + ny * 0.45,
+                        0.12,
+                        min(1.3, win_w),
+                        0.55,
+                        0.22,
+                        yaw,
+                        1,
+                    )
+                    _append_box(
+                        bm,
+                        px + nx * 0.7,
+                        py + ny * 0.7,
+                        0.06,
+                        min(1.4, win_w * 1.05),
+                        0.4,
+                        0.12,
+                        yaw,
+                        1,
+                    )
                 continue
             # Shop awnings on ground-floor bays — lived-in street rhythm.
             if detail == "full" and fi == 0 and bi % 3 == 1 and kind != "ribbon":
@@ -685,9 +709,10 @@ def add_parked_cars(
     spawn_xy: tuple[float, float],
     body_mats: list,
     glass_mat,
-    max_cars: int = 36,
+    tire_mat,
+    max_cars: int = 48,
 ) -> int:
-    """GTA3-simple parked cars along kerbs near spawn only."""
+    """GTA3-simple parked cars along both kerbs near spawn."""
     placed = 0
     for ri, road in enumerate(roads):
         kind = road.get("kind") or "residential"
@@ -697,45 +722,43 @@ def add_parked_cars(
         if len(pts) < 2:
             continue
         half = float(road.get("width") or 6.0) * 0.5
-        # Park on the right kerb line.
-        kerb = offset_polyline(pts, -(half - 1.1))
-        dist_acc = 0.0
-        for i in range(len(kerb) - 1):
-            x0, y0 = kerb[i]
-            x1, y1 = kerb[i + 1]
-            seg = math.hypot(x1 - x0, y1 - y0)
-            yaw = math.atan2(y1 - y0, x1 - x0)
-            t = 0.0
-            while t < seg:
-                if placed >= max_cars:
-                    return placed
-                x = x0 + (x1 - x0) * (t / seg if seg else 0)
-                y = y0 + (y1 - y0) * (t / seg if seg else 0)
-                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 140.0:
-                    t += 16.0
-                    continue
-                # Skip every other slot for rhythm / gaps.
-                slot = placed + ri
-                if slot % 3 == 0:
-                    t += 7.5
-                    continue
-                body = add_box(
-                    f"car_{placed}",
-                    (4.2, 1.75, 1.45),
-                    (x, y, 0.72),
-                    yaw,
-                )
-                assign(body, body_mats[placed % len(body_mats)])
-                cabin = add_box(
-                    f"car_g_{placed}",
-                    (2.0, 1.55, 0.7),
-                    (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 1.45),
-                    yaw,
-                )
-                assign(cabin, glass_mat)
-                placed += 1
-                t += 14.0 + (slot % 5) * 0.8
-            dist_acc += seg
+        for side, sign in (("R", -1.0), ("L", 1.0)):
+            kerb = offset_polyline(pts, sign * (half - 1.15))
+            for i in range(len(kerb) - 1):
+                x0, y0 = kerb[i]
+                x1, y1 = kerb[i + 1]
+                seg = math.hypot(x1 - x0, y1 - y0)
+                yaw = math.atan2(y1 - y0, x1 - x0)
+                t = 4.0 if side == "L" else 0.0
+                while t < seg:
+                    if placed >= max_cars:
+                        return placed
+                    x = x0 + (x1 - x0) * (t / seg if seg else 0)
+                    y = y0 + (y1 - y0) * (t / seg if seg else 0)
+                    if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 150.0:
+                        t += 18.0
+                        continue
+                    slot = placed + ri + (0 if side == "R" else 7)
+                    if slot % 4 == 0:
+                        t += 8.0
+                        continue
+                    body = add_box(f"car_{placed}", (4.2, 1.75, 1.35), (x, y, 0.75), yaw)
+                    assign(body, body_mats[placed % len(body_mats)])
+                    cabin = add_box(
+                        f"car_g_{placed}",
+                        (2.0, 1.55, 0.65),
+                        (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 1.45),
+                        yaw,
+                    )
+                    assign(cabin, glass_mat)
+                    # Four stub wheels — reads as a car from street POV.
+                    for wx, wy in ((1.35, 0.85), (1.35, -0.85), (-1.35, 0.85), (-1.35, -0.85)):
+                        lx = x + math.cos(yaw) * wx - math.sin(yaw) * wy
+                        ly = y + math.sin(yaw) * wx + math.cos(yaw) * wy
+                        wheel = add_box(f"car_w_{placed}_{wx}_{wy}", (0.55, 0.22, 0.55), (lx, ly, 0.28), yaw)
+                        assign(wheel, tire_mat)
+                    placed += 1
+                    t += 13.0 + (slot % 5) * 0.9
     return placed
 
 
@@ -1045,10 +1068,11 @@ def add_park_amenities(
     spawn_xy: tuple[float, float] | None,
     wood_mat,
     path_mat,
+    hedge_mat,
     max_benches: int = 36,
 ) -> dict:
-    """Park benches + short gravel paths so greens read usable from the street."""
-    stats = {"benches": 0, "paths": 0}
+    """Park benches, gravel paths, and edge hedges so greens read usable from the street."""
+    stats = {"benches": 0, "paths": 0, "hedges": 0}
     for park in parks:
         ring = park.get("ring") or []
         if len(ring) < 3:
@@ -1060,7 +1084,6 @@ def add_park_amenities(
         xs = [p[0] for p in ring]
         ys = [p[1] for p in ring]
         seed = int(park.get("id") or 1)
-        # One short path through the park centroid.
         path_pts = [
             [cx - 8.0, cy - 2.0],
             [cx, cy],
@@ -1068,6 +1091,25 @@ def add_park_amenities(
         ]
         if add_road(f"park_path_{park.get('id')}", path_pts, 1.6, path_mat):
             stats["paths"] += 1
+        # Hedge segments along every other park edge.
+        for ei in range(0, len(ring), 2):
+            if stats["hedges"] >= 80:
+                break
+            p0 = ring[ei]
+            p1 = ring[(ei + 1) % len(ring)]
+            length = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+            if length < 3.0 or length > 28.0:
+                continue
+            mx, my = (p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5
+            yaw = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
+            hedge = add_box(
+                f"hedge_{park.get('id')}_{ei}",
+                (min(length * 0.85, 12.0), 0.55, 1.15),
+                (mx, my, 0.55),
+                yaw,
+            )
+            assign(hedge, hedge_mat)
+            stats["hedges"] += 1
         for i in range(3):
             if stats["benches"] >= max_benches:
                 return stats
@@ -1237,6 +1279,8 @@ def build(layout: dict) -> None:
         principled("car_cream", (0.72, 0.68, 0.55, 1.0), 0.4, metallic=0.25),
     ]
     car_glass = principled("car_glass", (0.35, 0.42, 0.48, 1.0), 0.12, metallic=0.1)
+    tire_mat = principled("tire", (0.06, 0.06, 0.06, 1.0), 0.95)
+    hedge_mat = principled("hedge", (0.16, 0.32, 0.12, 1.0), 0.9)
     stripe_mat = principled("zebra", (0.88, 0.86, 0.78, 1.0), 0.92)
     wood_mat = principled("bench_wood", (0.32, 0.22, 0.12, 1.0), 0.88)
     bin_mat = principled("bin_green", (0.14, 0.28, 0.16, 1.0), 0.65, metallic=0.2)
@@ -1267,7 +1311,7 @@ def build(layout: dict) -> None:
 
     veg = add_park_vegetation(layout.get("parks") or [], trunk_mat, canopy_mats, bush_mats)
     print(f"Park vegetation props: {veg}")
-    park_am = add_park_amenities(layout.get("parks") or [], spawn_xy, wood_mat, path_mat)
+    park_am = add_park_amenities(layout.get("parks") or [], spawn_xy, wood_mat, path_mat, hedge_mat)
     print(f"Park amenities: {park_am}")
 
     signal_pts = collect_signal_points(layout, spawn_xy=spawn_xy)
@@ -1280,7 +1324,9 @@ def build(layout: dict) -> None:
     if spawn_xy is not None:
         dashes = add_road_dashes(layout.get("roads") or [], spawn_xy, dash_mat)
         print(f"Road dashes near spawn: {dashes}")
-        cars = add_parked_cars(layout.get("roads") or [], spawn_xy, car_mats, car_glass, max_cars=42)
+        cars = add_parked_cars(
+            layout.get("roads") or [], spawn_xy, car_mats, car_glass, tire_mat, max_cars=48
+        )
         print(f"Parked cars near spawn: {cars}")
         furniture = add_street_furniture(
             layout.get("roads") or [],

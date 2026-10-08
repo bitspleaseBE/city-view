@@ -197,6 +197,17 @@
 
       const walkControls = new PointerLockControls(camera, document.body);
       scene.add(walkControls.getObject());
+      // Simple humanoid capsule so Free view can frame the walker.
+      const avatar = new THREE.Group();
+      const bodyMat = new THREE.MeshLambertMaterial({ color: 0x3a4658 });
+      const skinMat = new THREE.MeshLambertMaterial({ color: 0xc4a882 });
+      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.85, 4, 8), bodyMat);
+      torso.position.y = 1.05;
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), skinMat);
+      head.position.y = 1.72;
+      avatar.add(torso, head);
+      avatar.visible = false;
+      scene.add(avatar);
 
       const orbitControls = new OrbitControls(camera, renderer.domElement);
       orbitControls.enableDamping = true;
@@ -211,6 +222,7 @@
         btnFree.classList.toggle("active", mode === "free");
         if (mode === "walk") {
           orbitControls.enabled = false;
+          avatar.visible = false;
           walkControls.getObject().position.y = eyeHeight;
           hint.textContent = "Walk: click + WASD · Esc release · V free view";
           status.textContent = "Walking — Gounodstraat 13";
@@ -218,8 +230,11 @@
           if (walkControls.isLocked) walkControls.unlock();
           orbitControls.enabled = true;
           const p = walkControls.getObject().position;
-          orbitControls.target.set(p.x, 6, p.z);
-          camera.position.set(p.x - 40, 28, p.z - 40);
+          avatar.position.set(p.x, 0, p.z);
+          avatar.rotation.y = walkControls.getObject().rotation.y;
+          avatar.visible = true;
+          orbitControls.target.set(p.x, 1.2, p.z);
+          camera.position.set(p.x - 12, 8, p.z - 12);
           hint.textContent = "Free view: drag orbit · scroll zoom · V walk";
           status.textContent = "Free view";
         }
@@ -290,11 +305,12 @@
         "./klein_antwerpen.glb",
         async (gltf) => {
           cityRoot = gltf.scene;
-          // Cheap: disable expensive features for FPS
+          // Cheap: disable expensive features for FPS; freeze static transforms.
           cityRoot.traverse((obj) => {
             if (obj.isMesh) {
               obj.castShadow = false;
               obj.receiveShadow = false;
+              obj.frustumCulled = true;
               if (obj.material) {
                 const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
                 for (const m of mats) {
@@ -307,6 +323,10 @@
             }
           });
           scene.add(cityRoot);
+          cityRoot.updateMatrixWorld(true);
+          cityRoot.traverse((obj) => {
+            obj.matrixAutoUpdate = false;
+          });
           const spawnNode = cityRoot.getObjectByName("HumanSpawn");
           const spawnJson = await loadSpawnJson();
           if (spawnNode) applySpawnFromNode(spawnNode);
