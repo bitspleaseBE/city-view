@@ -57,14 +57,24 @@ def roof_shape_for(tags: dict[str, str], style: str, osm_id: int) -> str:
     if tagged in {"gable", "hip", "mansard", "flat"}:
         return tagged
 
-    if style in {"international", "art-deco", "modern-infill", "white-modern", "prefab-70s"}:
+    if style in {
+        "international",
+        "art-deco",
+        "modern-infill",
+        "white-modern",
+        "prefab-70s",
+        "supermarket",
+        "hospital",
+    }:
         return "flat"
     if style in {"neo-flemish", "art-nouveau", "red-brick"}:
         return "gable" if (osm_id % 3) else "mansard"
     if style == "yellow-brick":
         return "gable" if (osm_id % 2) else "mansard"
-    if style == "neo-gothic":
+    if style in {"neo-gothic", "church", "school"}:
         return "hip"
+    if style == "restaurant":
+        return "mansard" if (osm_id % 5) < 3 else "gable"
     # neoclassical / eclectic / cream-tile default: mansard or gable
     return "mansard" if (osm_id % 5) < 3 else "gable"
 
@@ -201,6 +211,11 @@ def height_truth(tags: dict[str, str]) -> tuple[float, float, int]:
         "warehouse": 9.0,
         "church": 28.0,
         "cathedral": 42.0,
+        "basilica": 32.0,
+        "chapel": 18.0,
+        "school": 14.0,
+        "hospital": 18.0,
+        "supermarket": 8.0,
         "garage": 4.5,
         "shed": 3.5,
         "semidetached_house": 11.5,
@@ -709,7 +724,7 @@ def export_transit_near_spawn(
     *,
     radius: float = 280.0,
     max_paths: int = 48,
-    max_stops: int = 40,
+    max_stops: int = 80,
 ) -> dict[str, Any]:
     """Transit paths + stops near spawn for runtime trams/buses."""
     sx = float(spawn["x"]) if spawn else 0.0
@@ -739,13 +754,23 @@ def export_transit_near_spawn(
             )
         )
     path_scored.sort(key=lambda item: item[0])
+    chosen_paths = [item[1] for item in path_scored[:max_paths]]
+
+    def _stop_near_paths(x: float, y: float, thresh: float = 35.0) -> bool:
+        for path in chosen_paths:
+            pts = path.get("points") or []
+            for p in pts[:: max(1, len(pts) // 16)]:
+                if _dist(x, y, float(p[0]), float(p[1])) <= thresh:
+                    return True
+        return False
 
     stop_scored: list[tuple[float, dict[str, Any]]] = []
     for stop in layout.get("transit_stops") or []:
         x = float(stop.get("x") or 0.0)
         y = float(stop.get("y") or 0.0)
         d = _dist(sx, sy, x, y)
-        if d > radius:
+        # Keep stops near spawn, or anywhere along an exported path (for halt dwell).
+        if d > radius and not _stop_near_paths(x, y):
             continue
         stop_scored.append(
             (
@@ -764,7 +789,7 @@ def export_transit_near_spawn(
     return {
         "spawn": {"x": sx, "y": sy},
         "radius": radius,
-        "paths": [item[1] for item in path_scored[:max_paths]],
+        "paths": chosen_paths,
         "stops": [item[1] for item in stop_scored[:max_stops]],
     }
 

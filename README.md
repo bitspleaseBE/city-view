@@ -24,7 +24,7 @@ python3 -m cityview city --place klein-antwerpen
 python3 -m cityview serve
 ```
 
-Open http://127.0.0.1:8765/ — you spawn at **Gounodstraat 13** at eye height. Click to walk (WASD + mouse look). The tile uses LOD2 roofs (gable / hip / mansard / flat from OSM + style) and style-driven procedural facades on street-facing edges. Colours come from [`assets/styles/klein_antwerpen_2018.json`](assets/styles/klein_antwerpen_2018.json).
+Open http://127.0.0.1:8765/ — you spawn at the **Gounod tram halt** at eye height. Click to walk (WASD + mouse look); press **E** to board a stopped tram. The tile uses LOD2 roofs (gable / hip / mansard / flat from OSM + style) and style-driven procedural facades on street-facing edges. Colours come from [`assets/styles/klein_antwerpen_2018.json`](assets/styles/klein_antwerpen_2018.json).
 
 Alias: `--place harmonie` uses the same bbox, spawn, and historic style policy. OSM for this tile is cached at [`assets/osm/harmonie.json`](assets/osm/harmonie.json) (committed for reproducible CI).
 

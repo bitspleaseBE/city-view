@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>City View — Klein Antwerpen · Gounodstraat 13</title>
+    <title>City View — Klein Antwerpen · Gounod tram</title>
     <style>
       :root {
         --ink: #1a2430;
@@ -84,20 +84,63 @@
         background: #1a2430;
         color: #f4efe6;
       }
+      #ride {
+        position: fixed;
+        top: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        min-width: 16rem;
+        max-width: 28rem;
+        padding: 12px 18px;
+        background: var(--panel);
+        border: 1px solid rgba(20, 40, 60, 0.14);
+        backdrop-filter: blur(10px);
+        text-align: center;
+        display: none;
+        pointer-events: none;
+      }
+      #ride .line {
+        font-size: 0.95rem;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      #ride .next {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin: 0;
+      }
+      #prompt {
+        position: fixed;
+        bottom: 96px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 10px 16px;
+        background: rgba(26, 36, 48, 0.82);
+        color: #f4efe6;
+        font-size: 0.88rem;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        display: none;
+        pointer-events: none;
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
-    <div id="hint">Walk: click + WASD · Shift sprint · Free: drag · V toggles</div>
+    <div id="hint">Walk: click + WASD · Shift sprint · E tram · V free</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Walk</button>
       <button type="button" id="btn-free">Free view</button>
     </div>
     <div id="status">Loading sunny Klein Antwerpen…</div>
+    <div id="ride">
+      <p class="line" id="ride-line">Tram</p>
+      <p class="next" id="ride-next">Next: —</p>
+    </div>
+    <div id="prompt"></div>
     <div id="hud">
-      <h1>Gounodstraat 13 · Klein Antwerpen · 2018</h1>
+      <h1>Gounod tram · Klein Antwerpen · 2018</h1>
       <p>
-        Photo-remixed century façades — brick, stucco, tile types from the Harmonie refs.
-        Walk the sunny streets; V toggles free view.
+        Spawn at the Gounod halt. Press E on a stopped tram to ride; E again to get off at the next stop.
       </p>
     </div>
     <script type="importmap">
@@ -120,6 +163,12 @@
       const hint = document.getElementById("hint");
       const btnWalk = document.getElementById("btn-walk");
       const btnFree = document.getElementById("btn-free");
+      const rideEl = document.getElementById("ride");
+      const rideLine = document.getElementById("ride-line");
+      const rideNext = document.getElementById("ride-next");
+      const promptEl = document.getElementById("prompt");
+      const _rideCam = new THREE.Vector3();
+      const _rideLook = new THREE.Vector3();
 
       const SKY = 0x6eb6ff;
       // Horizon haze: soft blue-grey so FogExp2 fades to sky, never black.
@@ -328,6 +377,7 @@
       renderer.domElement.addEventListener("pointercancel", endFreeDrag);
 
       function setMode(next) {
+        if (transit.isRiding && transit.isRiding()) return;
         const prevMode = mode;
         mode = next;
         btnWalk.classList.toggle("active", mode === "walk");
@@ -342,8 +392,8 @@
           }
           walkControls.getObject().position.y = eyeHeight;
           softClampXZ(walkControls.getObject().position, playBounds);
-          hint.textContent = "Walk: click + WASD · Esc release · V free view";
-          status.textContent = "Walking — Gounodstraat 13";
+          hint.textContent = "Walk: click + WASD · E tram · Esc · V free";
+          status.textContent = "Walking — Gounod tram halt";
         } else {
           if (walkControls.isLocked) walkControls.unlock();
           const p = walkControls.getObject().position;
@@ -365,6 +415,64 @@
         }
       }
 
+      function applyAlightDrop(drop) {
+        if (!drop) return;
+        walkControls.getObject().position.set(drop.x, eyeHeight, drop.z);
+        softClampXZ(walkControls.getObject().position, playBounds);
+        rideEl.style.display = "none";
+        promptEl.style.display = "none";
+        hint.textContent = "Walk: click + WASD · E tram · Esc · V free";
+        status.textContent = "Back on the street";
+        if (mode === "walk" && !walkControls.isLocked) {
+          // Keep unlocked until click — pointer lock after ride is flaky mid-frame.
+        }
+      }
+
+      function handleTransitE() {
+        if (mode !== "walk") return;
+        const p = walkControls.getObject().position;
+        const result = transit.tryInteract({ x: p.x, z: p.z });
+        if (result.action === "board") {
+          if (walkControls.isLocked) walkControls.unlock();
+          avatar.visible = false;
+          rideEl.style.display = "block";
+          rideLine.textContent = `${result.mode === "bus" ? "Bus" : "Tram"} ${result.line}`;
+          rideNext.textContent = `Next halt: ${result.nextHalt}`;
+          promptEl.style.display = "none";
+          hint.textContent = "Riding — E request stop · get off at next halt";
+          status.textContent = `On board · next ${result.nextHalt}`;
+        } else if (result.action === "request_alight") {
+          rideNext.textContent = `Getting off at: ${result.nextHalt}`;
+          hint.textContent = `Stop requested — leave at ${result.nextHalt}`;
+          status.textContent = `Alighting at ${result.nextHalt}`;
+        } else if (result.action === "alight") {
+          applyAlightDrop(result.drop);
+        }
+      }
+
+      function refreshTransitHud() {
+        const hud = transit.getRideHud ? transit.getRideHud() : { riding: false };
+        if (hud.riding) {
+          rideEl.style.display = "block";
+          rideLine.textContent = `${hud.mode === "bus" ? "Bus" : "Tram"} ${hud.line}`;
+          if (hud.wantAlight) {
+            rideNext.textContent = `Getting off at: ${hud.nextHalt}`;
+          } else if (hud.dwelling && hud.currentHalt) {
+            rideNext.textContent = `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · E to leave`;
+          } else {
+            rideNext.textContent = `Next halt: ${hud.nextHalt}`;
+          }
+          promptEl.style.display = "none";
+        } else if (hud.prompt) {
+          rideEl.style.display = "none";
+          promptEl.style.display = "block";
+          promptEl.textContent = hud.prompt;
+        } else {
+          if (!transit.isRiding || !transit.isRiding()) rideEl.style.display = "none";
+          promptEl.style.display = "none";
+        }
+      }
+
       btnWalk.addEventListener("click", () => setMode("walk"));
       btnFree.addEventListener("click", () => setMode("free"));
 
@@ -381,7 +489,13 @@
       });
 
       window.addEventListener("keydown", (e) => {
+        if (e.code === "KeyE") {
+          e.preventDefault();
+          handleTransitE();
+          return;
+        }
         if (e.code === "KeyV") {
+          if (transit.isRiding && transit.isRiding()) return;
           setMode(mode === "walk" ? "free" : "walk");
           return;
         }
@@ -497,6 +611,8 @@
           setMode("walk");
           traffic = await createTraffic(scene, THREE);
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
+          // Cars give way to trams/buses instead of driving through them.
+          if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
           const nCars = traffic.count ?? 0;
           const nTransit = transit.count ?? 0;
           const bits = [];
@@ -504,7 +620,7 @@
           if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
           status.textContent =
             bits.length > 0
-              ? `Sunny day — ${bits.join(" · ")} · click to walk`
+              ? `Sunny day — ${bits.join(" · ")} · E boards the tram`
               : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
         },
@@ -526,7 +642,9 @@
         const dt = Math.min(0.05, (time - prevTime) / 1000);
         prevTime = time;
 
-        if (mode === "walk" && walkControls.isLocked) {
+        const riding = transit.isRiding && transit.isRiding();
+
+        if (!riding && mode === "walk" && walkControls.isLocked) {
           const step = walkSpeed * (keys.shift ? 1.85 : 1.0) * dt;
           if (keys.w) walkControls.moveForward(step);
           if (keys.s) walkControls.moveForward(-step);
@@ -535,7 +653,7 @@
           walkControls.getObject().position.y = eyeHeight;
           softClampXZ(walkControls.getObject().position, playBounds);
         }
-        if (mode === "free") {
+        if (!riding && mode === "free") {
           const panStep = freeCam.height * 0.9 * (keys.shift ? 2.2 : 1.0) * dt;
           // Screen-up is north (-Z); W pans toward it.
           panFree(((keys.d ? 1 : 0) - (keys.a ? 1 : 0)) * panStep, ((keys.s ? 1 : 0) - (keys.w ? 1 : 0)) * panStep);
@@ -546,6 +664,17 @@
           mode === "walk" ? walkControls.getObject() : avatar.visible ? avatar : walkControls.getObject();
         traffic.update(dt, walker);
         transit.update(dt, walker);
+
+        // Auto-alight when the requested stop dwell begins.
+        const pending = transit.consumePendingDrop && transit.consumePendingDrop();
+        if (pending) applyAlightDrop(pending);
+
+        if (riding && transit.getRideCamera && transit.getRideCamera(_rideCam, _rideLook)) {
+          camera.position.lerp(_rideCam, Math.min(1, dt * 4));
+          camera.lookAt(_rideLook);
+        }
+
+        refreshTransitHud();
 
         renderer.render(scene, camera);
         requestAnimationFrame(tick);

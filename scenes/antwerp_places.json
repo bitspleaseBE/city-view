@@ -21,24 +21,24 @@
     "style_policy": "historic",
     "osm_cache": "harmonie",
     "spawn": {
-      "label": "Gounodstraat 13",
-      "lat": 51.2054749,
-      "lon": 4.4083343,
+      "label": "Antwerpen Gounod tram halt",
+      "lat": 51.2055821,
+      "lon": 4.4100280,
       "eye_height": 1.7
     }
   },
   "klein-antwerpen": {
     "title": "Klein Antwerpen · Harmonie · 2018",
-    "description": "Human spawn at Gounodstraat 13. LOD2 roofs and style-driven procedural facades on street-facing edges.",
+    "description": "Human spawn at the Gounod tram halt. LOD2 roofs and style-driven procedural facades on street-facing edges.",
     "bbox": [51.1970, 4.4040, 51.2075, 4.4195],
     "origin": [51.2017, 4.4114],
     "style_policy": "historic",
     "osm_cache": "harmonie",
     "viewer_glb": "klein_antwerpen.glb",
     "spawn": {
-      "label": "Gounodstraat 13",
-      "lat": 51.2054749,
-      "lon": 4.4083343,
+      "label": "Antwerpen Gounod tram halt",
+      "lat": 51.2055821,
+      "lon": 4.4100280,
       "eye_height": 1.7
     }
   }

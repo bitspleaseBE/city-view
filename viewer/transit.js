@@ -1,6 +1,6 @@
 /**
  * Runtime trams + buses on De Lijn / OSM transit paths.
- * Line numbers shown as canvas sprites above each vehicle.
+ * Halt dwell (smooth brake / 20s stop / accel), E to board/alight.
  */
 
 const TRAM_COUNT = 6;
@@ -10,24 +10,31 @@ const BUS_SPEED = 8.5;
 const FOLLOW_DIST = 14;
 const PLAYER_STOP_DIST = 5;
 const SNAP_M = 14;
+const DWELL_S = 20;
+const DECEL_DIST = 22;
+const ARRIVE_DIST = 2.2;
+const BOARD_DIST = 9;
+const STOP_PROJECT_M = 28;
 const BODY_LEN = { tram: 10.5, bus: 9 };
 const STANDSTILL_GAP = 2.5; // bumper gap kept behind a leader
-const COMFORT_BRAKE = 1.6; // m/s^2 used to plan leader stops
-const STUCK_GHOST_SEC = 10; // held this long by a leader -> slide through it
+const COMFORT_BRAKE = 1.6; // m/s^2 used to plan halt / leader stops
+const HALT_CREEP = 0.9; // m/s floor while rolling into a halt (never asymptote to 0)
+const STUCK_GHOST_SEC = 10; // held this long by a leader/obstacle -> slide through it
+const STUCK_QUEUE_SEC = 100; // longer than any dwell: only a circular queue gets here
 const STUCK_FREE_SEC = 4; // held this long with nothing in front -> shove on
 const GHOST_SEC = 8;
 const GHOST_CREEP = 1.8;
+const FIRST_TRAM_DWELL_S = 45; // waiting tram at the spawn halt
 
 function blenderToThree(x, y, out) {
   out.set(x, 0, -y);
   return out;
 }
 
-function buildPaths(rawPaths, THREE, modeFilter) {
+function buildPaths(rawPaths, THREE) {
   const paths = [];
   for (const path of rawPaths) {
     const mode = path.mode || "bus";
-    if (modeFilter && !modeFilter.has(mode)) continue;
     const pts = path.points || [];
     if (pts.length < 2) continue;
     const points = [];
@@ -57,6 +64,7 @@ function buildPaths(rawPaths, THREE, modeFilter) {
       length: len,
       start: cleaned[0],
       end: cleaned[cleaned.length - 1],
+      halts: [],
     });
   }
   return paths;
@@ -81,6 +89,94 @@ function samplePath(path, s, THREE, outPos, outTan) {
   } else {
     outTan.normalize();
   }
+}
+
+/** Project world point onto path; return {s, dist} or null. */
+function projectOnPath(path, wx, wz) {
+  let bestS = 0;
+  let bestD = Infinity;
+  const pts = path.points;
+  const cum = path.cumulative;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const ax = pts[i].x;
+    const az = pts[i].z;
+    const bx = pts[i + 1].x;
+    const bz = pts[i + 1].z;
+    const dx = bx - ax;
+    const dz = bz - az;
+    const len2 = dx * dx + dz * dz;
+    let t = 0;
+    if (len2 > 1e-8) {
+      t = Math.max(0, Math.min(1, ((wx - ax) * dx + (wz - az) * dz) / len2));
+    }
+    const px = ax + dx * t;
+    const pz = az + dz * t;
+    const d = Math.hypot(wx - px, wz - pz);
+    if (d < bestD) {
+      bestD = d;
+      const segLen = cum[i + 1] - cum[i];
+      bestS = cum[i] + segLen * t;
+    }
+  }
+  return { s: bestS, dist: bestD };
+}
+
+function attachHaltsToPaths(paths, stops, THREE) {
+  const worldStops = [];
+  for (const stop of stops || []) {
+    const pos = blenderToThree(stop.x, stop.y, new THREE.Vector3());
+    worldStops.push({
+      id: stop.id,
+      name: stop.name || "Halt",
+      mode: stop.mode || "tram",
+      lines: stop.lines || [],
+      x: pos.x,
+      z: pos.z,
+      pos,
+    });
+  }
+  const tmp = new THREE.Vector3();
+  const tan = new THREE.Vector3();
+  for (const path of paths) {
+    const halts = [];
+    for (const stop of worldStops) {
+      if (path.mode === "tram" || path.mode === "subway") {
+        if (stop.mode === "bus") continue;
+      } else if (path.mode === "bus" && stop.mode !== "bus") {
+        continue;
+      }
+      const hit = projectOnPath(path, stop.x, stop.z);
+      if (hit.dist > STOP_PROJECT_M) continue;
+      if (halts.some((h) => Math.abs(h.s - hit.s) < 12)) continue;
+      halts.push({
+        s: hit.s,
+        name: stop.name,
+        id: stop.id,
+        x: stop.x,
+        z: stop.z,
+        lines: stop.lines,
+      });
+    }
+    // Ensure vehicles still dwell along long corridors (sparse OSM/GTFS tile exports).
+    const spacing = path.mode === "bus" ? 220 : 160;
+    if (halts.length < 2 && path.length > spacing) {
+      for (let s = spacing * 0.5; s < path.length - 8; s += spacing) {
+        if (halts.some((h) => Math.abs(h.s - s) < spacing * 0.45)) continue;
+        samplePath(path, s, THREE, tmp, tan);
+        halts.push({
+          s,
+          name: `Halt ${halts.length + 1}`,
+          id: `synth_${path.id}_${Math.round(s)}`,
+          x: tmp.x,
+          z: tmp.z,
+          lines: path.lines,
+        });
+      }
+    }
+    halts.sort((a, b) => a.s - b.s);
+    path.halts = halts;
+  }
+  return worldStops;
 }
 
 function lineLabel(lines, mode) {
@@ -164,6 +260,34 @@ function pickNextPath(paths, path, atEnd, THREE) {
   return pool[(Math.random() * pool.length) | 0];
 }
 
+/** Path-space s for vehicle (always forward travel distance from path start of its direction). */
+function travelS(v, path) {
+  return v.reverse ? path.length - v.s : v.s;
+}
+
+function nextHaltAhead(v, path) {
+  const halts = path.halts || [];
+  if (!halts.length) return null;
+  const ts = travelS(v, path);
+  if (!v.reverse) {
+    for (const h of halts) {
+      if (h.s > ts + 0.8) return h;
+    }
+    return null;
+  }
+  for (let i = halts.length - 1; i >= 0; i--) {
+    const h = halts[i];
+    if (h.s < ts - 0.8) return h;
+  }
+  return null;
+}
+
+function distToHalt(v, path, halt) {
+  if (!halt) return Infinity;
+  const ts = travelS(v, path);
+  return Math.abs(halt.s - ts);
+}
+
 function createVehicle(paths, THREE, parts, mode) {
   const pool = paths.filter((p) =>
     mode === "tram" ? p.mode === "tram" || p.mode === "subway" : p.mode === "bus",
@@ -186,11 +310,16 @@ function createVehicle(paths, THREE, parts, mode) {
     reverse,
     s,
     speed: base * (0.85 + Math.random() * 0.3),
-    velocity: base,
+    velocity: 0,
+    accel: 0,
     pos: new THREE.Vector3(),
     tan: new THREE.Vector3(),
     label,
     lineText: labelText,
+    phase: "cruise", // cruise | approach | dwell
+    dwellLeft: 0,
+    haltIndex: -1,
+    currentHalt: null,
     stuckT: 0,
     ghostUntil: 0,
     wait: "",
@@ -203,12 +332,11 @@ function placeVehicle(v, paths, THREE) {
   const s = v.reverse ? path.length - v.s : v.s;
   samplePath(path, s, THREE, v.pos, v.tan);
   if (v.reverse) v.tan.multiplyScalar(-1);
-  // Buses sit slightly off centreline; trams stay on rails.
   if (v.mode === "bus") {
-    v.pos.x += v.tan.z * 1.1;
-    v.pos.z += -v.tan.x * 1.1;
+    // Right-hand traffic (same lane convention as cars in traffic.js).
+    v.pos.x += -v.tan.z * 1.1;
+    v.pos.z += v.tan.x * 1.1;
   }
-  // Tram body (2.2 m tall) rides on top of the rails (Z_TRAM_RAIL = 0.18 in build_city.py).
   v.pos.y = v.mode === "tram" ? 1.3 : 1.35;
   v.mesh.position.copy(v.pos);
   v.mesh.rotation.y = Math.atan2(v.tan.x, v.tan.z);
@@ -228,15 +356,16 @@ export async function createTransit(scene, THREE, opts = {}) {
     data = await res.json();
   } catch (err) {
     console.warn("Transit disabled — could not load transit.json:", err);
-    return { update() {}, dispose() {}, count: 0 };
+    return emptyTransit();
   }
 
-  const allPaths = buildPaths(data.paths || [], THREE, null);
+  const allPaths = buildPaths(data.paths || [], THREE);
+  const worldStops = attachHaltsToPaths(allPaths, data.stops || [], THREE);
   const tramPaths = allPaths.filter((p) => p.mode === "tram" || p.mode === "subway");
   const busPaths = allPaths.filter((p) => p.mode === "bus");
   if (allPaths.length < 1) {
     console.warn("Transit disabled — no paths");
-    return { update() {}, dispose() {}, count: 0 };
+    return emptyTransit();
   }
 
   const root = new THREE.Group();
@@ -245,8 +374,48 @@ export async function createTransit(scene, THREE, opts = {}) {
   const parts = makeSharedParts(THREE);
   const vehicles = [];
 
-  const tramN = Math.min(opts.tramCount ?? TRAM_COUNT, Math.max(0, tramPaths.length * 2));
+  // Prefer enough trams even when only a couple of OSM ways are in the tile.
+  const tramN = Math.max(opts.tramCount ?? TRAM_COUNT, tramPaths.length ? 4 : 0);
   const busN = Math.min(opts.busCount ?? BUS_COUNT, Math.max(0, busPaths.length * 2));
+
+  const spawnLocal = data.spawn
+    ? blenderToThree(data.spawn.x, data.spawn.y, new THREE.Vector3())
+    : new THREE.Vector3();
+
+  /** Closest named halt (on a tram path) to the human spawn. */
+  function findServiceHalt() {
+    let best = null;
+    let bestD = Infinity;
+    for (let pi = 0; pi < allPaths.length; pi++) {
+      const path = allPaths[pi];
+      if (path.mode !== "tram" && path.mode !== "subway") continue;
+      for (const h of path.halts || []) {
+        // Prefer real De Lijn names over synthetic "Halt N".
+        const synthetic = String(h.id).startsWith("synth_");
+        const d = Math.hypot(h.x - spawnLocal.x, h.z - spawnLocal.z);
+        const score = d + (synthetic ? 80 : 0);
+        if (score < bestD) {
+          bestD = score;
+          best = { pathIndex: pi, halt: h, dist: d };
+        }
+      }
+    }
+    return best;
+  }
+
+  function placeOnPath(v, pathIndex, travel, reverse) {
+    const path = allPaths[pathIndex];
+    if (!path) return;
+    v.pathIndex = pathIndex;
+    v.reverse = !!reverse;
+    const ts = Math.max(0.5, Math.min(path.length - 0.5, travel));
+    v.s = v.reverse ? path.length - ts : ts;
+    v.phase = "cruise";
+    v.currentHalt = null;
+    v.dwellLeft = 0;
+    v.velocity = v.speed * 0.55;
+    placeVehicle(v, allPaths, THREE);
+  }
 
   function spawnFleet(n, mode, pathPool) {
     if (!pathPool.length || n <= 0) return;
@@ -267,34 +436,372 @@ export async function createTransit(scene, THREE, opts = {}) {
     }
   }
 
-  spawnFleet(tramN, "tram", tramPaths);
+  /** Put trams on the line that serves spawn — one waiting, others inbound. */
+  function seedTramsAtServiceHalt() {
+    const service = findServiceHalt();
+    if (!service || !tramPaths.length) {
+      spawnFleet(tramN, "tram", tramPaths);
+      return service;
+    }
+    const { pathIndex, halt } = service;
+    const path = allPaths[pathIndex];
+    const n = tramN;
+
+    for (let i = 0; i < n; i++) {
+      const v = createVehicle(allPaths, THREE, parts, "tram");
+      // Force onto the service path (or its reverse counterpart if present).
+      let pi = pathIndex;
+      let reverse = false;
+      if (i % 2 === 1 && tramPaths.length > 1) {
+        // Prefer the other tram way when it also hosts this halt.
+        for (let j = 0; j < allPaths.length; j++) {
+          if (j === pathIndex) continue;
+          const p = allPaths[j];
+          if (p.mode !== "tram" && p.mode !== "subway") continue;
+          if ((p.halts || []).some((h) => Math.abs(h.s - halt.s) < 40 || h.name === halt.name)) {
+            pi = j;
+            break;
+          }
+        }
+      }
+      const p = allPaths[pi];
+      // Match halt s on this path.
+      let h = (p.halts || []).find((x) => x.name === halt.name) || halt;
+      if (!(p.halts || []).includes(h)) {
+        const hit = projectOnPath(p, halt.x, halt.z);
+        h = { ...halt, s: hit.s };
+      }
+
+      if (i === 0) {
+        // First tram: waiting at the halt so E boards immediately at spawn.
+        reverse = false;
+        placeOnPath(v, pi, h.s, reverse);
+        beginDwell(v, h);
+        v.dwellLeft = FIRST_TRAM_DWELL_S;
+        v.velocity = 0;
+      } else if (i === 1) {
+        // Inbound ~55 m before halt — arrives soon if the waiter left.
+        reverse = false;
+        const approach = Math.max(1, h.s - 55);
+        placeOnPath(v, pi, approach, reverse);
+        v.velocity = v.speed;
+      } else if (i === 2) {
+        // Opposite direction inbound.
+        reverse = true;
+        const approach = Math.min(p.length - 1, h.s + 55);
+        placeOnPath(v, pi, approach, reverse);
+        v.velocity = v.speed;
+      } else {
+        // Further out on the same corridor, still heading toward a halt.
+        reverse = i % 2 === 0;
+        const offset = 90 + (i - 3) * 100;
+        const travel = reverse
+          ? Math.min(p.length - 1, h.s + offset)
+          : Math.max(1, h.s - offset);
+        placeOnPath(v, pi, travel, reverse);
+        v.velocity = v.speed;
+      }
+
+      // Refresh line label from chosen path.
+      const lbl = lineLabel(p.lines, "tram");
+      if (lbl !== v.lineText) {
+        v.mesh.remove(v.label.sprite);
+        v.label.tex.dispose();
+        v.label.mat.dispose();
+        v.label = makeLineSprite(THREE, lbl, "tram");
+        v.mesh.add(v.label.sprite);
+        v.lineText = lbl;
+      }
+
+      root.add(v.mesh);
+      vehicles.push(v);
+    }
+    return service;
+  }
+
+  // beginDwell is used while seeding — define a lightweight local until full fn exists.
+  function beginDwell(v, halt) {
+    v.phase = "dwell";
+    v.dwellLeft = DWELL_S;
+    v.velocity = 0;
+    v.accel = 0;
+    v.currentHalt = halt;
+    const path = allPaths[v.pathIndex];
+    if (path && halt) {
+      v.s = v.reverse ? path.length - halt.s : halt.s;
+    }
+  }
+
+  const serviceHalt = seedTramsAtServiceHalt();
   spawnFleet(busN, "bus", busPaths);
+  if (serviceHalt) {
+    console.info(
+      `Transit: seeded trams for ${serviceHalt.halt.name} (${serviceHalt.dist.toFixed(0)} m from spawn)`,
+    );
+  }
 
   const playerPos = new THREE.Vector3();
   let simTime = 0;
+  let ride = null; // { vehicle, wantAlight }
+  const rideCamPos = new THREE.Vector3();
+  const rideLook = new THREE.Vector3();
 
-  function advanceJunction(v) {
+  const DISTRICT_R = Math.max(320, (data.radius || 280) * 1.2);
+
+  function setVehicleLabel(v, path) {
+    const nextLabel = lineLabel(path.lines, v.mode);
+    if (nextLabel === v.lineText) return;
+    v.mesh.remove(v.label.sprite);
+    v.label.tex.dispose();
+    v.label.mat.dispose();
+    v.label = makeLineSprite(THREE, nextLabel, v.mode);
+    v.mesh.add(v.label.sprite);
+    v.lineText = nextLabel;
+  }
+
+  /** Respawn at a district-edge entry so the fleet keeps flowing. */
+  function recycleVehicle(v) {
+    if (ride && ride.vehicle === v) {
+      const drop = alightAt(v);
+      ride = { pendingDrop: drop };
+    }
+    const pool =
+      v.mode === "bus"
+        ? busPaths
+        : allPaths.filter((p) => p.mode === "tram" || p.mode === "subway");
+    if (!pool.length) {
+      v.mesh.visible = false;
+      v.phase = "gone";
+      return;
+    }
+    const path = pool[(Math.random() * pool.length) | 0];
+    const pi = allPaths.indexOf(path);
+    const dStart = path.start.distanceToSquared(spawnLocal);
+    const dEnd = path.end.distanceToSquared(spawnLocal);
+    // Enter from the farther tip so vehicles travel through the district.
+    let reverse;
+    let travel;
+    if (dStart >= dEnd) {
+      reverse = false;
+      travel = 3 + Math.random() * 40;
+    } else {
+      reverse = true;
+      travel = Math.max(3, path.length - 3 - Math.random() * 40);
+    }
+    placeOnPath(v, pi, travel, reverse);
+    v.mesh.visible = true;
+    v.velocity = v.speed * (0.65 + Math.random() * 0.25);
+    v.ghostUntil = simTime + 3;
+    v.stuckT = 0;
+    v.wait = "";
+    setVehicleLabel(v, path);
+  }
+
+  function advanceOrRecycle(v) {
     const path = allPaths[v.pathIndex];
+    if (!path) {
+      recycleVehicle(v);
+      return;
+    }
     const atEnd = !v.reverse;
     const next = pickNextPath(allPaths, path, atEnd, THREE);
+    // End of usable network / U-turn → leave the district and respawn inbound.
     if (next.flip) {
-      v.reverse = !v.reverse;
-      v.s = 0.5;
+      recycleVehicle(v);
+      return;
+    }
+    const np = allPaths[next.index];
+    // Don't continue onto a segment that immediately exits the bubble.
+    const tip = next.reverse ? np.end : np.start;
+    if (tip.distanceTo(spawnLocal) > DISTRICT_R * 0.95) {
+      recycleVehicle(v);
       return;
     }
     v.pathIndex = next.index;
     v.reverse = next.reverse;
     v.s = 0.5;
-    const np = allPaths[v.pathIndex];
-    const nextLabel = lineLabel(np.lines, v.mode);
-    if (nextLabel !== v.lineText) {
-      v.mesh.remove(v.label.sprite);
-      v.label.tex.dispose();
-      v.label.mat.dispose();
-      v.label = makeLineSprite(THREE, nextLabel, v.mode);
-      v.mesh.add(v.label.sprite);
-      v.lineText = nextLabel;
+    v.phase = "cruise";
+    v.currentHalt = null;
+    setVehicleLabel(v, np);
+  }
+
+  function updateVehicleMotion(v, dt, walkObject) {
+    const path = allPaths[v.pathIndex];
+    if (!path) return;
+    placeVehicle(v, allPaths, THREE);
+
+    if (v.phase === "dwell") {
+      v.velocity = 0;
+      v.dwellLeft -= dt;
+      if (v.dwellLeft <= 0) {
+        const left = v.currentHalt;
+        v.phase = "cruise";
+        v.currentHalt = null;
+        v.accel = 0;
+        // Nudge past the halt so the same stop is not re-targeted immediately.
+        if (left && path) {
+          const nudge = 2.5;
+          if (v.reverse) v.s = Math.min(path.length - 0.5, path.length - left.s + nudge);
+          else v.s = Math.min(path.length - 0.5, left.s + nudge);
+        }
+      }
+      placeVehicle(v, allPaths, THREE);
+      return;
     }
+
+    const activeHalt = nextHaltAhead(v, path);
+    const ghosting = simTime < v.ghostUntil;
+    let desire = v.speed;
+    let limitedBy = "";
+
+    if (activeHalt) {
+      const dHalt = distToHalt(v, path, activeHalt);
+      if (dHalt < DECEL_DIST) {
+        v.phase = "approach";
+        // Kinematic stop at the halt, with a creep floor so smooth easing can
+        // never decay to a standstill a couple of metres short of the platform.
+        const planned = Math.sqrt(2 * COMFORT_BRAKE * Math.max(0, dHalt - 0.4));
+        desire = Math.min(desire, Math.max(HALT_CREEP, planned));
+        if (dHalt < ARRIVE_DIST * 0.7 || (dHalt < ARRIVE_DIST && v.velocity < 1.4)) {
+          beginDwell(v, activeHalt);
+          placeVehicle(v, allPaths, THREE);
+          return;
+        }
+      } else {
+        v.phase = "cruise";
+      }
+    } else {
+      v.phase = "cruise";
+    }
+
+    const len = BODY_LEN[v.mode] || BODY_LEN.bus;
+    if (!ghosting) {
+      for (let j = 0; j < vehicles.length; j++) {
+        const other = vehicles[j];
+        if (other === v) continue;
+        const dx = other.pos.x - v.pos.x;
+        const dz = other.pos.z - v.pos.z;
+        const distSq = dx * dx + dz * dz;
+        const reach = FOLLOW_DIST + len + 8;
+        if (distSq > reach * reach) continue;
+        // Only follow traffic going our way; oncoming vehicles pass in their own lane.
+        if (other.tan.x * v.tan.x + other.tan.z * v.tan.z < 0.35) continue;
+        const ahead = dx * v.tan.x + dz * v.tan.z;
+        const side = Math.abs(dx * v.tan.z + dz * -v.tan.x);
+        if (ahead > 0.5 && side < 3.2) {
+          const olen = BODY_LEN[other.mode] || BODY_LEN.bus;
+          const gap = ahead - (len + olen) * 0.5 - STANDSTILL_GAP;
+          const safe = other.velocity * 0.9 + Math.sqrt(2 * COMFORT_BRAKE * Math.max(0, gap));
+          if (safe < desire) {
+            desire = Math.max(0, safe);
+            // Waiting behind a vehicle that is dwelling (or itself queued) is normal.
+            limitedBy = other.phase === "dwell" || other.wait === "queue" ? "queue" : "leader";
+          }
+        }
+      }
+    }
+
+    if (walkObject && !(ride && ride.vehicle === v)) {
+      const dx = playerPos.x - v.pos.x;
+      const dz = playerPos.z - v.pos.z;
+      if (dx * dx + dz * dz < (PLAYER_STOP_DIST + 8) ** 2) {
+        const ahead = dx * v.tan.x + dz * v.tan.z;
+        const side = Math.abs(dx * v.tan.z + dz * -v.tan.x);
+        if (ahead > 0.2 && ahead < PLAYER_STOP_DIST + 6 && side < 3) {
+          const gap = ahead - 1.5;
+          desire = Math.min(desire, v.speed * Math.max(0, gap / PLAYER_STOP_DIST) ** 2);
+          limitedBy = "player";
+        }
+      }
+    }
+
+    // Recovery: a vehicle that is held for too long (leader jam, bad geometry)
+    // slides through at a crawl instead of sitting there for the rest of the session.
+    if (v.velocity < 0.3 && limitedBy !== "player") {
+      v.stuckT += dt;
+      const limit =
+        limitedBy === "queue" ? STUCK_QUEUE_SEC : limitedBy === "leader" ? STUCK_GHOST_SEC : STUCK_FREE_SEC;
+      if (v.stuckT > limit) {
+        v.ghostUntil = simTime + GHOST_SEC;
+        v.stuckT = 0;
+      }
+    } else {
+      v.stuckT = Math.max(0, v.stuckT - dt * 2);
+    }
+    v.wait = v.velocity < 0.3 && v.phase !== "dwell" ? limitedBy : "";
+    if (simTime < v.ghostUntil) desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
+
+    // Smooth accel / brake (approach uses stronger brake).
+    const rate = v.phase === "approach" ? 2.2 : 1.4;
+    v.velocity += (desire - v.velocity) * Math.min(1, dt * rate);
+    if (v.velocity < 0.08 && desire < 0.08) v.velocity = 0;
+
+    v.s += v.velocity * dt;
+    if (v.s >= path.length - 0.5) {
+      advanceOrRecycle(v);
+      placeVehicle(v, allPaths, THREE);
+      return;
+    }
+    placeVehicle(v, allPaths, THREE);
+    // Left the walkable tile — despawn and bring a fresh one in from the edge.
+    if (Math.hypot(v.pos.x - spawnLocal.x, v.pos.z - spawnLocal.z) > DISTRICT_R) {
+      recycleVehicle(v);
+      placeVehicle(v, allPaths, THREE);
+    }
+  }
+
+  function findBoardable(player) {
+    if (!player || ride) return null;
+    let best = null;
+    let bestD = BOARD_DIST;
+    for (const v of vehicles) {
+      if (v.phase !== "dwell" || !v.currentHalt) continue;
+      const dx = player.x - v.pos.x;
+      const dz = player.z - v.pos.z;
+      const d = Math.hypot(dx, dz);
+      if (d < bestD) {
+        bestD = d;
+        best = v;
+      }
+    }
+    // Also allow boarding if standing at a stop and a dwelling vehicle is there.
+    if (!best) {
+      for (const stop of worldStops) {
+        const dStop = Math.hypot(player.x - stop.x, player.z - stop.z);
+        if (dStop > BOARD_DIST) continue;
+        for (const v of vehicles) {
+          if (v.phase !== "dwell") continue;
+          const dV = Math.hypot(player.x - v.pos.x, player.z - v.pos.z);
+          if (dV < BOARD_DIST + 4 && dV < bestD) {
+            bestD = dV;
+            best = v;
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  function nextHaltName(v) {
+    const path = allPaths[v.pathIndex];
+    if (!path) return "—";
+    if (v.phase === "dwell" && v.currentHalt) {
+      const upcoming = nextHaltAhead(v, path);
+      return upcoming ? upcoming.name : "End of line";
+    }
+    const h = nextHaltAhead(v, path);
+    return h ? h.name : "End of line";
+  }
+
+  function alightAt(v) {
+    const halt = v.currentHalt;
+    const drop = {
+      x: halt ? halt.x + v.tan.z * 3.2 : v.pos.x + v.tan.z * 3.2,
+      y: 1.7,
+      z: halt ? halt.z + -v.tan.x * 3.2 : v.pos.z + -v.tan.x * 3.2,
+    };
+    ride = null;
+    return drop;
   }
 
   function update(dt, walkObject) {
@@ -303,79 +810,171 @@ export async function createTransit(scene, THREE, opts = {}) {
     if (walkObject) {
       playerPos.set(walkObject.position.x, 0, walkObject.position.z);
     }
-    for (let i = 0; i < vehicles.length; i++) {
-      const v = vehicles[i];
-      placeVehicle(v, allPaths, THREE);
-      let desire = v.speed;
-      let limitedBy = "";
-      const len = BODY_LEN[v.mode] || BODY_LEN.bus;
-
-      if (simTime >= v.ghostUntil) {
-        for (let j = 0; j < vehicles.length; j++) {
-          if (i === j) continue;
-          const other = vehicles[j];
-          const dx = other.pos.x - v.pos.x;
-          const dz = other.pos.z - v.pos.z;
-          const distSq = dx * dx + dz * dz;
-          const reach = FOLLOW_DIST + len + 8;
-          if (distSq > reach * reach) continue;
-          // Only follow traffic going our way. Counting oncoming vehicles as
-          // "ahead" made two opposite-direction vehicles brake to a mutual
-          // standstill forever (the main cause of everything freezing).
-          if (other.tan.x * v.tan.x + other.tan.z * v.tan.z < 0.35) continue;
-          const ahead = dx * v.tan.x + dz * v.tan.z;
-          const side = Math.abs(dx * v.tan.z + dz * -v.tan.x);
-          if (ahead > 0.5 && side < 3.2) {
-            const olen = BODY_LEN[other.mode] || BODY_LEN.bus;
-            // Gap between bumpers (not centres) so 10 m trams never overlap.
-            const gap = ahead - (len + olen) * 0.5 - STANDSTILL_GAP;
-            const safe = other.velocity * 0.9 + Math.sqrt(2 * COMFORT_BRAKE * Math.max(0, gap));
-            if (safe < desire) {
-              desire = Math.max(0, safe);
-              limitedBy = "leader";
-            }
-          }
-        }
-      }
-
-      if (walkObject) {
-        const dx = playerPos.x - v.pos.x;
-        const dz = playerPos.z - v.pos.z;
-        if (dx * dx + dz * dz < (PLAYER_STOP_DIST + 8) ** 2) {
-          const ahead = dx * v.tan.x + dz * v.tan.z;
-          const side = Math.abs(dx * v.tan.z + dz * -v.tan.x);
-          if (ahead > 0.2 && ahead < PLAYER_STOP_DIST + 6 && side < 3) {
-            const gap = ahead - 1.5;
-            desire = Math.min(desire, v.speed * Math.max(0, gap / PLAYER_STOP_DIST) ** 2);
-            limitedBy = "player";
-          }
-        }
-      }
-
-      // Recovery: held too long (leader pile-up, odd geometry) -> slide on at a
-      // crawl instead of sitting there for the rest of the session.
-      if (v.velocity < 0.3 && limitedBy !== "player") {
-        v.stuckT += dt;
-        if (v.stuckT > (limitedBy === "leader" ? STUCK_GHOST_SEC : STUCK_FREE_SEC)) {
-          v.ghostUntil = simTime + GHOST_SEC;
-          v.stuckT = 0;
-        }
-      } else {
-        v.stuckT = Math.max(0, v.stuckT - dt * 2);
-      }
-      v.wait = v.velocity < 0.3 ? limitedBy : "";
-      if (simTime < v.ghostUntil) desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
-
-      v.velocity += (desire - v.velocity) * Math.min(1, dt * 3);
-      // Only snap to rest when we actually want to be at rest (see traffic.js).
-      if (v.velocity < 0.12 && desire < 0.12) v.velocity = 0;
-      v.s += v.velocity * dt;
-      const path = allPaths[v.pathIndex];
-      if (path && v.s >= path.length - 0.5) {
-        advanceJunction(v);
-      }
-      placeVehicle(v, allPaths, THREE);
+    for (const v of vehicles) {
+      updateVehicleMotion(v, dt, walkObject);
     }
+
+    // Honour alight request when dwelling.
+    if (ride && ride.wantAlight && ride.vehicle.phase === "dwell") {
+      const drop = alightAt(ride.vehicle);
+      ride = { pendingDrop: drop };
+    }
+  }
+
+  function tryInteract(player) {
+    // Returns { action, drop?, prompt? }
+    if (ride && ride.vehicle) {
+      const v = ride.vehicle;
+      if (v.phase === "dwell") {
+        const drop = alightAt(v);
+        return { action: "alight", drop };
+      }
+      ride.wantAlight = true;
+      return {
+        action: "request_alight",
+        nextHalt: nextHaltName(v),
+      };
+    }
+    if (ride && ride.pendingDrop) {
+      const drop = ride.pendingDrop;
+      ride = null;
+      return { action: "alight", drop };
+    }
+    const v = findBoardable(player);
+    if (!v) return { action: "none" };
+    ride = { vehicle: v, wantAlight: false };
+    return {
+      action: "board",
+      line: v.lineText,
+      mode: v.mode,
+      nextHalt: nextHaltName(v),
+    };
+  }
+
+  function consumePendingDrop() {
+    if (ride && ride.pendingDrop) {
+      const drop = ride.pendingDrop;
+      ride = null;
+      return drop;
+    }
+    return null;
+  }
+
+  function isRiding() {
+    return !!(ride && ride.vehicle);
+  }
+
+  function nearestTramHalt(px, pz) {
+    let best = null;
+    let bestD = Infinity;
+    for (const path of allPaths) {
+      if (path.mode !== "tram" && path.mode !== "subway") continue;
+      for (const h of path.halts || []) {
+        if (String(h.id).startsWith("synth_")) continue;
+        const d = Math.hypot(h.x - px, h.z - pz);
+        if (d < bestD) {
+          bestD = d;
+          best = { halt: h, dist: d, path };
+        }
+      }
+    }
+    return best;
+  }
+
+  function approachingEta(halt, px, pz) {
+    let bestEta = Infinity;
+    let bestV = null;
+    for (const v of vehicles) {
+      if (v.mode !== "tram" && v.mode !== "subway") continue;
+      if (v.phase === "dwell" && v.currentHalt && v.currentHalt.name === halt.name) {
+        return { eta: 0, vehicle: v, dwelling: true };
+      }
+      const path = allPaths[v.pathIndex];
+      if (!path) continue;
+      const h =
+        (path.halts || []).find((x) => x.name === halt.name) ||
+        (Math.hypot(v.pos.x - halt.x, v.pos.z - halt.z) < 40 ? halt : null);
+      if (!h) continue;
+      // Only count if heading toward this halt.
+      const ahead = nextHaltAhead(v, path);
+      if (!ahead || ahead.name !== halt.name) {
+        // Still count if close and approaching by distance decreasing proxy.
+        const d = Math.hypot(v.pos.x - halt.x, v.pos.z - halt.z);
+        if (d > 120) continue;
+      }
+      const dHalt = Math.hypot(v.pos.x - halt.x, v.pos.z - halt.z);
+      const speed = Math.max(v.velocity, 2.5);
+      const eta = dHalt / speed + (v.phase === "dwell" ? v.dwellLeft : 0);
+      if (eta < bestEta) {
+        bestEta = eta;
+        bestV = v;
+      }
+    }
+    if (!bestV) return null;
+    return { eta: bestEta, vehicle: bestV, dwelling: false };
+  }
+
+  function getRideHud() {
+    if (ride && ride.pendingDrop) {
+      return { riding: false, message: "" };
+    }
+    if (!ride || !ride.vehicle) {
+      const boardable = findBoardable({ x: playerPos.x, z: playerPos.z });
+      if (boardable) {
+        const halt = boardable.currentHalt;
+        return {
+          riding: false,
+          prompt: `Press E to enter ${boardable.mode} ${boardable.lineText}${
+            halt ? ` · ${halt.name}` : ""
+          }`,
+        };
+      }
+      const near = nearestTramHalt(playerPos.x, playerPos.z);
+      if (near && near.dist < 220) {
+        const arr = approachingEta(near.halt, playerPos.x, playerPos.z);
+        if (near.dist > BOARD_DIST + 2) {
+          const dir = arr
+            ? arr.dwelling
+              ? `tram waiting · walk ${near.dist.toFixed(0)} m to ${near.halt.name}`
+              : `tram ~${Math.max(1, Math.round(arr.eta))}s · walk ${near.dist.toFixed(0)} m to ${near.halt.name}`
+            : `walk ${near.dist.toFixed(0)} m to ${near.halt.name} tram stop`;
+          return { riding: false, prompt: dir };
+        }
+        if (arr && !arr.dwelling) {
+          return {
+            riding: false,
+            prompt: `Tram ${arr.vehicle.lineText} arriving in ~${Math.max(1, Math.round(arr.eta))}s at ${near.halt.name}`,
+          };
+        }
+      }
+      return { riding: false };
+    }
+    const v = ride.vehicle;
+    const next = nextHaltName(v);
+    const here = v.phase === "dwell" && v.currentHalt ? v.currentHalt.name : null;
+    return {
+      riding: true,
+      line: v.lineText,
+      mode: v.mode,
+      nextHalt: next,
+      currentHalt: here,
+      wantAlight: !!ride.wantAlight,
+      dwelling: v.phase === "dwell",
+      dwellLeft: v.dwellLeft,
+    };
+  }
+
+  function getRideCamera(outPos, outLook) {
+    if (!ride || !ride.vehicle) return false;
+    const v = ride.vehicle;
+    // Overhead follow: above and slightly behind.
+    outPos.set(
+      v.pos.x - v.tan.x * 10,
+      22,
+      v.pos.z - v.tan.z * 10,
+    );
+    outLook.set(v.pos.x + v.tan.x * 6, 1.2, v.pos.z + v.tan.z * 6);
+    return true;
   }
 
   function dispose() {
@@ -401,6 +1000,36 @@ export async function createTransit(scene, THREE, opts = {}) {
     vehicles,
     count: vehicles.length,
     pathCount: allPaths.length,
-    stopCount: (data.stops || []).length,
+    stopCount: worldStops.length,
+    tryInteract,
+    consumePendingDrop,
+    isRiding,
+    getRideHud,
+    getRideCamera,
+    _rideCamPos: rideCamPos,
+    _rideLook: rideLook,
+  };
+}
+
+function emptyTransit() {
+  return {
+    update() {},
+    dispose() {},
+    count: 0,
+    tryInteract() {
+      return { action: "none" };
+    },
+    consumePendingDrop() {
+      return null;
+    },
+    isRiding() {
+      return false;
+    },
+    getRideHud() {
+      return { riding: false };
+    },
+    getRideCamera() {
+      return false;
+    },
   };
 }
