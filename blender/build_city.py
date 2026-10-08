@@ -12,6 +12,16 @@ import bmesh
 import bpy
 from mathutils import Vector
 
+# Pure-Python rail clearance helpers live in the cityview package (no bpy).
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from cityview import railclear  # noqa: E402
+from cityview.railclear import RailIndex  # noqa: E402
+
+# Surface rail corridors for the current build (set in build()).
+RAILS: RailIndex = RailIndex([])
+
 
 # Century-old Harmonie palette: stylish but lived-in, not showroom clean.
 STYLES = {
@@ -942,15 +952,23 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         )
 
 
-# Vertical layer stack — enough separation to avoid WebGL Z-fighting at street scale.
+# Vertical layer stack (metres). Strictly increasing, >= 2 cm between layers that
+# can overlap, so no layer relies on polygonOffset alone (24-bit depth at 200 m+
+# resolves ~2 cm). Rails are the highest flat layer: they can never sink under
+# asphalt, sidewalks, kerbs or park/ground polygons.
 Z_GROUND = -0.15
-Z_ROAD = 0.03
-Z_DASH = 0.055
-Z_ZEBRA = 0.068
+Z_WATER = -0.04
+Z_PARK = 0.00
+Z_ROAD = 0.04
+Z_PARK_PATH = 0.05
+Z_DASH = 0.07  # box centre; 2 cm thick
+Z_ZEBRA = 0.07  # box centre; 2 cm thick
 Z_SIDEWALK = 0.09
-Z_CURB = 0.13
-Z_PARK_PATH = 0.045
-Z_TRAM = 0.045
+Z_CURB = 0.12
+Z_TRAM_BED = 0.14
+Z_TRAM_RAIL = 0.18
+Z_ZEBRA_ON_RAIL = 0.22  # zebra stripe pieces that cross a rail corridor
+Z_TRAM = Z_TRAM_BED  # backwards-compatible alias
 
 
 def polyline_mesh(name: str, points: list[list[float]], width: float, z: float = Z_ROAD) -> bpy.types.Mesh | None:
@@ -1036,10 +1054,13 @@ def add_sidewalks_and_curbs(
         for side, sign in (("L", 1.0), ("R", -1.0)):
             walk = offset_polyline(pts, sign * (half + sidewalk_w * 0.5))
             curb = offset_polyline(pts, sign * (half + 0.12))
-            if add_road(f"sidewalk_{i}_{side}", walk, sidewalk_w, sidewalk_mat, z=Z_SIDEWALK):
-                count += 1
-            if add_road(f"curb_{i}_{side}", curb, 0.28, curb_mat, z=Z_CURB):
-                count += 1
+            # Never lay pavement/kerb over a tram bed (shared tram streets).
+            for ri, run in enumerate(railclear.clear_runs(walk, RAILS, railclear.CLEAR_SIDEWALK)):
+                if add_road(f"sidewalk_{i}_{side}_{ri}", run, sidewalk_w, sidewalk_mat, z=Z_SIDEWALK):
+                    count += 1
+            for ri, run in enumerate(railclear.clear_runs(curb, RAILS, railclear.CLEAR_CURB)):
+                if add_road(f"curb_{i}_{side}_{ri}", run, 0.28, curb_mat, z=Z_CURB):
+                    count += 1
     return count
 
 
@@ -1076,6 +1097,9 @@ def add_parked_cars(
                     y = y0 + (y1 - y0) * (t / seg if seg else 0)
                     if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 150.0:
                         t += 18.0
+                        continue
+                    if RAILS.within(x, y, railclear.CLEAR_PARKED_CAR):
+                        t += 6.0
                         continue
                     slot = placed + ri + (0 if side == "R" else 7)
                     if slot % 4 == 0:
@@ -1164,17 +1188,20 @@ def add_transit_layer(layout: dict, spawn_xy: tuple[float, float] | None) -> tup
         if line.get("source") == "gtfs":
             # Prefer OSM track geometry for static rails.
             continue
+        if line.get("tunnel"):
+            # Premetro / tunnel ways are below ground — never draw them at grade.
+            continue
         pts = line.get("points") or []
         if len(pts) < 2:
             continue
         wid = 2.4 if mode == "tram" else 2.8
-        if add_road(f"tram_{line.get('id', i)}", pts, wid, bed_mat, z=Z_TRAM):
+        if add_road(f"tram_{line.get('id', i)}", pts, wid, bed_mat, z=Z_TRAM_BED):
             tracks += 1
-        # Twin rails as thinner overlays.
+        # Twin rails as thinner overlays, strictly above every other flat layer.
         left = offset_polyline(pts, 0.55)
         right = offset_polyline(pts, -0.55)
-        add_road(f"rail_l_{line.get('id', i)}", left, 0.18, track_mat, z=Z_TRAM + 0.01)
-        add_road(f"rail_r_{line.get('id', i)}", right, 0.18, track_mat, z=Z_TRAM + 0.01)
+        add_road(f"rail_l_{line.get('id', i)}", left, 0.18, track_mat, z=Z_TRAM_RAIL)
+        add_road(f"rail_r_{line.get('id', i)}", right, 0.18, track_mat, z=Z_TRAM_RAIL)
 
     stops_n = 0
     for i, stop in enumerate(layout.get("transit_stops") or []):
@@ -1265,6 +1292,8 @@ def add_park_vegetation(parks: list, trunk_mat, canopy_mats: list, bush_mats: li
             y = miny + v * (maxy - miny)
             if not _point_in_ring(x, y, ring):
                 continue
+            if RAILS.within(x, y, railclear.CLEAR_TREE):
+                continue
             h = 5.5 + (u * 4.5)
             leaf = canopy_mats[trees_here % len(canopy_mats)]
             trunk = add_box(f"tree_t_{park.get('id')}_{i}", (0.28, 0.28, h * 0.45), (x, y, h * 0.22), 0.0)
@@ -1303,6 +1332,8 @@ def add_park_vegetation(parks: list, trunk_mat, canopy_mats: list, bush_mats: li
             x = minx + u * (maxx - minx)
             y = miny + v * (maxy - miny)
             if not _point_in_ring(x, y, ring):
+                continue
+            if RAILS.within(x, y, railclear.CLEAR_FURNITURE):
                 continue
             bush = add_box(
                 f"bush_{park.get('id')}_{i}",
@@ -1499,10 +1530,18 @@ def collect_signal_placements(
             tx, ty = ap["tx"], ap["ty"]
             width = float(ap["width"])
             half = width * 0.5
-            # Right-hand curb relative to inbound travel.
+            # Prefer right-hand curb; flip to left if that lands on a tram bed.
             rx, ry = ty, -tx
-            pole_x = sx + rx * (half + 0.85)
-            pole_y = sy + ry * (half + 0.85)
+            pole_x = pole_y = None
+            for sign in (1.0, -1.0):
+                px = sx + rx * sign * (half + 0.85)
+                py = sy + ry * sign * (half + 0.85)
+                if RAILS and RAILS.within(px, py, railclear.CLEAR_SIGNAL_POLE):
+                    continue
+                pole_x, pole_y = px, py
+                break
+            if pole_x is None:
+                continue
             # Face the head toward oncoming traffic (look back along approach).
             yaw = math.atan2(-ty, -tx)
             placements.append(
@@ -1546,32 +1585,84 @@ def add_traffic_light(
         assign(lamp, mat)
 
 
-def add_crosswalks(placements: list[dict], stripe_mat, spawn_xy) -> int:
-    """One zebra set per approach: stripes perpendicular to road tangent."""
+def _add_zebra_stripe(name: str, cx: float, cy: float, tx: float, ty: float, span: float, stripe_mat) -> int:
+    """One stripe across a carriageway, split so rail-overlapping pieces ride on top.
+
+    Pieces outside rail corridors sit on the asphalt layer; pieces over a tram bed
+    sit above the rails (never z-fighting underneath them).
+    """
+    yaw = math.atan2(ty, tx)
+    ux, uy = -ty, tx
+    made = 0
+    for k, (t0, t1, on_rail) in enumerate(railclear.span_intervals(cx, cy, ux, uy, span, RAILS)):
+        length = t1 - t0
+        if length < 0.05:
+            continue
+        mid = (t0 + t1) * 0.5
+        piece = add_box(
+            f"{'zebra_rail' if on_rail else 'zebra'}_{name}_{k}",
+            (0.42, length, 0.02),
+            (cx + ux * mid, cy + uy * mid, Z_ZEBRA_ON_RAIL if on_rail else Z_ZEBRA),
+            yaw,
+        )
+        assign(piece, stripe_mat)
+        made += 1
+    return made
+
+
+def add_crosswalks(
+    placements: list[dict],
+    stripe_mat,
+    spawn_xy,
+    crossings: list[dict] | None = None,
+) -> int:
+    """Zebra sets: one per signal approach, plus OSM crossings that sit on rails.
+
+    * A signal-approach zebra that would overlap a tram corridor is a decorative
+      guess, so it is skipped unless OSM maps a pedestrian crossing right there.
+    * OSM crossings on rails are drawn over the rails (see ``_add_zebra_stripe``).
+    """
     count = 0
+    crossings = crossings or []
+    covered: list[tuple[float, float]] = []
     for i, pl in enumerate(placements):
         sx, sy = float(pl["stop_x"]), float(pl["stop_y"])
         if spawn_xy is not None and math.hypot(sx - spawn_xy[0], sy - spawn_xy[1]) > 220.0:
             continue
         tx, ty = float(pl["tx"]), float(pl["ty"])
         width = float(pl.get("width") or 6.0)
-        # Travel yaw: stripe long axis is across the carriageway (local Y after rot).
-        yaw = math.atan2(ty, tx)
         span = max(3.2, min(7.5, width * 0.92))
-        n_stripes = 5
-        for s in range(n_stripes):
+        if railclear.zebra_touches_rails(sx, sy, tx, ty, span, RAILS):
+            backed = railclear.nearest_crossing_node(sx, sy, crossings, 9.0)
+            if backed is None:
+                continue
+        covered.append((sx, sy))
+        for s in range(5):
             along = -1.6 + s * 0.8
-            cx = sx + tx * along
-            cy = sy + ty * along
-            # Thin along travel (X), wide across road (Y).
-            stripe = add_box(
-                f"zebra_{i}_{s}",
-                (0.42, span, 0.02),
-                (cx, cy, Z_ZEBRA),
-                yaw,
-            )
-            assign(stripe, stripe_mat)
-            count += 1
+            count += _add_zebra_stripe(f"{i}_{s}", sx + tx * along, sy + ty * along, tx, ty, span, stripe_mat)
+
+    # Real OSM crossings over/next to rails that no signal zebra already covers.
+    placed_rail = 0
+    for j, node in enumerate(crossings):
+        if placed_rail >= 24:
+            break
+        x, y = float(node["x"]), float(node["y"])
+        if spawn_xy is not None and math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 220.0:
+            continue
+        if not RAILS.within(x, y, railclear.RAIL_CROSSING_SNAP):
+            continue
+        if any(math.hypot(x - cx, y - cy) < 9.0 for cx, cy in covered):
+            continue
+        tan = RAILS.nearest_tangent(x, y)
+        if tan is None:
+            continue
+        tx, ty = tan
+        span = 5.5
+        covered.append((x, y))
+        placed_rail += 1
+        for s in range(5):
+            along = -1.6 + s * 0.8
+            count += _add_zebra_stripe(f"x{j}_{s}", x + tx * along, y + ty * along, tx, ty, span, stripe_mat)
     return count
 
 
@@ -1615,6 +1706,12 @@ def add_street_furniture(
                     x = x0 + (x1 - x0) * (t / seg if seg else 0)
                     y = y0 + (y1 - y0) * (t / seg if seg else 0)
                     if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 155.0:
+                        t += step
+                        continue
+                    # Trees need the widest berth (canopy); furniture a tighter one.
+                    if RAILS.within(
+                        x, y, railclear.CLEAR_TREE if mode == "trees" else railclear.CLEAR_FURNITURE
+                    ):
                         t += step
                         continue
                     slot = int(dist + t + ri)
@@ -1739,7 +1836,9 @@ def add_park_amenities(
             [cx, cy],
             [cx + 8.0, cy + 1.5],
         ]
-        if add_road(f"park_path_{park.get('id')}", path_pts, 1.6, path_mat, z=Z_PARK_PATH):
+        if not any(RAILS.within(px, py, railclear.CLEAR_SIDEWALK) for px, py in path_pts) and add_road(
+            f"park_path_{park.get('id')}", path_pts, 1.6, path_mat, z=Z_PARK_PATH
+        ):
             stats["paths"] += 1
         # Hedge segments along every other park edge.
         for ei in range(0, len(ring), 2):
@@ -1751,6 +1850,8 @@ def add_park_amenities(
             if length < 3.0 or length > 28.0:
                 continue
             mx, my = (p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5
+            if RAILS.within(mx, my, railclear.CLEAR_FURNITURE + length * 0.3):
+                continue
             yaw = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
             hedge = add_box(
                 f"hedge_{park.get('id')}_{ei}",
@@ -1769,6 +1870,8 @@ def add_park_amenities(
             y = min(ys) + v * (max(ys) - min(ys))
             if not _point_in_ring(x, y, ring):
                 x, y = cx + (u - 0.5) * 4.0, cy + (v - 0.5) * 4.0
+            if RAILS.within(x, y, railclear.CLEAR_TREE):
+                continue
             yaw = u * math.pi
             seat = add_box(f"park_bench_{stats['benches']}", (1.7, 0.42, 0.12), (x, y, 0.42), yaw)
             assign(seat, wood_mat)
@@ -1807,7 +1910,9 @@ def add_road_dashes(roads: list, spawn_xy: tuple[float, float], dash_mat, max_da
                     return placed
                 x = x0 + (x1 - x0) * (t / seg)
                 y = y0 + (y1 - y0) * (t / seg)
-                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) <= 160.0:
+                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) <= 160.0 and not RAILS.within(
+                    x, y, railclear.CLEAR_MARKING
+                ):
                     dash = add_box(f"dash_{placed}", (1.6, 0.14, 0.02), (x, y, Z_DASH), yaw)
                     assign(dash, dash_mat)
                     placed += 1
@@ -1845,7 +1950,9 @@ def add_asphalt_wear(
                     return placed
                 x = x0 + (x1 - x0) * (t / seg)
                 y = y0 + (y1 - y0) * (t / seg)
-                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) <= 120.0:
+                if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) <= 120.0 and not RAILS.within(
+                    x, y, railclear.CLEAR_PARKED_CAR
+                ):
                     # Alternate centre blotches and kerb-side tyre wear.
                     side = 1.0 if (placed % 3) else 0.0
                     ox = x + math.cos(yaw + math.pi * 0.5) * half * side * (1.0 if placed % 2 == 0 else -1.0)
@@ -1916,6 +2023,9 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     merge_building_types(types_doc)
     if types_doc:
         print(f"Building types loaded: {len(types_doc.get('types') or {})}")
+    global RAILS
+    RAILS = RailIndex.from_layout(layout)
+    print(f"Surface rail segments: {len(RAILS.segments)}")
     xmin, ymin, xmax, ymax = bounds(layout)
     ground = bpy.data.meshes.new("ground")
     ground.from_pydata(
@@ -2016,9 +2126,9 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     spawn_xy = (float(spawn["x"]), float(spawn["y"])) if spawn.get("x") is not None else None
 
     for i, pond in enumerate(layout.get("water") or []):
-        add_ring(f"water_{pond.get('id', i)}", pond["ring"], 0.0, -0.04, water_mat)
+        add_ring(f"water_{pond.get('id', i)}", pond["ring"], 0.0, Z_WATER, water_mat)
     for i, park in enumerate(layout.get("parks") or []):
-        add_ring(f"park_{park.get('id', i)}", park["ring"], 0.0, 0.02, park_mat)
+        add_ring(f"park_{park.get('id', i)}", park["ring"], 0.0, Z_PARK, park_mat)
     for i, road in enumerate(layout.get("roads") or []):
         add_road(f"road_{road.get('id', i)}", road["points"], float(road["width"]), road_mat, z=Z_ROAD)
 
@@ -2034,6 +2144,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Park amenities: {park_am}")
 
     signal_placements = collect_signal_placements(layout, spawn_xy=spawn_xy)
+    lights_n = 0
     for i, pl in enumerate(signal_placements):
         add_traffic_light(
             f"signal_{i}",
@@ -2044,8 +2155,9 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
             housing_mat,
             lamp_mats,
         )
-    print(f"Traffic lights: {len(signal_placements)}")
-    zebras = add_crosswalks(signal_placements, stripe_mat, spawn_xy)
+        lights_n += 1
+    print(f"Traffic lights: {lights_n} (from {len(signal_placements)} approaches)")
+    zebras = add_crosswalks(signal_placements, stripe_mat, spawn_xy, layout.get("crossings") or [])
     print(f"Crosswalk stripes: {zebras}")
 
     if spawn_xy is not None:
