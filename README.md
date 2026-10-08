@@ -144,4 +144,9 @@ Walls in the 3D city are real image textures, not flat colours:
 2. `cityview/facade_kit.py` — per façade: storeys, real-world width and building-type tags; plus the layout maths. Each street edge is cut into houses of ~6.4 m; every house gets **one full elevation, ground to eaves, mapped without mirroring** (no flipped repeats, no per-floor band cropping). Neighbouring houses always differ, so a long edge reads as a terrace. Selection scores storey count, horizontal stretch, building-type tags and a seeded jitter.
 3. `python -m cityview.facade_textures` (needs `pip install -e .[textures]`) packs them into `assets/textures/facade_atlas.jpg` + `wall_*.jpg`. **These are committed**, so CI only needs Blender.
 4. `blender/build_city.py` maps the atlas onto each street façade (`facade_photo_atlas` material) and tiles wall textures on block walls; the glTF export embeds the JPEGs.
-5. `python3 scripts/inspect_glb_textures.py viewer/klein_antwerpen.glb` proves the GLB contains the images (CI runs it).
+5. **Windows, awnings and night** — `python -m cityview.facade_windows` finds the glass in each elevation (dark compact blobs of window proportions) and commits `assets/textures/facade_windows.json` + `facade_emissive.jpg`. Near the spawn, detected windows get 3D relief (granite sill with drip lip, head hood, jamb fins) and wide ground-floor glazing gets a shop awning; the emissive atlas lights a seeded subset of windows from their actual glass pixels, so the glow lines up with the photo.
+6. `python3 scripts/inspect_glb_textures.py viewer/klein_antwerpen.glb` proves the GLB contains the images (CI runs it).
+
+## Day / night
+
+The viewer opens on a sunny day. **N** (or the *Night* button; `?night` in the URL starts at night) eases the whole scene to night over ~2 s: dusk-to-night sky gradient with stars and moon, fog, ambient/moon light, glowing façade windows (glTF `emissiveTexture` scaled by time of day), emissive lamp heads with a few point lights pooled on the lamps nearest the walker, car head/tail lamps, and lit tram/bus windows.

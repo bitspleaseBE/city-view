@@ -994,9 +994,16 @@ export async function createTransit(scene, THREE, opts = {}) {
     parts.busMat.dispose();
   }
 
+  /** Night: lit cabin windows on trams and buses (0 = day, 1 = full night). */
+  function setNight(t) {
+    parts.glassMat.emissive.setRGB(1.0 * t, 0.78 * t, 0.42 * t);
+    parts.glassMat.opacity = 0.8 + 0.15 * t;
+  }
+
   return {
     update,
     dispose,
+    setNight,
     vehicles,
     count: vehicles.length,
     pathCount: allPaths.length,
@@ -1015,6 +1022,7 @@ function emptyTransit() {
   return {
     update() {},
     dispose() {},
+    setNight() {},
     count: 0,
     tryInteract() {
       return { action: "none" };

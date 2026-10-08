@@ -354,8 +354,18 @@ function makeSharedParts(THREE) {
     glassMat: new THREE.MeshLambertMaterial({ color: 0x88a0b8, transparent: true, opacity: 0.75 }),
     tireMat: new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
     bodyMats: BODY_COLORS.map((c) => new THREE.MeshLambertMaterial({ color: c })),
+    lampGeo: new THREE.BoxGeometry(0.34, 0.16, 0.06),
+    // Lamps: dull glass by day, glowing at night (see setNight). Unlit + fog-exempt tone
+    // mapping so they stay punchy against the dark street.
+    headMat: new THREE.MeshBasicMaterial({ color: 0xcfd2cc, toneMapped: false }),
+    tailMat: new THREE.MeshBasicMaterial({ color: 0x5a1212, toneMapped: false }),
   };
 }
+
+const HEAD_DAY = [0.81, 0.82, 0.8];
+const HEAD_NIGHT = [1.0, 0.94, 0.72];
+const TAIL_DAY = [0.12, 0.02, 0.02];
+const TAIL_NIGHT = [1.0, 0.1, 0.08];
 
 function makeCarMesh(THREE, parts, colorIndex) {
   const group = new THREE.Group();
@@ -363,6 +373,14 @@ function makeCarMesh(THREE, parts, colorIndex) {
   const cabin = new THREE.Mesh(parts.cabinGeo, parts.glassMat);
   cabin.position.set(0, 0.7, 0.1);
   group.add(body, cabin);
+  // +z is the direction of travel (rotation.y = atan2(tan.x, tan.z)).
+  for (const sx of [-0.55, 0.55]) {
+    const head = new THREE.Mesh(parts.lampGeo, parts.headMat);
+    head.position.set(sx, -0.08, 2.11);
+    const tail = new THREE.Mesh(parts.lampGeo, parts.tailMat);
+    tail.position.set(sx, 0.02, -2.11);
+    group.add(head, tail);
+  }
   for (const [lx, lz] of [
     [0.85, 1.35],
     [-0.85, 1.35],
@@ -1168,7 +1186,24 @@ export async function createTraffic(scene, THREE, opts = {}) {
     parts.wheelGeo.dispose();
     parts.glassMat.dispose();
     parts.tireMat.dispose();
+    parts.lampGeo.dispose();
+    parts.headMat.dispose();
+    parts.tailMat.dispose();
     for (const m of parts.bodyMats) m.dispose();
+  }
+
+  /** Night glow for every car's head/tail lamps: 0 = day, 1 = full night. */
+  function setNight(t) {
+    parts.headMat.color.setRGB(
+      HEAD_DAY[0] + (HEAD_NIGHT[0] - HEAD_DAY[0]) * t,
+      HEAD_DAY[1] + (HEAD_NIGHT[1] - HEAD_DAY[1]) * t,
+      HEAD_DAY[2] + (HEAD_NIGHT[2] - HEAD_DAY[2]) * t,
+    );
+    parts.tailMat.color.setRGB(
+      TAIL_DAY[0] + (TAIL_NIGHT[0] - TAIL_DAY[0]) * t,
+      TAIL_DAY[1] + (TAIL_NIGHT[1] - TAIL_DAY[1]) * t,
+      TAIL_DAY[2] + (TAIL_NIGHT[2] - TAIL_DAY[2]) * t,
+    );
   }
 
   /** Let cars give way to other vehicle lists (trams/buses): `() => transit.vehicles`. */
@@ -1181,6 +1216,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     dispose,
     stats,
     setObstacles,
+    setNight,
     cars,
     paths,
     count: cars.length,

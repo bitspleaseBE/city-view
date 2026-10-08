@@ -51,7 +51,7 @@ SURFACES_DIR = Path(_REPO_ROOT) / "assets" / surface_kit.TEXTURES_DIRNAME  # pro
 PHOTO_MAT_SLOT = 7  # material slot of the atlas on façade meshes
 DOORSTEP_MAT = None  # shared granite doorstep material, set in build()
 DOORSTEP_MAT_SLOT = 8  # right after the atlas slot
-STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0, "awnings": 0}
+STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0, "awnings": 0, "reveals": 0}
 
 
 # Century-old Harmonie palette: stylish but lived-in, not showroom clean.
@@ -378,6 +378,42 @@ def add_normal_map(mat, path: Path, strength: float = 1.0) -> bool:
     if base_tex is not None and base_tex.inputs["Vector"].is_linked:
         links.new(base_tex.inputs["Vector"].links[0].from_socket, tex.inputs["Vector"])
     return True
+
+
+def add_emissive_map(mat, path: Path, strength: float = 1.0) -> bool:
+    """Plug the lit-window glow atlas into a Principled material's Emission.
+
+    Same UVs as Base Color. Exports as glTF ``emissiveTexture`` (+ ``emissiveFactor``);
+    the viewer scales ``emissiveIntensity`` with the time of day, so by day it is 0 and
+    the windows are just photo, at night the lit rooms glow.
+    """
+    img = load_texture(path)
+    if img is None or mat is None or not mat.use_nodes:
+        return False
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    bsdf = next((n for n in nodes if n.type == "BSDF_PRINCIPLED"), None)
+    base_tex = next((n for n in nodes if n.type == "TEX_IMAGE"), None)
+    if bsdf is None or "Emission Color" not in bsdf.inputs:
+        return False
+    tex = nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    tex.interpolation = "Linear"
+    tex.extension = "EXTEND"
+    links.new(tex.outputs["Color"], bsdf.inputs["Emission Color"])
+    bsdf.inputs["Emission Strength"].default_value = float(strength)
+    if base_tex is not None and base_tex.inputs["Vector"].is_linked:
+        links.new(base_tex.inputs["Vector"].links[0].from_socket, tex.inputs["Vector"])
+    return True
+
+
+def glowing(name: str, color, rough: float, emission, strength: float = 1.0):
+    """Principled material with a constant emission colour (street lamps at night)."""
+    mat = principled(name, color, rough)
+    bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+    bsdf.inputs["Emission Color"].default_value = emission
+    bsdf.inputs["Emission Strength"].default_value = float(strength)
+    return mat
 
 
 def wall_tint(wall_rgba, avg_rgb) -> tuple[float, float, float]:
@@ -969,6 +1005,36 @@ def _append_shop_awning(bm, ox, oy, ux, uy, nx, ny, a, w, z_top, off, variant: i
     return 1
 
 
+def _stable_variant(name: str, a: float) -> int:
+    return zlib.adler32(f"{name}:{a:.2f}".encode("utf-8")) % 2
+
+
+def _append_window_reveal(bm, ox, oy, ux, uy, nx, ny, a, w, z0, z1, off, variant: int) -> int:
+    """Stone sill + projecting head over one detected window (3D relief on the photo).
+
+    ``a`` is the glass centre along the edge, ``w`` its width, ``z0``/``z1`` sill and
+    head heights. Everything is granite (slot DOORSTEP_MAT_SLOT): the sill has a drip lip, the head
+    is a stone hood. Jamb returns are two slim trim fins so the glass
+    reads as set back from the wall plane rather than printed on it.
+    """
+    yaw = math.atan2(uy, ux)
+    cx, cy = ox + ux * a, oy + uy * a
+    sw = w + 0.16
+    # Sill: slab proud of the wall with a thinner drip lip underneath.
+    _append_box(bm, cx + nx * (off + 0.07), cy + ny * (off + 0.07), z0 - 0.025, sw, 0.14, 0.05, yaw, DOORSTEP_MAT_SLOT)
+    _append_box(bm, cx + nx * (off + 0.04), cy + ny * (off + 0.04), z0 - 0.07, sw * 0.92, 0.08, 0.04, yaw, DOORSTEP_MAT_SLOT)
+    # Head: lintel hood (variant 1 adds a thin cornice course on top).
+    _append_box(bm, cx + nx * (off + 0.05), cy + ny * (off + 0.05), z1 + 0.04, w + 0.12, 0.10, 0.08, yaw, DOORSTEP_MAT_SLOT)
+    if variant == 1:
+        _append_box(bm, cx + nx * (off + 0.07), cy + ny * (off + 0.07), z1 + 0.10, w + 0.22, 0.14, 0.04, yaw, DOORSTEP_MAT_SLOT)
+    # Jamb fins: slim reveals either side of the glass.
+    for sgn in (-1, 1):
+        jx = cx + ux * sgn * (w * 0.5 + 0.02)
+        jy = cy + uy * sgn * (w * 0.5 + 0.02)
+        _append_box(bm, jx + nx * (off + 0.025), jy + ny * (off + 0.025), (z0 + z1) * 0.5, 0.045, 0.05, z1 - z0, yaw, DOORSTEP_MAT_SLOT)
+    return 1
+
+
 def add_photo_facade(
     name: str,
     p0: list[float],
@@ -1066,6 +1132,23 @@ def add_photo_facade(
         for shop in facade_kit.shop_awnings(quads, rightwards=rightwards):
             STATS["awnings"] += _append_shop_awning(
                 bm, ox, oy, ux, uy, nx, ny, shop["a"] - half, shop["w"], shop["z"], off, int(shop["side"])
+            )
+
+    # Window reveals: sills, heads and jamb fins on the glass found in the elevations,
+    # so near-spawn windows have relief instead of being printed flat.
+    if detail == "full":
+        first_reveal_face = len(bm.faces)
+        for win in facade_kit.window_reveals(quads, rightwards=rightwards):
+            STATS["reveals"] += _append_window_reveal(
+                bm, ox, oy, ux, uy, nx, ny, win["a"] - half, win["w"], win["z0"], win["z1"], off,
+                _stable_variant(name, win["a"]),
+            )
+        if len(bm.faces) > first_reveal_face:
+            bm.normal_update()
+            apply_planar_uvs(
+                [f for f in list(bm.faces)[first_reveal_face:] if f.material_index == DOORSTEP_MAT_SLOT],
+                uv_layer,
+                surface_kit.surface_tile_m("curb"),
             )
 
     # Rare climbing plant (planned per street in build(); most façades have none).
@@ -2932,6 +3015,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     STATS["photo_quads"] = 0
     STATS["door_steps"] = 0
     STATS["awnings"] = 0
+    STATS["reveals"] = 0
     STATS["photo_edges"] = 0
     atlas_img = load_texture(TEXTURES_DIR / facade_kit.ATLAS_FILE)
     FACADE_PHOTO_MAT = (
@@ -2941,6 +3025,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     )
     if FACADE_PHOTO_MAT is not None:
         add_normal_map(FACADE_PHOTO_MAT, TEXTURES_DIR / facade_kit.NORMAL_FILE, strength=NORMAL_MAP_STRENGTH)
+        add_emissive_map(FACADE_PHOTO_MAT, TEXTURES_DIR / facade_kit.EMISSIVE_FILE)
     print(f"Facade photo atlas: {'loaded' if atlas_img is not None else 'MISSING'}")
     RAILS = RailIndex.from_layout(layout)
     print(f"Surface rail segments: {len(RAILS.segments)}")
@@ -3062,7 +3147,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     stripe_mat = principled("zebra", (0.88, 0.86, 0.78, 1.0), 0.92)
     wood_mat = principled("bench_wood", (0.32, 0.22, 0.12, 1.0), 0.88)
     bin_mat = principled("bin_green", (0.14, 0.28, 0.16, 1.0), 0.65, metallic=0.2)
-    lamp_head_mat = principled("lamp_head", (0.75, 0.72, 0.55, 1.0), 0.35)
+    lamp_head_mat = glowing("lamp_head", (0.75, 0.72, 0.55, 1.0), 0.35, (1.0, 0.78, 0.45, 1.0))
 
     # Only bake materials for types/variants present in this tile — keeps GLB lean.
     used_keys = {"eclectic"}
@@ -3205,7 +3290,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Aerial-matched roofs: {ROOF_STATS}")
     print(
         f"Photo facades: {STATS['photo_edges']} street edges, {STATS['photo_quads']} textured quads "
-        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'}); doorsteps: {STATS['door_steps']}; awnings: {STATS['awnings']}"
+        f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'}); doorsteps: {STATS['door_steps']}; awnings: {STATS['awnings']}; window reveals: {STATS['reveals']}"
     )
 
     setup_world()

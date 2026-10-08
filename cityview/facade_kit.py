@@ -32,6 +32,8 @@ ATLAS_COLS = 8
 
 ATLAS_FILE = "facade_atlas.jpg"
 NORMAL_FILE = "facade_normal.jpg"  # tangent-space relief aligned 1:1 with the atlas
+EMISSIVE_FILE = "facade_emissive.jpg"  # night glow of lit windows, aligned 1:1 with the atlas
+WINDOWS_FILE = "facade_windows.json"  # detected glass / shop glazing per elevation
 TEXTURES_DIRNAME = "textures"
 FACADE_SRC_DIR = "generated/facades"
 WALL_SRC_DIR = "generated/walls"
@@ -361,6 +363,50 @@ def door_steps(
     return out
 
 
+_WINDOW_DOC: dict[str, Any] | None = None
+
+
+def window_layout() -> dict[str, Any]:
+    """Detected glass per elevation (``assets/textures/facade_windows.json``), cached.
+
+    ``{facade_id: {"windows": [[x0, x1, z0, z1], ...], "shops": [...]}}`` with every
+    coordinate a fraction of the elevation (x from the left, z from the ground). Empty
+    when the file has not been generated, so the builder degrades to no extras.
+    """
+    global _WINDOW_DOC
+    if _WINDOW_DOC is None:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parent.parent / "assets" / TEXTURES_DIRNAME / WINDOWS_FILE
+        try:
+            _WINDOW_DOC = json.loads(path.read_text())
+        except (OSError, ValueError):
+            _WINDOW_DOC = {}
+    return _WINDOW_DOC
+
+
+def _span_on_quad(q: dict[str, Any], lo: float, hi: float, rightwards: bool):
+    """Map an x-range of the elevation (fractions) onto a planned quad.
+
+    Returns ``(a_centre, width_m)`` along the edge, honouring the cropped slice of a
+    narrow edge and the edge orientation, or ``None`` when the range is cropped out.
+    """
+    cu0, _cv0, cu1, _cv1 = cell_uv_rect(q["cell"])
+    u0, _v0, u1, _v1 = q["uv"]
+    span = cu1 - cu0
+    if span <= 0:
+        return None
+    f0, f1 = (u0 - cu0) / span, (u1 - cu0) / span
+    lo, hi = max(lo, f0), min(hi, f1)
+    if hi <= lo:
+        return None
+    m_per_f = (q["a1"] - q["a0"]) / max(1e-6, f1 - f0)
+    t = ((lo + hi) * 0.5 - f0) / max(1e-6, f1 - f0)
+    a = q["a0"] + (t if rightwards else 1.0 - t) * (q["a1"] - q["a0"])
+    return a, (hi - lo) * m_per_f
+
+
 def shop_awnings(
     quads: list[dict[str, Any]], rightwards: bool = True, min_width_m: float = 1.4
 ) -> list[dict[str, float]]:
@@ -368,36 +414,59 @@ def shop_awnings(
 
     Mirrors ``door_steps``: ``a`` runs along the edge from its start, honouring the
     cropped slice of a narrow edge and the edge orientation. ``z`` is metres above ground.
+    Hand-picked ``SHOPS`` plus the wide ground-floor glazing found by ``facade_windows``.
     """
     out: list[dict[str, float]] = []
+    doc = window_layout()
     for q in quads:
-        shop = SHOPS.get(q["cell"])
-        if not shop:
-            continue
-        sx0, sx1, top = shop
+        shops: list[tuple[float, float, float]] = []
+        if q["cell"] in SHOPS:
+            shops.append(SHOPS[q["cell"]])
+        else:
+            shops.extend((s[0], s[1], s[3]) for s in (doc.get(q["cell"]) or {}).get("shops", []))
+        for sx0, sx1, top in shops:
+            placed = _span_on_quad(q, sx0, sx1, rightwards)
+            if placed is None or placed[1] < min_width_m:
+                continue
+            a, width_m = placed
+            out.append(
+                {
+                    "a": a,
+                    "w": width_m,
+                    "z": top * (q["z1"] - q["z0"]) + q["z0"],
+                    "side": float(_stable(f"{q['cell']}:awn:{q['a0']:.2f}:{sx0:.2f}") % 2),
+                }
+            )
+    return out
+
+
+def window_reveals(
+    quads: list[dict[str, Any]], rightwards: bool = True, min_width_m: float = 0.5
+) -> list[dict[str, float]]:
+    """Window placements ``[{"a": centre, "w": glass width, "z0": sill, "z1": head}]`` (metres).
+
+    Same mapping as ``door_steps`` / ``shop_awnings``; windows cropped by a narrow edge
+    (only partly visible) are skipped so no sill ever dangles past the wall.
+    """
+    out: list[dict[str, float]] = []
+    doc = window_layout()
+    for q in quads:
+        height = q["z1"] - q["z0"]
         cu0, _cv0, cu1, _cv1 = cell_uv_rect(q["cell"])
         u0, _v0, u1, _v1 = q["uv"]
         span = cu1 - cu0
         if span <= 0:
             continue
         f0, f1 = (u0 - cu0) / span, (u1 - cu0) / span
-        lo, hi = max(sx0, f0), min(sx1, f1)
-        if hi <= lo:
-            continue
-        m_per_f = (q["a1"] - q["a0"]) / max(1e-6, f1 - f0)
-        width_m = (hi - lo) * m_per_f
-        if width_m < min_width_m:
-            continue
-        t = ((lo + hi) * 0.5 - f0) / max(1e-6, f1 - f0)
-        a = q["a0"] + (t if rightwards else 1.0 - t) * (q["a1"] - q["a0"])
-        out.append(
-            {
-                "a": a,
-                "w": width_m,
-                "z": top * (q["z1"] - q["z0"]) + q["z0"],
-                "side": float(_stable(f"{q['cell']}:awn:{q['a0']:.2f}") % 2),
-            }
-        )
+        for x0, x1, z0, z1 in (doc.get(q["cell"]) or {}).get("windows", []):
+            if x0 < f0 + 0.005 or x1 > f1 - 0.005:
+                continue  # cut by the crop
+            placed = _span_on_quad(q, x0, x1, rightwards)
+            if placed is None or placed[1] < min_width_m:
+                continue
+            out.append(
+                {"a": placed[0], "w": placed[1], "z0": q["z0"] + z0 * height, "z1": q["z0"] + z1 * height}
+            )
     return out
 
 
