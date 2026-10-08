@@ -440,7 +440,7 @@
           if (spawnNode) applySpawnFromNode(spawnNode);
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
-          traffic = await createTraffic(scene, THREE, { count: 18 });
+          traffic = await createTraffic(scene, THREE);
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
           const nCars = traffic.count ?? 0;
           const nTransit = transit.count ?? 0;
