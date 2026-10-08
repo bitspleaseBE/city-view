@@ -32,6 +32,18 @@ Alias: `--place harmonie` uses the same bbox, spawn, and historic style policy. 
 
 **Trees:** planted at surveyed positions, not on a procedural grid. [`cityview/trees.py`](cityview/trees.py) merges the **Stad Antwerpen Groeninventaris** `boom` layer (municipal tree inventory: one point per managed tree with Latin species and trunk girth; public ArcGIS service, [open data licence](https://www.antwerpen.be/info/gratis-open-data-licentie), © Stad Antwerpen) with OpenStreetMap `natural=tree` / `natural=tree_row` (ODbL). Height, crown width and conifer/columnar shape come from species and girth. Trees inside buildings, on carriageways or on a tram bed (`railclear`) are dropped, and crowns are trimmed back from the tracks. Only parks the survey barely covers get a seeded Poisson-disc fill (`parks_filled` in the build log); shrubs use the same blue-noise sampler. The raw download is cached and committed under [`assets/trees/`](assets/trees/) so CI builds offline; `--refresh` re-downloads it.
 
+**Roof colours (aerial match):** roofs, yards and parks are tuned against a real orthophoto instead of guessed palettes. Source: Digitaal Vlaanderen *Orthofotomozaïek, middenschalig, winteropnamen* (WMS `https://geo.api.vlaanderen.be/OMW/wms`, layer `OMWRGB25VL`, winter 2025, 15 cm; free under the [Gebruiksrecht geografische webdiensten](https://www.vlaanderen.be/digitaal-vlaanderen/onze-oplossingen/geografische-webdiensten/gebruiksrecht-en-privacyverklaring-geografische-webdiensten)). A 2240 px JPEG of the district is committed at [`assets/references/klein-antwerpen/aerial_ortho.jpg`](assets/references/klein-antwerpen/aerial_ortho.jpg) for future matching.
+
+```bash
+pip install pillow numpy
+python -m cityview.aerial fetch     # re-download the orthophoto (WMS, 4x4 tiles)
+python -m cityview.aerial sample    # per-building roof family + tint -> assets/styles/roof_aerial.json
+```
+
+[`cityview/aerial.py`](cityview/aerial.py) draws every OSM building footprint (eroded ~1 m) onto the photo and takes the median of its *sunlit* pixels (50th-92nd luma percentile; the shaded slope only reflects blue skylight, so a mild blue-cast correction is applied to grey roofs). A building with >= 6 % clearly red/orange pixels is a clay pantile roof; other pitched roofs are slate (dark) or zinc / fibre-cement (light grey); OSM `flat` roofs keep bitumen/gravel. Per family the colours are k-means clustered into 5 tints; `roof_aerial.json` stores each building's family + cluster, so the roof you see from above is the roof in the photo. Measured mix for pitched roofs: ~36 % slate, ~56 % zinc/light grey, ~8 % red clay (the old gable/hip table had ~50 % clay). The four roof textures are bright neutral detail maps (glTF Base Color factors are <= 1) and the tint carries the colour; `RENDER_GAIN` maps aerial colour to albedo for the viewer lighting. Yard (`ground`) and park tints in `blender/build_city.py` come from the same photo.
+
+To re-check a build against the photo, serve the repo and open `scripts/topdown_probe.html?glb=../viewer/klein_antwerpen.glb` (same lights, tone mapping and fog as the viewer, top-down), save `window.__probe.jpeg`, then run `python scripts/compare_roofs.py probe.json out.jpg` for aerial-vs-render colours per roof family, yards and a side-by-side image. After the retune the median roof luminance was within ~2 % of the aerial (0.473 vs 0.464) per family.
+
 ```bash
 python3 -m cityview city --place centrum
 python3 -m cityview city --place eilandje

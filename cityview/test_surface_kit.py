@@ -17,8 +17,9 @@ class SurfaceKitTests(unittest.TestCase):
 
     def test_pick_roof_surface_follows_mix_roughly(self):
         counts = Counter(kit.pick_roof_surface("gable", i) for i in range(2000))
-        self.assertGreater(counts["roof_clay"], counts["roof_zinc"] * 3)
-        self.assertGreater(counts["roof_slate"], 400)
+        # Aerial-measured: grey roofs dominate, clay pantiles are the minority.
+        self.assertGreater(counts["roof_zinc"] + counts["roof_slate"], counts["roof_clay"] * 5)
+        self.assertGreater(counts["roof_clay"], 80)
         self.assertEqual(set(kit.pick_roof_surface("flat", i) for i in range(50)), {"roof_flat"})
 
     def test_unknown_shape_falls_back_to_mansard_mix(self):

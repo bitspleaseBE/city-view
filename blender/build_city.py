@@ -37,6 +37,13 @@ CLIMBER_STATS = {"plants": 0, "leaves": 0}
 TEXTURES_DIR = Path(_REPO_ROOT) / "assets" / facade_kit.TEXTURES_DIRNAME
 TYPES_DOC: dict | None = None
 FACADE_PHOTO_MAT = None  # shared atlas material, set in build()
+# Block interiors (yards, gardens, shade) and parks seen from above are dark olive-grey in the
+# orthophoto (yard median ~RGB 78/94/103 -> de-blued ~86/97/92; park median ~88/105/106), far
+# darker than the old pale gravel / lime grass. Linear Base-Color multipliers measured with
+# scripts/topdown_probe.html + scripts/compare_roofs.py so the top-down render lands on those.
+GROUND_TINT = (0.061, 0.079, 0.074)
+PARK_TINT = (0.42, 0.36, 0.46)
+ROOF_AERIAL = surface_kit.load_roof_aerial()  # per-building roof family + tint measured from the orthophoto
 SURFACES_DIR = Path(_REPO_ROOT) / "assets" / surface_kit.TEXTURES_DIRNAME  # procedural roofs / paving / grass
 PHOTO_MAT_SLOT = 7  # material slot of the atlas on façade meshes
 STATS = {"photo_quads": 0, "photo_edges": 0}
@@ -1243,6 +1250,7 @@ def add_street_facade(
 
 
 DORMER_STATS = {"dormers": 0}
+ROOF_STATS: dict[str, int] = {"measured": 0, "fallback": 0}
 
 
 def add_dormers(
@@ -1354,11 +1362,19 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     # Irregular footprints fall back to a mansard stack inside add_lod2_roof.
     eff_shape = "mansard" if shape in {"gable", "hip"} and not _prism_roof_ok(ring) else shape
     if roof_pool:
-        surf = surface_kit.pick_roof_surface(eff_shape, int(bid) if str(bid).lstrip("-").isdigit() else 1)
+        bseed = int(bid) if str(bid).lstrip("-").isdigit() else 1
+        measured = surface_kit.roof_choice(ROOF_AERIAL, bid, eff_shape)
+        if measured and measured[0] in roof_pool:
+            surf, cluster = measured  # the roof colour seen from above in the orthophoto
+        else:
+            surf = surface_kit.pick_roof_surface(eff_shape, bseed)
+            cluster = surface_kit.pick_roof_cluster(ROOF_AERIAL, surf, bseed)
         variants = roof_pool.get(surf)
         if variants:
-            roof = variants[zlib.crc32(f"rv:{bid}".encode()) % len(variants)]
+            roof = variants[cluster % len(variants)]
             roof_uv_tile = surface_kit.surface_tile_m(surf)
+            ROOF_STATS[surf] = ROOF_STATS.get(surf, 0) + 1
+            ROOF_STATS["measured" if measured else "fallback"] += 1
     add_lod2_roof(f"{name}_roof", ring, max(2.5, eaves), roof_h, shape, roof, uv_tile_m=roof_uv_tile)
 
     cx = sum(p[0] for p in ring) / len(ring)
@@ -2472,24 +2488,28 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
             guv.data[li].uv = (vx / gravel_tile, vy / gravel_tile)
     assign(
         link(bpy.data.objects.new("ground", ground)),
-        surface_mat("gravel", "ground", (0.74, 0.73, 0.68, 1.0), 0.95, tint=(0.94, 0.94, 0.92)),
+        surface_mat("gravel", "ground", (0.74, 0.73, 0.68, 1.0), 0.95, tint=GROUND_TINT),
     )
 
     water_mat = principled("water", (0.18, 0.32, 0.42, 1.0), 0.12)
-    park_mat = surface_mat("grass", "park", (0.28, 0.48, 0.26, 1.0), 0.92)
+    park_mat = surface_mat("grass", "park", (0.28, 0.48, 0.26, 1.0), 0.92, tint=PARK_TINT)
     road_mat = surface_mat("asphalt", "asphalt", (0.08, 0.08, 0.09, 1.0), 0.96)
     sidewalk_mat = surface_mat("sidewalk", "sidewalk", (0.55, 0.54, 0.50, 1.0), 0.95)
     curb_mat = surface_mat("curb", "curb", (0.42, 0.41, 0.38, 1.0), 0.9)
-    # Roof families: slate / clay pantiles / zinc / bitumen, each with a few weathering tints.
+    # Roof families: slate / clay pantiles / zinc / bitumen. Each family gets one material per
+    # aerial-measured tint cluster (roof_aerial.json); fallback tints if the file is missing.
     roof_tex: dict[str, list] = {}
-    for key, tints in (
-        ("roof_slate", ((1.0, 1.0, 1.0), (0.80, 0.82, 0.86), (0.92, 0.88, 0.84))),
-        ("roof_clay", ((1.0, 1.0, 1.0), (0.84, 0.80, 0.78), (0.94, 0.88, 0.80))),
-        ("roof_zinc", ((1.0, 1.0, 1.0), (0.85, 0.87, 0.90))),
-        ("roof_flat", ((1.0, 1.0, 1.0), (0.86, 0.86, 0.88))),
-    ):
+    fallback_tints = {
+        "roof_slate": ((0.55, 0.55, 0.55), (0.40, 0.41, 0.43)),
+        "roof_clay": ((0.62, 0.40, 0.33), (0.50, 0.33, 0.28)),
+        "roof_zinc": ((0.60, 0.62, 0.65), (0.45, 0.47, 0.50)),
+        "roof_flat": ((0.40, 0.40, 0.42), (0.30, 0.30, 0.32)),
+    }
+    for key in ("roof_slate", "roof_clay", "roof_zinc", "roof_flat"):
         if surface_img(key) is None:
             continue
+        clusters = (((ROOF_AERIAL or {}).get("families") or {}).get(key) or {}).get("clusters") or []
+        tints = [tuple(c["tint"]) for c in clusters] or list(fallback_tints[key])
         roof_tex[key] = [
             surface_mat(key, f"{key}_{ti}", (0.18, 0.17, 0.16, 1.0), 0.78, tint=t) for ti, t in enumerate(tints)
         ]
@@ -2685,10 +2705,13 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Climbing plants: {len(CLIMBERS)} houses on {len(streets)} streets (max {climbers.MAX_PER_STREET}/street)")
 
     DORMER_STATS["dormers"] = 0
+    ROOF_STATS.clear()
+    ROOF_STATS.update({"measured": 0, "fallback": 0})
     for bldg in layout.get("buildings") or []:
         add_building(bldg, mats, spawn_xy=spawn_xy)
     print(f"Mansard dormers: {DORMER_STATS['dormers']}; textured roof families: {sorted((mats.get('roof_tex') or {}))}")
     print(f"Climbing-plant leaf clusters: {CLIMBER_STATS['leaves']}")
+    print(f"Aerial-matched roofs: {ROOF_STATS}")
     print(
         f"Photo facades: {STATS['photo_edges']} street edges, {STATS['photo_quads']} textured quads "
         f"(atlas {'on' if FACADE_PHOTO_MAT is not None else 'OFF'})"
