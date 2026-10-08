@@ -10,6 +10,13 @@ const BUS_SPEED = 8.5;
 const FOLLOW_DIST = 14;
 const PLAYER_STOP_DIST = 5;
 const SNAP_M = 14;
+const BODY_LEN = { tram: 10.5, bus: 9 };
+const STANDSTILL_GAP = 2.5; // bumper gap kept behind a leader
+const COMFORT_BRAKE = 1.6; // m/s^2 used to plan leader stops
+const STUCK_GHOST_SEC = 10; // held this long by a leader -> slide through it
+const STUCK_FREE_SEC = 4; // held this long with nothing in front -> shove on
+const GHOST_SEC = 8;
+const GHOST_CREEP = 1.8;
 
 function blenderToThree(x, y, out) {
   out.set(x, 0, -y);
@@ -184,6 +191,9 @@ function createVehicle(paths, THREE, parts, mode) {
     tan: new THREE.Vector3(),
     label,
     lineText: labelText,
+    stuckT: 0,
+    ghostUntil: 0,
+    wait: "",
   };
 }
 
@@ -261,6 +271,7 @@ export async function createTransit(scene, THREE, opts = {}) {
   spawnFleet(busN, "bus", busPaths);
 
   const playerPos = new THREE.Vector3();
+  let simTime = 0;
 
   function advanceJunction(v) {
     const path = allPaths[v.pathIndex];
@@ -288,6 +299,7 @@ export async function createTransit(scene, THREE, opts = {}) {
 
   function update(dt, walkObject) {
     if (dt <= 0 || !vehicles.length) return;
+    simTime += dt;
     if (walkObject) {
       playerPos.set(walkObject.position.x, 0, walkObject.position.z);
     }
@@ -295,20 +307,33 @@ export async function createTransit(scene, THREE, opts = {}) {
       const v = vehicles[i];
       placeVehicle(v, allPaths, THREE);
       let desire = v.speed;
+      let limitedBy = "";
+      const len = BODY_LEN[v.mode] || BODY_LEN.bus;
 
-      for (let j = 0; j < vehicles.length; j++) {
-        if (i === j) continue;
-        const other = vehicles[j];
-        const dx = other.pos.x - v.pos.x;
-        const dz = other.pos.z - v.pos.z;
-        const distSq = dx * dx + dz * dz;
-        if (distSq > FOLLOW_DIST * FOLLOW_DIST * 3) continue;
-        const ahead = dx * v.tan.x + dz * v.tan.z;
-        const side = Math.abs(dx * v.tan.z + dz * -v.tan.x);
-        if (ahead > 0.5 && ahead < FOLLOW_DIST + 6 && side < 3.5) {
-          const gap = ahead - 5;
-          if (gap < FOLLOW_DIST) {
-            desire = Math.min(desire, v.speed * Math.max(0, gap / FOLLOW_DIST) ** 2);
+      if (simTime >= v.ghostUntil) {
+        for (let j = 0; j < vehicles.length; j++) {
+          if (i === j) continue;
+          const other = vehicles[j];
+          const dx = other.pos.x - v.pos.x;
+          const dz = other.pos.z - v.pos.z;
+          const distSq = dx * dx + dz * dz;
+          const reach = FOLLOW_DIST + len + 8;
+          if (distSq > reach * reach) continue;
+          // Only follow traffic going our way. Counting oncoming vehicles as
+          // "ahead" made two opposite-direction vehicles brake to a mutual
+          // standstill forever (the main cause of everything freezing).
+          if (other.tan.x * v.tan.x + other.tan.z * v.tan.z < 0.35) continue;
+          const ahead = dx * v.tan.x + dz * v.tan.z;
+          const side = Math.abs(dx * v.tan.z + dz * -v.tan.x);
+          if (ahead > 0.5 && side < 3.2) {
+            const olen = BODY_LEN[other.mode] || BODY_LEN.bus;
+            // Gap between bumpers (not centres) so 10 m trams never overlap.
+            const gap = ahead - (len + olen) * 0.5 - STANDSTILL_GAP;
+            const safe = other.velocity * 0.9 + Math.sqrt(2 * COMFORT_BRAKE * Math.max(0, gap));
+            if (safe < desire) {
+              desire = Math.max(0, safe);
+              limitedBy = "leader";
+            }
           }
         }
       }
@@ -322,12 +347,28 @@ export async function createTransit(scene, THREE, opts = {}) {
           if (ahead > 0.2 && ahead < PLAYER_STOP_DIST + 6 && side < 3) {
             const gap = ahead - 1.5;
             desire = Math.min(desire, v.speed * Math.max(0, gap / PLAYER_STOP_DIST) ** 2);
+            limitedBy = "player";
           }
         }
       }
 
+      // Recovery: held too long (leader pile-up, odd geometry) -> slide on at a
+      // crawl instead of sitting there for the rest of the session.
+      if (v.velocity < 0.3 && limitedBy !== "player") {
+        v.stuckT += dt;
+        if (v.stuckT > (limitedBy === "leader" ? STUCK_GHOST_SEC : STUCK_FREE_SEC)) {
+          v.ghostUntil = simTime + GHOST_SEC;
+          v.stuckT = 0;
+        }
+      } else {
+        v.stuckT = Math.max(0, v.stuckT - dt * 2);
+      }
+      v.wait = v.velocity < 0.3 ? limitedBy : "";
+      if (simTime < v.ghostUntil) desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
+
       v.velocity += (desire - v.velocity) * Math.min(1, dt * 3);
-      if (v.velocity < 0.12) v.velocity = 0;
+      // Only snap to rest when we actually want to be at rest (see traffic.js).
+      if (v.velocity < 0.12 && desire < 0.12) v.velocity = 0;
       v.s += v.velocity * dt;
       const path = allPaths[v.pathIndex];
       if (path && v.s >= path.length - 0.5) {
@@ -357,6 +398,7 @@ export async function createTransit(scene, THREE, opts = {}) {
   return {
     update,
     dispose,
+    vehicles,
     count: vehicles.length,
     pathCount: allPaths.length,
     stopCount: (data.stops || []).length,
