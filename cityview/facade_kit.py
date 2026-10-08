@@ -31,6 +31,7 @@ CELL_H = CELL_INNER_H + 2 * PAD
 ATLAS_COLS = 8
 
 ATLAS_FILE = "facade_atlas.jpg"
+NORMAL_FILE = "facade_normal.jpg"  # tangent-space relief aligned 1:1 with the atlas
 TEXTURES_DIRNAME = "textures"
 FACADE_SRC_DIR = "generated/facades"
 WALL_SRC_DIR = "generated/walls"
@@ -44,7 +45,7 @@ ASPECTS = {"tall": (9, 16), "wide": (3, 4)}  # source image width:height
 _FACADE_TABLE: list[tuple[int, str, tuple[str, ...]]] = [
     (4, "tall", ("art-nouveau",)),                           # 01
     (3, "wide", ("red-brick", "neo-flemish")),               # 02
-    (4, "tall", ("neoclassical", "cream-tile")),             # 03
+    (4, "tall", ("neoclassical", "cream-tile", "school")),   # 03
     (5, "tall", ("yellow-brick", "art-nouveau")),            # 04
     (3, "wide", ("neo-flemish", "brown-tile")),              # 05
     (4, "tall", ("neo-flemish", "red-brick")),               # 06
@@ -54,14 +55,14 @@ _FACADE_TABLE: list[tuple[int, str, tuple[str, ...]]] = [
     (4, "tall", ("neo-flemish", "eclectic")),                # 10
     (3, "wide", ("prefab-70s", "brown-tile")),               # 11
     (4, "tall", ("art-deco",)),                              # 12
-    (3, "wide", ("cream-tile", "neoclassical")),             # 13
+    (3, "wide", ("cream-tile", "neoclassical", "restaurant")),  # 13
     (4, "tall", ("red-brick",)),                             # 14
     (5, "tall", ("eclectic", "cream-tile")),                 # 15
     (4, "tall", ("art-nouveau",)),                           # 16
     (3, "wide", ("red-brick",)),                             # 17
     (4, "tall", ("neoclassical",)),                          # 18
     (3, "wide", ("eclectic", "white-modern")),               # 19
-    (4, "tall", ("neo-gothic", "neo-flemish")),              # 20
+    (4, "tall", ("neo-gothic", "neo-flemish", "church")),    # 20
     (5, "tall", ("neoclassical", "eclectic")),               # 21
     (4, "tall", ("prefab-70s", "antwerp-70s")),              # 22
     (3, "wide", ("neoclassical", "cream-tile")),             # 23
@@ -72,10 +73,10 @@ _FACADE_TABLE: list[tuple[int, str, tuple[str, ...]]] = [
     (3, "wide", ("brown-tile", "red-brick")),                # 28
     (4, "tall", ("neoclassical",)),                          # 29
     (4, "tall", ("yellow-brick", "neo-flemish")),            # 30
-    (3, "wide", ("modern-infill", "white-modern")),          # 31
+    (3, "wide", ("modern-infill", "white-modern", "supermarket", "hospital")),  # 31
     (4, "tall", ("yellow-brick", "art-nouveau")),            # 32
     (3, "wide", ("brown-tile", "neo-flemish")),              # 33
-    (5, "tall", ("eclectic", "international")),              # 34
+    (5, "tall", ("eclectic", "international", "hospital")),  # 34
     (4, "tall", ("neo-flemish",)),                           # 35
     (3, "wide", ("art-deco", "white-modern")),               # 36
     (4, "tall", ("eclectic", "neoclassical")),               # 37
@@ -84,7 +85,7 @@ _FACADE_TABLE: list[tuple[int, str, tuple[str, ...]]] = [
     (4, "tall", ("brown-tile", "art-nouveau")),              # 40
     (3, "wide", ("yellow-brick",)),                          # 41
     (4, "tall", ("art-nouveau",)),                           # 42
-    (3, "wide", ("cream-tile",)),                            # 43
+    (3, "wide", ("cream-tile", "restaurant", "school")),     # 43
     (5, "tall", ("red-brick", "antwerp-70s")),               # 44
     (4, "tall", ("neoclassical", "cream-tile")),             # 45
     (3, "wide", ("antwerp-70s", "prefab-70s")),              # 46
@@ -141,6 +142,11 @@ TYPE_WALL_TILE: dict[str, str] = {
     "prefab-70s": "plaster_white",
     "brown-tile": "brick_brown",
     "antwerp-70s": "stucco_cream",
+    "school": "stucco_cream",
+    "restaurant": "stucco_cream",
+    "supermarket": "plaster_white",
+    "church": "brick_brown",
+    "hospital": "plaster_white",
 }
 DEFAULT_TYPE = "eclectic"
 
@@ -167,6 +173,14 @@ DOORS: dict[str, tuple[float, float]] = {
     "facade_42": (0.20, 0.14), "facade_43": (0.55, 0.12), "facade_44": (0.58, 0.14),
     "facade_45": (0.78, 0.15), "facade_46": (0.78, 0.12), "facade_47": (0.45, 0.14),
     "facade_48": (0.20, 0.12), "facade_49": (0.50, 0.14), "facade_50": (0.92, 0.12),
+}
+
+# Shop windows read off the elevations: (x0, x1, top) with x as fractions of the image
+# width and ``top`` the lintel height as a fraction of the elevation height. The builder
+# hangs a shop awning over each so ground-floor shopfronts shade the pavement.
+SHOPS: dict[str, tuple[float, float, float]] = {
+    "facade_01": (0.40, 0.90, 0.32),
+    "facade_13": (0.08, 0.52, 0.40),
 }
 
 # Terrace width target: a long edge is cut into houses about this wide.
@@ -344,6 +358,46 @@ def door_steps(
         # metres per unit of image width on this quad (the slice may be a crop)
         width_m = width_frac * (q["a1"] - q["a0"]) / max(1e-6, f1 - f0)
         out.append({"a": a, "w": width_m, "side": float(_stable(f"{q['cell']}:{q['a0']:.2f}") % 2)})
+    return out
+
+
+def shop_awnings(
+    quads: list[dict[str, Any]], rightwards: bool = True, min_width_m: float = 1.4
+) -> list[dict[str, float]]:
+    """Awning placements ``[{"a": centre, "w": width, "z": lintel height, "side": 0/1}]``.
+
+    Mirrors ``door_steps``: ``a`` runs along the edge from its start, honouring the
+    cropped slice of a narrow edge and the edge orientation. ``z`` is metres above ground.
+    """
+    out: list[dict[str, float]] = []
+    for q in quads:
+        shop = SHOPS.get(q["cell"])
+        if not shop:
+            continue
+        sx0, sx1, top = shop
+        cu0, _cv0, cu1, _cv1 = cell_uv_rect(q["cell"])
+        u0, _v0, u1, _v1 = q["uv"]
+        span = cu1 - cu0
+        if span <= 0:
+            continue
+        f0, f1 = (u0 - cu0) / span, (u1 - cu0) / span
+        lo, hi = max(sx0, f0), min(sx1, f1)
+        if hi <= lo:
+            continue
+        m_per_f = (q["a1"] - q["a0"]) / max(1e-6, f1 - f0)
+        width_m = (hi - lo) * m_per_f
+        if width_m < min_width_m:
+            continue
+        t = ((lo + hi) * 0.5 - f0) / max(1e-6, f1 - f0)
+        a = q["a0"] + (t if rightwards else 1.0 - t) * (q["a1"] - q["a0"])
+        out.append(
+            {
+                "a": a,
+                "w": width_m,
+                "z": top * (q["z1"] - q["z0"]) + q["z0"],
+                "side": float(_stable(f"{q['cell']}:awn:{q['a0']:.2f}") % 2),
+            }
+        )
     return out
 
 

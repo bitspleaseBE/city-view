@@ -109,6 +109,8 @@ Edit `scenes/antwerp_side_street.json` for street mode. Styles for the 70s stree
 
 Historic district styles: `neoclassical`, `eclectic`, `neo-flemish`, `neo-gothic`, `art-nouveau`, `art-deco`, `international`, `modern-infill`.
 
+Special OSM uses become first-class types: `school`, `restaurant`, `supermarket` (brand fascia for Aldi/Lidl/Jumbo/Carrefour), `church`, `hospital`. Amenity/shop nodes are joined onto footprints; named churches/hospitals use exterior photos under [`assets/landmarks/`](assets/landmarks/) with photo façades and massing presets.
+
 ## Blender MCP
 
 Uses the official Blender Lab server from `~/blender_mcp`, not a third-party fork.
