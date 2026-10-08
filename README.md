@@ -28,6 +28,8 @@ Open http://127.0.0.1:8765/ — you spawn at **Gounodstraat 13** at eye height. 
 
 Alias: `--place harmonie` uses the same bbox, spawn, and historic style policy. OSM for this tile is cached at [`assets/osm/harmonie.json`](assets/osm/harmonie.json) (committed for reproducible CI).
 
+**Transit:** tram/premetro tracks and bus/tram stops come from OpenStreetMap; De Lijn line numbers come from the official [GTFS static feed](https://data.belgianmobility.io/en/data.html?agency=delijn) (cached under `assets/gtfs/`). Antwerp’s underground service is De Lijn **premetro** (tram in tunnel), not a separate metro. The walk viewer loads `transit.json` for moving trams/buses with line labels. Use `--refresh` to re-download OSM + GTFS.
+
 ```bash
 python3 -m cityview city --place centrum
 python3 -m cityview city --place eilandje

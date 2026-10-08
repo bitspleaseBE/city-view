@@ -115,6 +115,7 @@
       import { OrbitControls } from "three/addons/controls/OrbitControls.js";
       import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
       import { createTraffic } from "./traffic.js";
+      import { createTransit } from "./transit.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -204,6 +205,7 @@
       let cityRoot = null;
       let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
       let traffic = { update() {}, dispose() {} };
+      let transit = { update() {}, dispose() {} };
 
       const walkControls = new PointerLockControls(camera, document.body);
       scene.add(walkControls.getObject());
@@ -368,10 +370,15 @@
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
           traffic = await createTraffic(scene, THREE, { count: 18 });
+          transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
           const nCars = traffic.count ?? 0;
+          const nTransit = transit.count ?? 0;
+          const bits = [];
+          if (nCars > 0) bits.push(`${nCars} cars`);
+          if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
           status.textContent =
-            nCars > 0
-              ? `Sunny day — ${nCars} cars on the road · click to walk`
+            bits.length > 0
+              ? `Sunny day — ${bits.join(" · ")} · click to walk`
               : "Sunny day — click to walk";
           // Soften fog once city bounds known
           const box = new THREE.Box3().setFromObject(cityRoot);
@@ -409,6 +416,7 @@
         const walker =
           mode === "walk" ? walkControls.getObject() : avatar.visible ? avatar : walkControls.getObject();
         traffic.update(dt, walker);
+        transit.update(dt, walker);
 
         renderer.render(scene, camera);
         requestAnimationFrame(tick);

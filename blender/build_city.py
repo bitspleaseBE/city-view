@@ -856,6 +856,7 @@ Z_ZEBRA = 0.068
 Z_SIDEWALK = 0.09
 Z_CURB = 0.13
 Z_PARK_PATH = 0.045
+Z_TRAM = 0.045
 
 
 def polyline_mesh(name: str, points: list[list[float]], width: float, z: float = Z_ROAD) -> bpy.types.Mesh | None:
@@ -1030,9 +1031,6 @@ def bounds(layout: dict) -> tuple[float, float, float, float]:
         return (-200, -200, 200, 200)
     pad = 40.0
     return (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
-
-
-Z_TRAM = 0.045
 
 
 def add_transit_stop(
