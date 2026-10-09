@@ -8,6 +8,9 @@ dist/
 build/
 output/
 viewer/*.glb
+!viewer/characters/
+!viewer/characters/*.glb
+viewer/characters/*.fbx
 # Cache most OSM downloads; commit Harmonie for reproducible Pages builds.
 assets/osm/*
 !assets/osm/harmonie.json

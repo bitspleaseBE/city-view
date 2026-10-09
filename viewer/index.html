@@ -1140,9 +1140,11 @@
           if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
           const nCars = traffic.count ?? 0;
           const nTransit = transit.count ?? 0;
+          const nPeds = pedestrians?.groups?.reduce((n, g) => n + g.members.length, 0) ?? 0;
           const bits = [];
           if (nCars > 0) bits.push(`${nCars} cars`);
           if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
+          if (nPeds > 0) bits.push(`${nPeds} people`);
           status.textContent =
             bits.length > 0
               ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · E boards the tram`
