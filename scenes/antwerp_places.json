@@ -36,7 +36,7 @@
     "osm_cache": "harmonie",
     "viewer_glb": "klein_antwerpen.glb",
     "spawn": {
-      "label": "Antwerpen Gounod tram halt",
+      "label": "Halte Gounod",
       "lat": 51.2055821,
       "lon": 4.410028,
       "eye_height": 1.7
