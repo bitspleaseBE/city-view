@@ -76,6 +76,18 @@ CONIFER_GENERA = frozenset(
         "Calocedrus", "Platycladus",
     }
 )
+# Typical mature height (m) of each genus as a paved street / square tree in Antwerp.
+GENUS_MAX_HEIGHT = {
+    "Platanus": 22.0, "Quercus": 20.0, "Fagus": 20.0, "Populus": 22.0, "Fraxinus": 17.0,
+    "Tilia": 18.0, "Aesculus": 17.0, "Acer": 16.0, "Ulmus": 17.0, "Pterocarya": 16.0,
+    "Robinia": 15.0, "Betula": 15.0, "Gleditsia": 14.0, "Alnus": 14.0, "Salix": 13.0,
+    "Carpinus": 13.0, "Ginkgo": 14.0, "Liquidambar": 15.0, "Zelkova": 15.0,
+    "Pyrus": 10.0, "Sorbus": 10.0, "Corylus": 9.0, "Prunus": 8.5, "Malus": 7.0,
+    "Crataegus": 7.0, "Amelanchier": 6.0, "Magnolia": 8.0, "Cercis": 7.0,
+}
+DEFAULT_MAX_HEIGHT = 14.0
+MAX_TREE_HEIGHT = 22.0  # 4-6 storey terraces are ~13-18 m; nothing should tower 2×
+GIRTH_SCALE_CM = 110.0
 # Narrow, upright habits (cultivar epithets) → thin crown.
 COLUMNAR_MARKS = ("fastigiata", "columnaris", "pyramidalis", "fontaine", "erecta", "fastigiate")
 
@@ -449,15 +461,18 @@ def tree_traits(rec: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     columnar = any(m in low for m in COLUMNAR_MARKS)
     tone = _stable_unit(round(x, 1), round(y, 1))
 
+    h_max = GENUS_MAX_HEIGHT.get(genus, DEFAULT_MAX_HEIGHT)
     height = _parse_metres(rec.get("height"))
     girth = rec.get("girth_cm")
     if height is None:
         if girth:
-            # Circumference at breast height → rough mature height for urban trees.
-            height = 3.2 + 0.095 * float(girth)
+            # Circumference at breast height → urban height, saturating towards the
+            # genus' street-tree maximum (growth slows long before girth does).
+            height = 2.5 + (h_max - 2.5) * (1.0 - math.exp(-float(girth) / GIRTH_SCALE_CM))
         else:
-            height = 7.0 + tone * 5.0
-    height = max(3.5, min(24.0, height))
+            height = 6.5 + tone * 4.5
+        height *= 0.93 + 0.14 * tone
+    height = max(3.5, min(h_max, MAX_TREE_HEIGHT, height))
     if conifer:
         height = min(height, 16.0)
 
@@ -465,20 +480,28 @@ def tree_traits(rec: dict[str, Any], x: float, y: float) -> dict[str, Any]:
     if crown_d:
         radius = crown_d * 0.5
     else:
-        radius = 0.19 * height + 0.6 + (tone - 0.5) * 0.6
+        # Open-grown urban broadleaves: crown spread ≈ 0.55–0.7 × height.
+        radius = 0.3 * height + 0.3 + (tone - 0.5) * 0.7
     if columnar:
-        radius *= 0.55
+        radius *= 0.5
     elif conifer:
-        radius *= 0.8
-    radius = max(1.0, min(6.5, radius))
+        radius *= 0.75
+    radius = max(1.0, min(7.0, radius))
+    shape = "conifer" if conifer else ("columnar" if columnar else "broadleaf")
     return {
         "genus": genus,
         "species": species,
-        "height": round(height, 2),
+        "height": round(fit_height_to_crown(height, radius, shape), 2),
         "radius": round(radius, 2),
-        "shape": "conifer" if conifer else ("columnar" if columnar else "broadleaf"),
+        "shape": shape,
         "tone": round(tone, 3),
     }
+
+
+def fit_height_to_crown(height: float, radius: float, shape: str) -> float:
+    """Cap height so a crown never sits on a bare pole (pruned / narrow crowns)."""
+    ratio = {"broadleaf": 3.4, "columnar": 7.0, "conifer": 5.0}.get(shape, 3.4)
+    return max(3.5, min(height, 2.4 + ratio * radius))
 
 
 # ---------------------------------------------------------------- merge + fill
@@ -628,6 +651,10 @@ def plan_trees(
         rail_d = obstacles.rails.distance(x, y, limit=8.0)
         if rail_d < tree["radius"] + BED_HALF_SUBWAY:
             tree["radius"] = round(max(0.9, rail_d - BED_HALF_SUBWAY - 0.1), 2)
+            # Tram-side trees are pruned as a whole, not just stripped on one side.
+            tree["height"] = round(
+                fit_height_to_crown(tree["height"], tree["radius"], tree["shape"]), 2
+            )
         trees.append(tree)
         stats[src] += 1
 
