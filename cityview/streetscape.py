@@ -8,7 +8,7 @@ from typing import Any
 from cityview.building_heights import FLOOR_H, MAX_EAVES_M, MAX_LEVELS
 from cityview.directions import infer_parallel_track_directions, mark_dual_carriageways
 from cityview.passages import apply_building_passages
-from cityview.signals import pedestrian_signal_yaw, vehicle_signal_yaw
+from cityview.signals import in_carriageway, junction_approaches, pedestrian_signal_yaw, vehicle_signal_yaw
 
 
 def _dist(ax: float, ay: float, bx: float, by: float) -> float:
@@ -676,7 +676,7 @@ def _export_signal_stop_lines(
     for cluster in clusters[:max_clusters]:
         jx = sum(p[0] for p in cluster) / len(cluster)
         jy = sum(p[1] for p in cluster) / len(cluster)
-        approaches = _runtime_approaches(jx, jy, roads)
+        approaches = junction_approaches(jx, jy, roads)
         if not approaches:
             hit = _runtime_nearest_road(jx, jy, roads)
             if hit is None:
@@ -686,8 +686,8 @@ def _export_signal_stop_lines(
                 {
                     "tx": tx,
                     "ty": ty,
-                    "stop_x": cx - tx * 3.0,
-                    "stop_y": cy - ty * 3.0,
+                    "stop_x": cx - tx * 2.4,
+                    "stop_y": cy - ty * 2.4,
                     "width": width,
                 }
             ]
@@ -700,10 +700,18 @@ def _export_signal_stop_lines(
             width = float(ap["width"])
             half = width * 0.5
             rx, ry = ty, -tx
-            # Right-hand curb first (Belgian RHT); same rule as the Blender builder.
+            # Right-hand curb first (Belgian RHT); flip if that lands in a carriageway.
+            pole_x = pole_y = None
             side = 1.0
-            pole_x = stop_x + rx * side * (half + 0.85)
-            pole_y = stop_y + ry * side * (half + 0.85)
+            for sign in (1.0, -1.0):
+                px = stop_x + rx * sign * (half + 0.85)
+                py = stop_y + ry * sign * (half + 0.85)
+                if in_carriageway(px, py, roads):
+                    continue
+                pole_x, pole_y, side = px, py, sign
+                break
+            if pole_x is None:
+                continue
             yaw = vehicle_signal_yaw(tx, ty)
             ped_yaw = pedestrian_signal_yaw(rx, ry, side)
             out.append(
@@ -747,45 +755,6 @@ def _runtime_nearest_road(
     if best is None:
         return None
     return best[0], best[1], best[2], best[3], best[4]
-
-
-def _runtime_approaches(
-    jx: float, jy: float, roads: list[dict[str, Any]], search_r: float = 16.0
-) -> list[dict[str, Any]]:
-    raw: list[dict[str, Any]] = []
-    for road in roads:
-        pts = road.get("points") or []
-        width = float(road.get("width") or 6.0)
-        for i in range(len(pts) - 1):
-            ax, ay = float(pts[i][0]), float(pts[i][1])
-            bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
-            for ex, ey, ox, oy in ((ax, ay, bx, by), (bx, by, ax, ay)):
-                if _dist(ex, ey, jx, jy) > search_r:
-                    continue
-                dx, dy = ex - ox, ey - oy
-                length = math.hypot(dx, dy) or 1.0
-                tx, ty = dx / length, dy / length
-                raw.append(
-                    {
-                        "tx": tx,
-                        "ty": ty,
-                        "stop_x": ex - tx * 3.2,
-                        "stop_y": ey - ty * 3.2,
-                        "width": width,
-                    }
-                )
-    bins: dict[int, dict[str, Any]] = {}
-    for ap in raw:
-        key = int(round(math.atan2(ap["ty"], ap["tx"]) / (math.pi / 4.0))) % 8
-        prev = bins.get(key)
-        if prev is None:
-            bins[key] = ap
-            continue
-        d_new = abs(_dist(ap["stop_x"], ap["stop_y"], jx, jy) - 3.2)
-        d_old = abs(_dist(prev["stop_x"], prev["stop_y"], jx, jy) - 3.2)
-        if d_new < d_old:
-            bins[key] = ap
-    return list(bins.values())[:4]
 
 
 def export_transit_near_spawn(
