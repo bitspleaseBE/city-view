@@ -57,11 +57,11 @@ export function createMinimap(THREE, opts = {}) {
   let streetHideTimer = 0;
   const STREET_HOLD_MS = 3200;
 
-  function showStreetName(name) {
+  function showStreetName(name, subtitle) {
     if (!name) return;
     streetLabel.innerHTML = "";
     const sub = document.createElement("div");
-    sub.textContent = opts.districtName || "Klein Antwerpen";
+    sub.textContent = subtitle || opts.districtName || "Klein Antwerpen";
     sub.style.cssText = "font-size:0.95rem;font-weight:600;opacity:0.85;margin-top:4px;text-transform:uppercase;letter-spacing:0.12em";
     streetLabel.append(name, sub);
     if (streetHideTimer) clearTimeout(streetHideTimer);
@@ -136,6 +136,32 @@ export function createMinimap(THREE, opts = {}) {
     ctx2d.setLineDash([]);
   }
 
+  /** Gold diamond pins for heritage landmarks (landmarks.json, Blender XY). */
+  async function paintLandmarkPins(ctx2d, mapPoint, size = 4) {
+    try {
+      const res = await fetch(opts.landmarksUrl || "./landmarks.json");
+      if (!res.ok) return;
+      const data = await res.json();
+      for (const lm of data.landmarks || []) {
+        if (!Number.isFinite(lm.x) || !Number.isFinite(lm.y)) continue;
+        const p = mapPoint(lm.x, -lm.y);
+        ctx2d.fillStyle = "#d4a017";
+        ctx2d.strokeStyle = "rgba(20,12,0,0.55)";
+        ctx2d.lineWidth = 1;
+        ctx2d.beginPath();
+        ctx2d.moveTo(p.u, p.v - size);
+        ctx2d.lineTo(p.u + size * 0.75, p.v);
+        ctx2d.lineTo(p.u, p.v + size);
+        ctx2d.lineTo(p.u - size * 0.75, p.v);
+        ctx2d.closePath();
+        ctx2d.fill();
+        ctx2d.stroke();
+      }
+    } catch {
+      /* landmarks optional */
+    }
+  }
+
   /** De Lijn tram (yellow) / bus (blue) routes + halt dots from transit.json. */
   async function paintTransitLayer(ctx2d, mapPoint, opts = {}) {
     const tramW = opts.tramW ?? 2.2;
@@ -207,6 +233,7 @@ export function createMinimap(THREE, opts = {}) {
       }
       paintWalkLayer(bgCtx, data.walks || []);
       await paintTransitLayer(bgCtx, (x, z) => toPixel(x, z));
+      await paintLandmarkPins(bgCtx, (x, z) => toPixel(x, z), 4);
       // Spawn marker (white ring so it doesn't read as a tram halt)
       const sp = toPixel(SPAWN.x, SPAWN.z);
       bgCtx.fillStyle = "#ffffff";
@@ -424,6 +451,14 @@ export function createMinimap(THREE, opts = {}) {
           return { u, v };
         },
         { tramW: 2.4 * hiScale, busW: 1.5 * hiScale, stopR: 2.2 * hiScale },
+      );
+      await paintLandmarkPins(
+        hctx,
+        (x, z) => {
+          const [u, v] = toHi(x, z);
+          return { u, v };
+        },
+        2.4 * hiScale,
       );
     } catch {
       console.warn("Minimap: radar roads unavailable");
