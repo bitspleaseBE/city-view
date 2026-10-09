@@ -327,11 +327,21 @@ function makeLineSprite(THREE, text, mode) {
   return { sprite, tex, mat };
 }
 
-/** Final non-synthetic halt in the direction of travel ("5 Linkeroever" style destination). */
+/** De Lijn LED / HUD copy: drop the GTFS municipality prefix ("Antwerpen Gounod" → "Gounod"). */
+function haltDisplayName(raw) {
+  let s = String(raw || "").trim();
+  if (!s) return "Halt";
+  s = s.replace(/^Antwerpen\s+/i, "");
+  s = s.replace(/\s+tram\s*halt$/i, "");
+  s = s.replace(/\s+tram$/i, "");
+  return s || String(raw).trim();
+}
+
+/** Final non-synthetic halt in the direction of travel ("7 Gounod" style destination). */
 function destinationFor(path, reverse) {
   const halts = (path.halts || []).filter((h) => !String(h.id).startsWith("synth_") && h.name);
   if (!halts.length) return "";
-  return String(halts[reverse ? 0 : halts.length - 1].name);
+  return haltDisplayName(halts[reverse ? 0 : halts.length - 1].name);
 }
 
 /** (Re)draw the amber LED destination displays of one vehicle. */
@@ -1600,10 +1610,10 @@ export async function createTransit(scene, THREE, opts = {}) {
     if (!path) return "—";
     if (v.phase === "dwell" && v.currentHalt) {
       const upcoming = nextHaltAhead(v, path);
-      return upcoming ? upcoming.name : "End of line";
+      return upcoming ? haltDisplayName(upcoming.name) : "Einde lijn";
     }
     const h = nextHaltAhead(v, path);
-    return h ? h.name : "End of line";
+    return h ? haltDisplayName(h.name) : "Einde lijn";
   }
 
   function alightAt(v) {
@@ -1752,25 +1762,26 @@ export async function createTransit(scene, THREE, opts = {}) {
         return {
           riding: false,
           prompt: `Press E to enter ${boardable.mode} ${boardable.lineText}${
-            halt ? ` · ${halt.name}` : ""
+            halt ? ` · ${haltDisplayName(halt.name)}` : ""
           }`,
         };
       }
       const near = nearestTramHalt(playerPos.x, playerPos.z);
       if (near && near.dist < 220) {
         const arr = approachingEta(near.halt, playerPos.x, playerPos.z);
+        const haltLabel = haltDisplayName(near.halt.name);
         if (near.dist > BOARD_DIST + 2) {
           const dir = arr
             ? arr.dwelling
-              ? `tram waiting · walk ${near.dist.toFixed(0)} m to ${near.halt.name}`
-              : `tram ~${Math.max(1, Math.round(arr.eta))}s · walk ${near.dist.toFixed(0)} m to ${near.halt.name}`
-            : `walk ${near.dist.toFixed(0)} m to ${near.halt.name} tram stop`;
+              ? `tram waiting · walk ${near.dist.toFixed(0)} m to ${haltLabel}`
+              : `tram ~${Math.max(1, Math.round(arr.eta))}s · walk ${near.dist.toFixed(0)} m to ${haltLabel}`
+            : `walk ${near.dist.toFixed(0)} m to ${haltLabel} tram stop`;
           return { riding: false, prompt: dir };
         }
         if (arr && !arr.dwelling) {
           return {
             riding: false,
-            prompt: `Tram ${arr.vehicle.lineText} arriving in ~${Math.max(1, Math.round(arr.eta))}s at ${near.halt.name}`,
+            prompt: `Tram ${arr.vehicle.lineText} arriving in ~${Math.max(1, Math.round(arr.eta))}s at ${haltLabel}`,
           };
         }
       }
@@ -1778,7 +1789,8 @@ export async function createTransit(scene, THREE, opts = {}) {
     }
     const v = ride.vehicle;
     const next = nextHaltName(v);
-    const here = v.phase === "dwell" && v.currentHalt ? v.currentHalt.name : null;
+    const here =
+      v.phase === "dwell" && v.currentHalt ? haltDisplayName(v.currentHalt.name) : null;
     return {
       riding: true,
       line: v.lineText,
@@ -1864,7 +1876,12 @@ export async function createTransit(scene, THREE, opts = {}) {
     const id = best ? best.id : null;
     const changed = id !== haltCurrent;
     haltCurrent = id;
-    return { stop: best, changed };
+    if (!best) return { stop: null, changed };
+    // Captions use the short De Lijn name; keep id/lines/coords from the OSM stop.
+    return {
+      stop: { ...best, name: haltDisplayName(best.name) },
+      changed,
+    };
   }
 
   return {
