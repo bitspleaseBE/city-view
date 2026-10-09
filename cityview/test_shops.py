@@ -117,10 +117,18 @@ class ShopPlanTests(unittest.TestCase):
     def test_bank_brands(self):
         self.assertEqual(normalize_shop_brand({"name": "Belfius", "amenity": "bank"}), "belfius")
         self.assertEqual(normalize_shop_brand({"brand": "KBC"}), "kbc")
-        self.assertEqual(normalize_shop_brand({"name": "Crelan Antwerpen"}), "crelan")
+        self.assertEqual(normalize_shop_brand({"name": "Crelan Antwerpen", "amenity": "bank"}), "crelan")
+        self.assertEqual(normalize_shop_brand({"name": "ING Bank Belgium"}), "ing")
         style = shopfront_style({"name": "Belfius", "amenity": "bank"}, "bank", "service", 1)
         self.assertEqual(style["mood"], "bank")
-        self.assertEqual(style["brand"] if "brand" in style else normalize_shop_brand({"name": "Belfius"}), "belfius")
+        self.assertEqual(style["brand"], "belfius")
+
+    def test_bank_needles_do_not_match_random_names(self):
+        # "ing" must not hitch onto Voeding / Printing / Ettings.
+        self.assertIsNone(normalize_shop_brand({"name": "On Voeding Night-Shop", "shop": "convenience"}))
+        self.assertIsNone(normalize_shop_brand({"name": "All Printing services", "shop": "copyshop"}))
+        self.assertIsNone(normalize_shop_brand({"name": "Ettings", "shop": "furniture"}))
+        self.assertIsNone(normalize_shop_brand({"name": "Dokterswartier De Koning", "amenity": "doctors"}))
 
 
 if __name__ == "__main__":

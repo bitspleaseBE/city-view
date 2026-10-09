@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # brand_key → display label + fascia / accent / glass RGBA + shopfront mood
@@ -151,17 +152,32 @@ _BRAND_ALIASES: list[tuple[str, str]] = [
     ("bnp paribas", "bnp"),
     ("fortis", "bnp"),
 ]
+# Bank keys must not hitch a ride on everyday words ("Voeding", "Printing", …).
+_BANK_BRANDS = frozenset({"belfius", "kbc", "crelan", "bpost", "ing", "argenta", "bnp"})
+
+
+def _phrase_in_text(needle: str, text: str) -> bool:
+    """True when ``needle`` appears as whole word(s), not a substring of a longer token."""
+    return re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", text) is not None
 
 
 def normalize_shop_brand(tags: dict[str, str]) -> str | None:
     """Map OSM brand/name/operator tags to a known brand_key, or None."""
-    for key in ("brand", "name", "operator"):
+    amenity = (tags.get("amenity") or "").lower()
+    shop = (tags.get("shop") or "").lower()
+    is_bank = amenity == "bank" or shop == "bank"
+    for key in ("brand", "operator", "name"):
         raw = (tags.get(key) or "").strip().lower()
         if not raw:
             continue
+        name_says_bank = key == "name" and _phrase_in_text("bank", raw)
         for needle, brand_key in _BRAND_ALIASES:
-            if needle in raw:
-                return brand_key
+            if not _phrase_in_text(needle, raw):
+                continue
+            # Bank fascia only for real banks, brand=/operator=, or a name that says "bank".
+            if brand_key in _BANK_BRANDS and key == "name" and not is_bank and not name_says_bank:
+                continue
+            return brand_key
     return None
 
 
