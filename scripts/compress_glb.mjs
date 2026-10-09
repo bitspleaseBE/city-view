@@ -53,7 +53,13 @@ try {
     run([cmd, cur, next, ...flags]);
     cur = next;
   }
-  if (output === input && before > statSync(cur).size * 1.1) {
+  // Keep a local uncompressed backup only when explicitly requested (CI deploys
+  // the whole viewer/ tree and must not ship the pre-Meshopt copy).
+  if (
+    output === input &&
+    before > statSync(cur).size * 1.1 &&
+    process.env.CITYVIEW_KEEP_PREMESHOPT === "1"
+  ) {
     const bak = `${input}.premeshopt.glb`;
     if (!existsSync(bak)) copyFileSync(input, bak);
   }
