@@ -7,7 +7,7 @@
 
 const VELO_URL = "./velo.json";
 const BOARD_DIST = 4.0; // m to the rail (not only the centre point)
-const BIKE_SPEED = 7.6; // ~27 km/h cruise; the viewer owns acceleration
+const BIKE_SPEED = 8.6; // ~31 km/h cruise (MOVE.velo.speed); the viewer owns acceleration
 const FRAME_RED = 0xc41e3a;
 const MUDGUARD = 0xf5f2ec;
 const METAL = 0x3a3a3c;
