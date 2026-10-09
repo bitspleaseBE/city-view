@@ -26,6 +26,7 @@ from cityview.paths import (
     VIEWER,
 )
 from cityview.benches import attach_benches, summarize as summarize_benches
+from cityview.clutter import attach_clutter, summarize as summarize_clutter
 from cityview.trees import attach_trees, summarize as summarize_trees
 from cityview.streetscape import (
     export_roads_near_spawn,
@@ -157,6 +158,10 @@ def city_command(args: argparse.Namespace) -> int:
     spawn = spawn_from_place(place, origin, layout) if place else None
     if spawn:
         layout["spawn"] = spawn
+    spawn_xy = (spawn["x"], spawn["y"]) if spawn else None
+    # OSM-mapped street clutter (bins, bike hoops, bollards, hydrants, post boxes, ...); no network.
+    clutter_plan = attach_clutter(layout, osm, bbox, origin, spawn_xy)
+    print("street clutter: " + summarize_clutter(clutter_plan))
     edged = sum(1 for b in layout["buildings"] if b.get("street_edges"))
     type_counts: dict[str, int] = {}
     for b in layout["buildings"]:

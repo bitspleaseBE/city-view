@@ -63,3 +63,35 @@ class WindowLayoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LayeredDetectionTests(unittest.TestCase):
+    def test_overlap_is_relative_to_the_smaller_box(self):
+        self.assertEqual(fw.box_overlap((0, 0, 10, 10), (20, 0, 30, 10)), 0.0)
+        self.assertAlmostEqual(fw.box_overlap((0, 0, 10, 10), (5, 0, 15, 10)), 0.5)
+        self.assertEqual(fw.box_overlap((0, 0, 100, 100), (10, 10, 20, 20)), 1.0)
+
+    def test_grow_and_inset_round_trip_roughly(self):
+        glass = (100, 100, 140, 160)
+        frame = fw.grow_box(glass, *fw.FRAME_PAD)
+        self.assertTrue(frame[0] < glass[0] and frame[3] > glass[3])
+        back = fw.inset_box(frame, *fw.GLASS_INSET)
+        self.assertLessEqual(abs(back[0] - glass[0]), 3)
+        self.assertLessEqual(abs(back[3] - glass[3]), 4)
+
+    def test_pick_nested_prefers_two_children_over_a_merged_parent(self):
+        parent = (0.3, (0, 0, 60, 30))
+        kid_a = (0.7, (2, 2, 25, 28))
+        kid_b = (0.7, (35, 2, 58, 28))
+        self.assertEqual(sorted(fw.pick_nested([parent, kid_a, kid_b])), [kid_a[1], kid_b[1]])
+
+    def test_pick_nested_keeps_a_parent_with_a_single_child(self):
+        parent = (0.3, (0, 0, 30, 40))
+        kid = (0.7, (3, 3, 27, 37))
+        self.assertEqual(fw.pick_nested([parent, kid]), [parent[1]])
+
+    def test_merge_new_skips_collisions_and_respects_the_limit(self):
+        have = [(0, 0, 10, 20)]
+        extra = [(1, 1, 9, 19), (30, 0, 40, 20), (31, 1, 39, 19), (60, 0, 70, 20)]
+        self.assertEqual(fw.merge_new(have, extra), [(30, 0, 40, 20), (60, 0, 70, 20)])
+        self.assertEqual(fw.merge_new(have, extra, limit=1), [(30, 0, 40, 20)])
