@@ -21,9 +21,10 @@ const SNAP_M = 14;
 const DWELL_S = 10;
 const DECEL_DIST = 22;
 const ARRIVE_DIST = 2.2;
-const BOARD_DIST = 9;
+const BOARD_DIST = 12; // articulated tram: boarding from middle reference toward end doors
 const STOP_PROJECT_M = 28;
-const BODY_LEN = { tram: 31.0, bus: 13.5 };
+// tram length is overwritten once TRAM_LEN is known below; bus stays a single rigid body.
+const BODY_LEN = { tram: 25.0, bus: 13.5 };
 const STANDSTILL_GAP = 2.5; // bumper gap kept behind a leader
 const COMFORT_BRAKE = 1.6; // m/s^2 used to plan halt / leader stops
 const HALT_CREEP = 0.9; // m/s floor while rolling into a halt (never asymptote to 0)
@@ -224,14 +225,32 @@ function lineLabel(lines, mode) {
 // ---------------------------------------------------------------------------
 // De Lijn liveries.  White body, grey skirt, dark glazing band, yellow (#FFD800)
 // door / front stripes and the "lijn" mark — see De Lijn huisstijlgids 2022 and
-// the Antwerp photos listed in README "Livery".  The side / front / rear wraps are
-// flat elevation textures in ./livery (built by scripts/make_delijn_livery.py) mapped
-// 1:1 onto the faces of the body boxes; live LED destination displays, headlight
-// glow, pantograph and mirrors are real geometry on top.
+// the Antwerp photos listed in README "Livery".  Bus side / front / rear wraps are
+// flat elevation textures in ./livery (built by scripts/make_delijn_livery.py).
+// Tram wagons use canvas-painted single-door sides (the full elevations show too
+// many doors for a car-length car) plus the photo front on the lead/tail noses.
+// Live LED destination displays, headlight glow, pantograph and mirrors are
+// real geometry on top.
 // ---------------------------------------------------------------------------
-const LIVERY_VERSION = "1"; // bump when viewer/livery/*.jpg change (Pages caches aggressively)
-const TRAM_DIM = { w: 2.1, h: 2.85, l: 31.0, lift: 0.3 }; // longer & narrower like a real tram
+const LIVERY_VERSION = "2"; // bump when viewer/livery/*.jpg change (Pages caches aggressively)
+// Articulated De Lijn tram: 5 wagons, each about a normal car long, coupled by bellows.
+const TRAM_WAGONS = 5;
+const TRAM_WAGON = { w: 2.2, h: 2.85, l: 4.6, lift: 0.28 }; // one wagon ≈ car length
+const TRAM_JOINT_GAP = 0.5; // clear gap between wagon bodies (bellows sit here)
+const TRAM_PITCH = TRAM_WAGON.l + TRAM_JOINT_GAP; // centre-to-centre on a straight
+const TRAM_LEN = TRAM_WAGONS * TRAM_WAGON.l + (TRAM_WAGONS - 1) * TRAM_JOINT_GAP;
+BODY_LEN.tram = TRAM_LEN;
+const TRAM_DIM = { w: TRAM_WAGON.w, h: TRAM_WAGON.h, l: TRAM_LEN, lift: TRAM_WAGON.lift };
 const BUS_DIM = { w: 2.4, h: 2.7, l: 13.5, lift: 0.05 };
+// Scratch vectors for articulated tram placement (no per-frame alloc).
+const _tramPos = [];
+const _tramTan = [];
+for (let _i = 0; _i < TRAM_WAGONS; _i++) {
+  _tramPos.push({ x: 0, y: 0, z: 0 });
+  _tramTan.push({ x: 0, z: 0 });
+}
+const _jointA = { x: 0, y: 0, z: 0 };
+const _jointB = { x: 0, y: 0, z: 0 };
 // Destination LED boxes as fractions of the end-face texture: [u0, v0, u1, v1] (v from top).
 const LED_BOX = {
   tramFront: [0.187, 0.133, 0.813, 0.22],
@@ -366,52 +385,107 @@ function addLamps(THREE, parts, group, dim, front, vFrac, uL, uR) {
   }
 }
 
+/**
+ * Soften the sharp corners of a subdivided BoxGeometry by projecting vertices
+ * onto a rounded-box shell. Keeps material groups (needed for per-face liveries).
+ * No-ops under the headless THREE shim (no position attribute).
+ */
+function roundBoxCorners(geo, radius) {
+  const pos = geo.attributes && geo.attributes.position;
+  if (!pos || typeof pos.getX !== "function") return geo;
+  const w = (geo.parameters?.width ?? 1) / 2;
+  const h = (geo.parameters?.height ?? 1) / 2;
+  const d = (geo.parameters?.depth ?? 1) / 2;
+  const r = Math.min(radius, w - 0.02, h - 0.02, d - 0.02);
+  if (!(r > 0)) return geo;
+  const ix = w - r;
+  const iy = h - r;
+  const iz = d - r;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const ox = Math.max(-ix, Math.min(ix, x));
+    const oy = Math.max(-iy, Math.min(iy, y));
+    const oz = Math.max(-iz, Math.min(iz, z));
+    const dx = x - ox;
+    const dy = y - oy;
+    const dz = z - oz;
+    const len = Math.hypot(dx, dy, dz);
+    if (len > 1e-8) {
+      const s = r / len;
+      pos.setXYZ(i, ox + dx * s, oy + dy * s, oz + dz * s);
+    }
+  }
+  pos.needsUpdate = true;
+  if (typeof geo.computeVertexNormals === "function") geo.computeVertexNormals();
+  return geo;
+}
+
+function makeRoundedBox(THREE, width, height, depth, radius, segments = 3) {
+  const seg = Math.max(1, segments) * 2 + 1;
+  const geo = new THREE.BoxGeometry(width, height, depth, seg, seg, seg);
+  return roundBoxCorners(geo, radius);
+}
+
 function makeTramMesh(THREE, parts) {
   const group = new THREE.Group();
-  const d = TRAM_DIM;
-  // Articulated tram: 3 segments (motor-trailer-motor)
-  const segLen = d.l / 3; // ~10.3 m each
-  for (let i = -1; i <= 1; i++) {
-    const seg = new THREE.Mesh(parts.tramBody, parts.tramMats);
-    seg.position.set(0, d.lift, i * segLen * 0.93);
-    group.add(seg);
-  }
-  // Articulation joints (accordion bellows between segments)
-  const jointMat = new THREE.MeshLambertMaterial({ color: 0x2a2e33 });
-  for (const x of [-0.5, 0.5]) {
-    const joint = new THREE.Mesh(new THREE.BoxGeometry(d.w * 0.85, d.h * 0.88, 0.35), jointMat);
-    joint.position.set(0, d.lift + d.h * 0.5, x * segLen * 0.93);
-    group.add(joint);
-  }
+  const d = TRAM_WAGON;
+  const wagons = [];
+  const joints = [];
   const roofY = d.lift + d.h / 2;
-  // Roof pods (AC units) across segments
-  for (const z of [-4.5, 0, 4.5]) {
-    const pod = new THREE.Mesh(parts.tramPod, parts.podMat);
-    pod.position.set(0, roofY + 0.12, z);
-    group.add(pod);
-  }
-  // Single-arm pantograph on center segment
-  const base = new THREE.Mesh(parts.pantoBase, parts.metalMat);
-  base.position.set(0, roofY + 0.06, 0.4);
-  const lower = new THREE.Mesh(parts.pantoArm, parts.metalMat);
-  lower.position.set(0, roofY + 0.45, 0.65);
-  lower.rotation.x = 0.55;
-  const upper = new THREE.Mesh(parts.pantoArm, parts.metalMat);
-  upper.position.set(0, roofY + 1.0, 0.65);
-  upper.rotation.x = -0.55;
-  const bar = new THREE.Mesh(parts.pantoBar, parts.metalMat);
-  bar.position.set(0, roofY + 1.4, 0.4);
-  group.add(base, lower, upper, bar);
 
-  // LED destination displays at both ends
+  for (let i = 0; i < TRAM_WAGONS; i++) {
+    const wagon = new THREE.Group();
+    const isLead = i === 0;
+    const isTail = i === TRAM_WAGONS - 1;
+    // Cab texture only on the outer nose/tail; bellows-facing ends stay dark.
+    const mats = isLead ? parts.tramLeadMats : isTail ? parts.tramTailMats : parts.tramMidMats;
+    const body = new THREE.Mesh(parts.tramWagonBody, mats);
+    body.position.y = d.lift;
+    wagon.add(body);
+
+    const pod = new THREE.Mesh(parts.tramPod, parts.podMat);
+    pod.position.set(0, roofY + 0.12, 0);
+    wagon.add(pod);
+
+    if (i === 2) {
+      // Single-arm pantograph on the centre wagon.
+      const base = new THREE.Mesh(parts.pantoBase, parts.metalMat);
+      base.position.set(0, roofY + 0.06, 0.15);
+      const lower = new THREE.Mesh(parts.pantoArm, parts.metalMat);
+      lower.position.set(0, roofY + 0.45, 0.35);
+      lower.rotation.x = 0.55;
+      const upper = new THREE.Mesh(parts.pantoArm, parts.metalMat);
+      upper.position.set(0, roofY + 1.0, 0.35);
+      upper.rotation.x = -0.55;
+      const bar = new THREE.Mesh(parts.pantoBar, parts.metalMat);
+      bar.position.set(0, roofY + 1.4, 0.15);
+      wagon.add(base, lower, upper, bar);
+    }
+
+    group.add(wagon);
+    wagons.push(wagon);
+  }
+
+  for (let i = 0; i < TRAM_WAGONS - 1; i++) {
+    const joint = new THREE.Mesh(parts.tramJoint, parts.jointMat);
+    joint.position.y = d.lift;
+    group.add(joint);
+    joints.push(joint);
+  }
+
+  // Destination LEDs + lamps live on the lead and tail wagons (wagon-local dims).
   const displays = [
-    addDisplay(THREE, parts, group, d, "front", LED_BOX.tramFront, true),
-    addDisplay(THREE, parts, group, d, "front", LED_BOX.tramFront, false),
+    addDisplay(THREE, parts, wagons[0], d, "front", LED_BOX.tramFront, true),
+    addDisplay(THREE, parts, wagons[TRAM_WAGONS - 1], d, "front", LED_BOX.tramFront, false),
   ];
+  addLamps(THREE, parts, wagons[0], d, true, 0.76, 0.13, 0.87);
+  addLamps(THREE, parts, wagons[TRAM_WAGONS - 1], d, false, 0.76, 0.13, 0.87);
+
+  group.userData.wagons = wagons;
+  group.userData.joints = joints;
   group.userData.displays = displays;
-  // Headlights (2 per end) + tail lights
-  addLamps(THREE, parts, group, d, true, 0.76, 0.13, 0.87);
-  addLamps(THREE, parts, group, d, false, 0.76, 0.13, 0.87);
   return group;
 }
 
@@ -441,6 +515,101 @@ function makeBusMesh(THREE, parts) {
   return group;
 }
 
+/**
+ * Paint one car-length De Lijn wagon side (optional single door). Used instead of
+ * mapping the full multi-door elevation onto every short wagon.
+ */
+function paintTramWagonSide(ctx, w, h, { door = false, glow = false } = {}) {
+  if (glow) {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, w, h);
+    // Lit window panes only (skip door leaf + pillars).
+    ctx.fillStyle = "#ffce82";
+    const bandY = h * 0.22;
+    const bandH = h * 0.42;
+    const doorX0 = w * 0.38;
+    const doorX1 = w * 0.62;
+    for (let i = 0; i < 5; i++) {
+      const x0 = w * (0.06 + i * 0.18);
+      const x1 = x0 + w * 0.14;
+      if (door && x1 > doorX0 && x0 < doorX1) continue;
+      ctx.fillRect(x0, bandY + bandH * 0.08, x1 - x0, bandH * 0.84);
+    }
+    return;
+  }
+  // Roof strip / white body / dark glazing / white lower / grey skirt.
+  ctx.fillStyle = "#c8ccd0";
+  ctx.fillRect(0, 0, w, h * 0.1);
+  ctx.fillStyle = "#f4f5f6";
+  ctx.fillRect(0, h * 0.1, w, h * 0.9);
+  ctx.fillStyle = "#2a2e33";
+  ctx.fillRect(0, h * 0.2, w, h * 0.46);
+  // Window panes
+  ctx.fillStyle = "#4a5158";
+  for (let i = 0; i < 5; i++) {
+    const x0 = w * (0.06 + i * 0.18);
+    ctx.fillRect(x0, h * 0.24, w * 0.14, h * 0.38);
+  }
+  ctx.fillStyle = "#f4f5f6";
+  ctx.fillRect(0, h * 0.66, w, h * 0.2);
+  ctx.fillStyle = "#575e62";
+  ctx.fillRect(0, h * 0.86, w, h * 0.14);
+  if (!door) return;
+  // One double-leaf door with De Lijn yellow diagonal + "lijn".
+  const dx = w * 0.38;
+  const dw = w * 0.24;
+  const dy = h * 0.2;
+  const dh = h * 0.66;
+  ctx.fillStyle = "#1c1f23";
+  ctx.fillRect(dx, dy, dw, dh);
+  ctx.fillStyle = "#3a4046";
+  ctx.fillRect(dx + dw * 0.06, dy + dh * 0.08, dw * 0.38, dh * 0.55);
+  ctx.fillRect(dx + dw * 0.56, dy + dh * 0.08, dw * 0.38, dh * 0.55);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(dx, dy, dw, dh);
+  ctx.clip();
+  ctx.translate(dx + dw * 0.5, dy + dh * 0.55);
+  ctx.rotate(-0.55);
+  ctx.fillStyle = "#ffd800";
+  ctx.fillRect(-dw * 0.7, -dh * 0.09, dw * 1.4, dh * 0.18);
+  ctx.fillStyle = "#111111";
+  ctx.font = `bold ${Math.round(dh * 0.11)}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("lijn", 0, 0);
+  ctx.restore();
+  // Yellow door frame
+  ctx.strokeStyle = "#ffd800";
+  ctx.lineWidth = Math.max(3, w * 0.012);
+  ctx.strokeRect(dx + 1, dy + 1, dw - 2, dh - 2);
+}
+
+function makeWagonSideMaps(THREE, door) {
+  const w = 512;
+  const h = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  paintTramWagonSide(ctx, w, h, { door, glow: false });
+  const map = new THREE.CanvasTexture(canvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = 4;
+  map.needsUpdate = true;
+
+  const gCanvas = document.createElement("canvas");
+  gCanvas.width = w;
+  gCanvas.height = h;
+  const gctx = gCanvas.getContext("2d");
+  paintTramWagonSide(gctx, w, h, { door, glow: true });
+  const glow = new THREE.CanvasTexture(gCanvas);
+  glow.colorSpace = THREE.SRGBColorSpace;
+  glow.anisotropy = 4;
+  glow.needsUpdate = true;
+  return { map, glow };
+}
+
 function makeSharedParts(THREE, liveryBase) {
   const loader = new THREE.TextureLoader();
   const maps = [];
@@ -462,19 +631,33 @@ function makeSharedParts(THREE, liveryBase) {
     if (glow) litMats.push(m);
     return m;
   };
+  const wrapMaps = (map, glow) => {
+    maps.push(map, glow);
+    const m = new THREE.MeshLambertMaterial({
+      map,
+      emissive: 0x000000,
+      emissiveMap: glow,
+    });
+    m.color.setScalar(1.22);
+    litMats.push(m);
+    return m;
+  };
   const roofMat = new THREE.MeshLambertMaterial({ color: 0xd4d7d9 });
   const underMat = new THREE.MeshLambertMaterial({ color: 0x25282b });
+  const bellowsEnd = new THREE.MeshLambertMaterial({ color: 0x2a2e33 });
   const tramFront = wrap("tram_front");
+  // One door on the boarding (-x) side; window-only on +x. Full multi-door elevations
+  // used to be stretched onto every segment and looked overcrowded on short wagons.
+  const sideDoor = makeWagonSideMaps(THREE, true);
+  const sidePlain = makeWagonSideMaps(THREE, false);
+  const tramSideL = wrapMaps(sidePlain.map, sidePlain.glow);
+  const tramSideR = wrapMaps(sideDoor.map, sideDoor.glow);
   // BoxGeometry face order: +x, -x, +y, -y, +z (front), -z (rear).
-  // +x is seen with the cab on the left of the image, -x with it on the right.
-  const tramMats = [
-    wrap("tram_side_l", "tram_side_l_glow"),
-    wrap("tram_side_r", "tram_side_r_glow"),
-    roofMat,
-    underMat,
-    tramFront,
-    tramFront,
-  ];
+  const tramSideMats = [tramSideL, tramSideR, roofMat, underMat];
+  // Face order: +x, -x, +y, -y, +z (travel front), -z (travel rear).
+  const tramLeadMats = [...tramSideMats, tramFront, bellowsEnd];
+  const tramTailMats = [...tramSideMats, bellowsEnd, tramFront];
+  const tramMidMats = [...tramSideMats, bellowsEnd, bellowsEnd];
   // Right-hand traffic: the door side of a bus faces -x (right of travel along +z).
   const busMats = [
     wrap("bus_side_l", "bus_side_l_glow"),
@@ -484,10 +667,12 @@ function makeSharedParts(THREE, liveryBase) {
     wrap("bus_front"),
     wrap("bus_rear"),
   ];
+  const wagonR = 0.22; // rounded body corners (~modern Albatros look)
   const geos = {
-    tramBody: new THREE.BoxGeometry(TRAM_DIM.w, TRAM_DIM.h, TRAM_DIM.l / 3 - 0.3),
+    tramWagonBody: makeRoundedBox(THREE, TRAM_WAGON.w, TRAM_WAGON.h, TRAM_WAGON.l, wagonR, 3),
+    tramJoint: new THREE.BoxGeometry(TRAM_WAGON.w * 0.82, TRAM_WAGON.h * 0.86, TRAM_JOINT_GAP),
     busBody: new THREE.BoxGeometry(BUS_DIM.w, BUS_DIM.h, BUS_DIM.l),
-    tramPod: new THREE.BoxGeometry(1.5, 0.26, 2.4),
+    tramPod: new THREE.BoxGeometry(1.35, 0.24, 1.8),
     busPod: new THREE.BoxGeometry(1.5, 0.3, 2.8),
     pantoBase: new THREE.BoxGeometry(0.6, 0.12, 1.0),
     pantoArm: new THREE.BoxGeometry(0.07, 0.9, 0.07),
@@ -503,14 +688,18 @@ function makeSharedParts(THREE, liveryBase) {
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
+  const jointMat = new THREE.MeshLambertMaterial({ color: 0x2a2e33 });
   return {
     ...geos,
     ledGeos: [],
     maps,
     litMats,
-    tramMats,
+    tramLeadMats,
+    tramTailMats,
+    tramMidMats,
     busMats,
-    allMats: [...new Set([...tramMats, ...busMats])],
+    allMats: [...new Set([...tramLeadMats, ...tramTailMats, ...tramMidMats, ...busMats, jointMat, bellowsEnd])],
+    jointMat,
     metalMat: new THREE.MeshLambertMaterial({ color: 0x2f3336 }),
     podMat: new THREE.MeshLambertMaterial({ color: 0x8d9296 }),
     mirrorMat: new THREE.MeshLambertMaterial({ color: 0xffd800 }),
@@ -612,7 +801,10 @@ function createVehicle(paths, THREE, parts, mode) {
   const path = use[indexInUse];
   const index = paths.indexOf(path);
   const reverse = legalReverse(path, Math.random() < 0.5);
-  const s = Math.random() * path.length * 0.85;
+  // Leave room behind a tram for its trailing wagons to sit on the path.
+  const minS = mode === "tram" ? (TRAM_WAGONS - 1) * TRAM_PITCH + 1 : 1;
+  const span = Math.max(8, path.length * 0.85 - minS);
+  const s = minS + Math.random() * span;
   const mesh = mode === "tram" ? makeTramMesh(THREE, parts) : makeBusMesh(THREE, parts);
   const base = mode === "tram" ? TRAM_SPEED : BUS_SPEED;
   const v = {
@@ -649,10 +841,88 @@ function createVehicle(paths, THREE, parts, mode) {
   return v;
 }
 
+/**
+ * Place each tram wagon on the path behind the lead, so the consist bends through
+ * corners instead of sliding as one rigid box. `v.s` is travel distance of the
+ * lead wagon centre; trailing wagons sample `v.s - i * TRAM_PITCH`.
+ */
+function placeTramArticulated(v, path, THREE) {
+  const wagons = v.mesh.userData.wagons;
+  const joints = v.mesh.userData.joints;
+  if (!wagons || !wagons.length) return;
+
+  const tmpPos = v.pos;
+  const tmpTan = v.tan;
+  const n = wagons.length;
+  for (let i = 0; i < n; i++) {
+    const travel = Math.max(0.05, v.s - i * TRAM_PITCH);
+    const pathS = v.reverse ? path.length - travel : travel;
+    const clamped = Math.max(0, Math.min(path.length, pathS));
+    samplePath(path, clamped, THREE, tmpPos, tmpTan);
+    if (v.reverse) tmpTan.multiplyScalar(-1);
+    const p = _tramPos[i];
+    const t = _tramTan[i];
+    p.x = tmpPos.x;
+    p.y = 1.3;
+    p.z = tmpPos.z;
+    t.x = tmpTan.x;
+    t.z = tmpTan.z;
+  }
+
+  // Parent sits at the middle wagon with no yaw; children carry world offsets + heading.
+  const mid = _tramPos[(n / 2) | 0];
+  const midTan = _tramTan[(n / 2) | 0];
+  v.pos.set(mid.x, mid.y, mid.z);
+  v.tan.set(midTan.x, 0, midTan.z);
+  if (v.tan.lengthSq() < 1e-8) v.tan.set(1, 0, 0);
+  else v.tan.normalize();
+
+  v.mesh.position.copy(v.pos);
+  v.mesh.rotation.set(0, 0, 0);
+  for (let i = 0; i < n; i++) {
+    const p = _tramPos[i];
+    const t = _tramTan[i];
+    const wagon = wagons[i];
+    wagon.position.set(p.x - mid.x, p.y - mid.y, p.z - mid.z);
+    wagon.rotation.y = Math.atan2(t.x, t.z);
+  }
+
+  if (joints) {
+    const half = TRAM_WAGON.l * 0.5;
+    for (let i = 0; i < joints.length; i++) {
+      const a = _tramPos[i];
+      const b = _tramPos[i + 1];
+      const ta = _tramTan[i];
+      const tb = _tramTan[i + 1];
+      // Coupler points at the facing ends of neighbouring wagons.
+      _jointA.x = a.x - ta.x * half;
+      _jointA.y = a.y;
+      _jointA.z = a.z - ta.z * half;
+      _jointB.x = b.x + tb.x * half;
+      _jointB.y = b.y;
+      _jointB.z = b.z + tb.z * half;
+      const jx = (_jointA.x + _jointB.x) * 0.5;
+      const jz = (_jointA.z + _jointB.z) * 0.5;
+      const dx = _jointB.x - _jointA.x;
+      const dz = _jointB.z - _jointA.z;
+      const span = Math.hypot(dx, dz);
+      const joint = joints[i];
+      joint.position.set(jx - mid.x, TRAM_WAGON.lift, jz - mid.z);
+      joint.rotation.y = Math.atan2(dx, dz);
+      // Stretch the bellows to the real gap so turns don't leave a hole or overlap.
+      joint.scale.z = Math.max(0.35, span / Math.max(0.15, TRAM_JOINT_GAP));
+    }
+  }
+}
+
 function placeVehicle(v, paths, THREE) {
   if (v.phase === "gone") return; // hidden off-map: keep its parked position
   const path = paths[v.pathIndex];
   if (!path) return;
+  if (v.mode === "tram" && v.mesh.userData.wagons) {
+    placeTramArticulated(v, path, THREE);
+    return;
+  }
   const s = v.reverse ? path.length - v.s : v.s;
   samplePath(path, s, THREE, v.pos, v.tan);
   if (v.reverse) v.tan.multiplyScalar(-1);
@@ -704,7 +974,13 @@ export async function createTransit(scene, THREE, opts = {}) {
   const root = new THREE.Group();
   root.name = "RuntimeTransit";
   scene.add(root);
-  const liveryBase = new URL("livery/", new URL(url, document.baseURI)).href;
+  // Browser: resolve next to transit.json. Headless sims have no document.baseURI.
+  let liveryBase = "livery/";
+  try {
+    liveryBase = new URL("livery/", new URL(url, document.baseURI || "http://local/")).href;
+  } catch {
+    /* keep relative */
+  }
   const parts = makeSharedParts(THREE, liveryBase);
   const vehicles = [];
 
@@ -1017,7 +1293,8 @@ export async function createTransit(scene, THREE, opts = {}) {
     }
     v.pathIndex = next.index;
     v.reverse = next.reverse;
-    v.s = 0.5;
+    // Keep the consist on the path: lead starts far enough ahead for trailing wagons.
+    v.s = v.mode === "tram" ? (TRAM_WAGONS - 1) * TRAM_PITCH + 0.5 : 0.5;
     v.phase = "cruise";
     v.currentHalt = null;
     setVehicleLabel(v, np);
@@ -1472,8 +1749,9 @@ export async function createTransit(scene, THREE, opts = {}) {
       }
     }
     for (const g of [
-      parts.tramBody, parts.busBody, parts.tramPod, parts.busPod, parts.pantoBase,
-      parts.pantoArm, parts.pantoBar, parts.mirrorGeo, parts.lampGeo, ...parts.ledGeos,
+      parts.tramWagonBody, parts.tramJoint, parts.busBody, parts.tramPod, parts.busPod,
+      parts.pantoBase, parts.pantoArm, parts.pantoBar, parts.mirrorGeo, parts.lampGeo,
+      ...parts.ledGeos,
     ]) g.dispose();
     for (const m of [
       ...parts.allMats, parts.metalMat, parts.podMat, parts.mirrorMat,

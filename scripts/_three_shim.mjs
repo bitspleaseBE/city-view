@@ -26,7 +26,15 @@ export class Vector3 {
 }
 
 export class Obj {
-  constructor() { this.children = []; this.position = new Vector3(); this.rotation = { y: 0 }; this.scale = new Vector3(1, 1, 1); }
+  constructor() {
+    this.children = [];
+    this.position = new Vector3();
+    this.rotation = { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } };
+    this.scale = new Vector3(1, 1, 1);
+    this.userData = {};
+    this.visible = true;
+    this.name = "";
+  }
   add(...c) { this.children.push(...c); }
   remove(...c) { this.children = this.children.filter((x) => !c.includes(x)); }
 }
@@ -36,17 +44,35 @@ class Disposable { dispose() {} }
 export const THREE = {
   Vector3, Group: Obj, Mesh: Obj, Sprite: Obj,
   BoxGeometry: Disposable,
-  MeshLambertMaterial: Disposable,
-  MeshBasicMaterial: Disposable,
+  CircleGeometry: Disposable,
+  PlaneGeometry: Disposable,
+  MeshLambertMaterial: class extends Disposable {
+    constructor() { super(); this.color = { setScalar() {}, setRGB() {} }; this.emissive = { setRGB() {} }; }
+  },
+  MeshBasicMaterial: class extends Disposable { constructor() { super(); this.opacity = 0; } },
   SpriteMaterial: Disposable,
-  CanvasTexture: class extends Disposable {},
+  CanvasTexture: class extends Disposable {
+    constructor() { super(); this.needsUpdate = false; this.colorSpace = 0; this.anisotropy = 0; }
+  },
+  TextureLoader: class {
+    load() { return { colorSpace: 0, anisotropy: 0, needsUpdate: false, dispose() {} }; }
+  },
+  SRGBColorSpace: "srgb",
+  AdditiveBlending: 2,
 };
 
 globalThis.document = {
   createElement: () => ({
     width: 0, height: 0,
-    getContext: () => new Proxy({}, { get: () => () => {}, set: () => true }),
+    getContext: () => new Proxy({
+      measureText: () => ({ width: 8 }),
+      canvas: { width: 0, height: 0 },
+    }, {
+      get: (t, p) => (p in t ? t[p] : () => {}),
+      set: () => true,
+    }),
   }),
+  baseURI: "http://local/",
 };
 
 // Test-only fetch: serves files from viewer/ and refuses anything that escapes it.
