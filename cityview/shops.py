@@ -286,6 +286,17 @@ def snap_to_facade(
     }
 
 
+TERRACE_KINDS = frozenset({"cafe", "bar", "pub", "restaurant", "ice_cream", "biergarten"})
+
+
+def has_terrace(tags: dict[str, str], kind: str, category: str) -> bool:
+    """Antwerp horeca puts tables out unless OSM says otherwise; anyone tagged with seating does."""
+    seating = (tags.get("outdoor_seating") or "").strip().lower()
+    if seating == "no":
+        return False
+    return seating == "yes" or (category == "horeca" and kind in TERRACE_KINDS)
+
+
 def plan_shops(
     osm: dict[str, Any], layout: dict[str, Any], origin: tuple[float, float]
 ) -> list[dict[str, Any]]:
@@ -325,6 +336,8 @@ def plan_shops(
             "hours": [[list(s) for s in day] for day in (hours or DEFAULT_HOURS[category])],
             "hoursKnown": hours is not None,
         }
+        if snap["street"] and has_terrace(tags, kind, category):
+            rec["terrace"] = True
         placed.append(rec)
     return placed
 

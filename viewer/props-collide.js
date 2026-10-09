@@ -115,6 +115,12 @@ export async function createPropCollider() {
       }
       return hit;
     },
+    /** Short dynamic lists of round solids: [[x, z, radius], …] in Three XZ. */
+    resolveCircles(pos, r, circles) {
+      let hit = false;
+      for (const [x, z, cr] of circles) hit = pushCircle(pos, x, z, cr + r) || hit;
+      return hit;
+    },
     /** Vehicles: [{ pos, tan, hl, hw }] with tan a unit XZ heading. */
     resolveVehicles(pos, r, vehicles) {
       let hit = false;
