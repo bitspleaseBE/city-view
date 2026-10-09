@@ -328,6 +328,8 @@ function buildSignals(raw, THREE, cycleSec, paths = []) {
       ns,
       phaseOffset,
       width: s.width || 6,
+      // OSM node id — matches roads.json walks `cross{id}` for ped wait.
+      osmId: Math.abs(Number(s.id) || 0) || null,
       yawBlender: Number.isFinite(yawBlender) ? yawBlender : null,
       pedYawBlender: Number.isFinite(pedYawBlender) ? pedYawBlender : null,
     });
@@ -788,16 +790,21 @@ export async function createTraffic(scene, THREE, opts = {}) {
     data = await res.json();
   } catch (err) {
     console.warn("Traffic disabled — could not load roads:", err);
-    return { update() {}, dispose() {} };
+    return { update() {}, dispose() {}, pedMayCross: () => true };
   }
   const paths = buildPaths(data.roads || [], THREE);
   if (paths.length < 2) {
     console.warn("Traffic disabled — not enough road paths");
-    return { update() {}, dispose() {} };
+    return { update() {}, dispose() {}, pedMayCross: () => true };
   }
 
   const cycleSec = Number(data.cycleSeconds) || CYCLE_SEC;
   const { signals } = buildSignals(data.signals || [], THREE, cycleSec, paths);
+  /** @type {Map<number, (typeof signals)[0]>} first head per OSM crossing node */
+  const signalByOsm = new Map();
+  for (const sig of signals) {
+    if (sig.osmId && !signalByOsm.has(sig.osmId)) signalByOsm.set(sig.osmId, sig);
+  }
   const count = fleetCount(paths, opts.count);
 
   const root = new THREE.Group();
@@ -1567,12 +1574,25 @@ export async function createTraffic(scene, THREE, opts = {}) {
     obstacleProvider = typeof provider === "function" ? provider : null;
   }
 
+  /**
+   * Pedestrian walk light for a ``cross{osmId}`` route: true when cars on that
+   * approach are red (same rule as the ped signal head). Unlinked zebras always allow.
+   */
+  function pedMayCross(routeId) {
+    const m = /^cross(\d+)/.exec(routeId || "");
+    if (!m) return true;
+    const sig = signalByOsm.get(Number(m[1]));
+    if (!sig) return true;
+    return signalPhase(sig, simTime, cycleSec) === "red";
+  }
+
   return {
     update,
     dispose,
     stats,
     setObstacles,
     setNight,
+    pedMayCross,
     cars,
     paths,
     count: cars.length,
