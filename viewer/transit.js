@@ -221,60 +221,308 @@ function lineLabel(lines, mode) {
   return mode === "bus" ? "bus" : "tram";
 }
 
+// ---------------------------------------------------------------------------
+// De Lijn liveries.  White body, grey skirt, dark glazing band, yellow (#FFD800)
+// door / front stripes and the "lijn" mark — see De Lijn huisstijlgids 2022 and
+// the Antwerp photos listed in README "Livery".  The side / front / rear wraps are
+// flat elevation textures in ./livery (built by scripts/make_delijn_livery.py) mapped
+// 1:1 onto the faces of the body boxes; live LED destination displays, headlight
+// glow, pantograph and mirrors are real geometry on top.
+// ---------------------------------------------------------------------------
+const LIVERY_VERSION = "1"; // bump when viewer/livery/*.jpg change (Pages caches aggressively)
+const TRAM_DIM = { w: 2.3, h: 2.8, l: 10.5, lift: 0.3 }; // lift keeps the floor at y = 0.2
+const BUS_DIM = { w: 2.4, h: 2.7, l: 9.0, lift: 0.05 };
+// Destination LED boxes as fractions of the end-face texture: [u0, v0, u1, v1] (v from top).
+const LED_BOX = {
+  tramFront: [0.187, 0.133, 0.813, 0.22],
+  busFront: [0.127, 0.149, 0.873, 0.241],
+  busRear: [0.713, 0.136, 0.9, 0.228],
+};
+const LED_COLOR = "#ffb11a";
+const LED_BG = "#14110c";
+
+// Line-number badge colours from the De Lijn palette (digits white, except on yellow/lime).
+const LINE_BADGES = [
+  ["#e40521", "#ffffff"],
+  ["#ef7d00", "#ffffff"],
+  ["#ffd800", "#000000"],
+  ["#c8d300", "#000000"],
+  ["#15882e", "#ffffff"],
+  ["#009fe3", "#ffffff"],
+  ["#0069b4", "#ffffff"],
+  ["#8e2b8b", "#ffffff"],
+];
+
+function badgeFor(text) {
+  const m = /\d+/.exec(text);
+  let n = m ? parseInt(m[0], 10) : 0;
+  if (!m) for (let i = 0; i < text.length; i++) n += text.charCodeAt(i);
+  return LINE_BADGES[n % LINE_BADGES.length];
+}
+
 function makeLineSprite(THREE, text, mode) {
   const canvas = document.createElement("canvas");
   canvas.width = 128;
   canvas.height = 64;
   const ctx = canvas.getContext("2d");
-  const bg = mode === "bus" ? "#1f6fb2" : "#e09a20";
+  const [bg, fg] = badgeFor(text);
+  const x = 8;
+  const y = 10;
+  const w = 112;
+  const h = 44;
+  const r = 12;
+  ctx.fillStyle = "#101214";
+  ctx.beginPath();
+  ctx.roundRect(x - 2, y - 2, w + 4, h + 4, r + 2);
+  ctx.fill();
   ctx.fillStyle = bg;
-  ctx.fillRect(8, 10, 112, 44);
-  ctx.fillStyle = "#ffffff";
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+  ctx.fillStyle = fg;
   ctx.font = "bold 28px system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(text.slice(0, 8), 64, 32);
+  ctx.fillText(text.slice(0, 8), 64, 33);
   const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.needsUpdate = true;
   const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true });
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(3.2, 1.6, 1);
-  sprite.position.y = 3.4;
+  sprite.scale.set(2.4, 1.2, 1);
+  sprite.position.y = (mode === "bus" ? BUS_DIM.h : TRAM_DIM.h) + 0.9;
   return { sprite, tex, mat };
+}
+
+/** Final non-synthetic halt in the direction of travel ("5 Linkeroever" style destination). */
+function destinationFor(path, reverse) {
+  const halts = (path.halts || []).filter((h) => !String(h.id).startsWith("synth_") && h.name);
+  if (!halts.length) return "";
+  return String(halts[reverse ? 0 : halts.length - 1].name);
+}
+
+/** (Re)draw the amber LED destination displays of one vehicle. */
+function drawDisplays(displays, line, dest) {
+  for (const d of displays) {
+    const { ctx, canvas } = d;
+    const W = canvas.width;
+    const H = canvas.height;
+    ctx.fillStyle = LED_BG;
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = LED_COLOR;
+    ctx.textBaseline = "middle";
+    const mono = "'Courier New', ui-monospace, monospace";
+    if (d.kind === "rear") {
+      ctx.textAlign = "center";
+      ctx.font = `bold ${Math.round(H * 0.74)}px ${mono}`;
+      ctx.fillText(line.slice(0, 4), W / 2, H / 2 + 1, W - 8);
+    } else {
+      ctx.textAlign = "left";
+      ctx.font = `bold ${Math.round(H * 0.72)}px ${mono}`;
+      const num = line.slice(0, 4);
+      ctx.fillText(num, 8, H / 2 + 1);
+      const nx = 14 + ctx.measureText(num).width;
+      ctx.font = `bold ${Math.round(H * 0.62)}px ${mono}`;
+      ctx.fillText(dest || "De Lijn", nx, H / 2 + 1, W - nx - 6);
+    }
+    d.tex.needsUpdate = true;
+  }
+}
+
+function addDisplay(THREE, parts, group, dim, kind, box, front) {
+  const [u0, v0, u1, v1] = box;
+  const canvas = document.createElement("canvas");
+  canvas.width = kind === "rear" ? 96 : 256;
+  canvas.height = kind === "rear" ? 52 : 40;
+  const ctx = canvas.getContext("2d");
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  const mat = new THREE.MeshBasicMaterial({ map: tex });
+  const geo = new THREE.PlaneGeometry((u1 - u0) * dim.w, (v1 - v0) * dim.h);
+  parts.ledGeos.push(geo);
+  const mesh = new THREE.Mesh(geo, mat);
+  const uc = (u0 + u1) / 2;
+  const vc = (v0 + v1) / 2;
+  const yMid = dim.lift;
+  mesh.position.set(
+    (front ? 1 : -1) * (uc - 0.5) * dim.w,
+    yMid + (0.5 - vc) * dim.h,
+    (front ? 1 : -1) * (dim.l / 2 + 0.02),
+  );
+  if (!front) mesh.rotation.y = Math.PI;
+  group.add(mesh);
+  return { kind, canvas, ctx, tex, mat, mesh };
+}
+
+/** Glow discs (headlights white, tail lights red); invisible by day, additive at night. */
+function addLamps(THREE, parts, group, dim, front, vFrac, uL, uR) {
+  const sgn = front ? 1 : -1;
+  for (const u of [uL, uR]) {
+    const lamp = new THREE.Mesh(parts.lampGeo, front ? parts.headGlowMat : parts.tailGlowMat);
+    lamp.position.set(sgn * (u - 0.5) * dim.w, dim.lift + (0.5 - vFrac) * dim.h, sgn * (dim.l / 2 + 0.03));
+    if (!front) lamp.rotation.y = Math.PI;
+    group.add(lamp);
+  }
 }
 
 function makeTramMesh(THREE, parts) {
   const group = new THREE.Group();
-  const body = new THREE.Mesh(parts.tramBody, parts.tramMat);
-  const cabin = new THREE.Mesh(parts.tramCabin, parts.glassMat);
-  cabin.position.set(0, 0.85, 0.2);
-  const panto = new THREE.Mesh(parts.pantoGeo, parts.metalMat);
-  panto.position.set(0, 1.55, 0);
-  group.add(body, cabin, panto);
+  const d = TRAM_DIM;
+  const body = new THREE.Mesh(parts.tramBody, parts.tramMats);
+  body.position.y = d.lift;
+  group.add(body);
+  const roofY = d.lift + d.h / 2;
+  for (const z of [-2.9, 2.9]) {
+    const pod = new THREE.Mesh(parts.tramPod, parts.podMat);
+    pod.position.set(0, roofY + 0.12, z);
+    group.add(pod);
+  }
+  // Single-arm pantograph: base, lower arm, upper arm, collector bar.
+  const base = new THREE.Mesh(parts.pantoBase, parts.metalMat);
+  base.position.set(0, roofY + 0.06, 0.4);
+  const lower = new THREE.Mesh(parts.pantoArm, parts.metalMat);
+  lower.position.set(0, roofY + 0.45, 0.65);
+  lower.rotation.x = 0.55;
+  const upper = new THREE.Mesh(parts.pantoArm, parts.metalMat);
+  upper.position.set(0, roofY + 1.0, 0.65);
+  upper.rotation.x = -0.55;
+  const bar = new THREE.Mesh(parts.pantoBar, parts.metalMat);
+  bar.position.set(0, roofY + 1.4, 0.4);
+  group.add(base, lower, upper, bar);
+
+  const displays = [
+    addDisplay(THREE, parts, group, d, "front", LED_BOX.tramFront, true),
+    addDisplay(THREE, parts, group, d, "front", LED_BOX.tramFront, false),
+  ];
+  group.userData.displays = displays;
+  addLamps(THREE, parts, group, d, true, 0.76, 0.13, 0.87);
+  addLamps(THREE, parts, group, d, false, 0.76, 0.13, 0.87);
   return group;
 }
 
 function makeBusMesh(THREE, parts) {
   const group = new THREE.Group();
-  const body = new THREE.Mesh(parts.busBody, parts.busMat);
-  const cabin = new THREE.Mesh(parts.busCabin, parts.glassMat);
-  cabin.position.set(0, 0.95, 0.4);
-  group.add(body, cabin);
+  const d = BUS_DIM;
+  const body = new THREE.Mesh(parts.busBody, parts.busMats);
+  body.position.y = d.lift;
+  group.add(body);
+  const roofY = d.lift + d.h / 2;
+  const pod = new THREE.Mesh(parts.busPod, parts.podMat);
+  pod.position.set(0, roofY + 0.14, -2.3);
+  group.add(pod);
+  // Yellow mirrors (as on the Antwerp fleet).
+  for (const sx of [-1, 1]) {
+    const mirror = new THREE.Mesh(parts.mirrorGeo, parts.mirrorMat);
+    mirror.position.set(sx * (d.w / 2 + 0.14), d.lift + 0.35, d.l / 2 - 0.1);
+    group.add(mirror);
+  }
+  const displays = [
+    addDisplay(THREE, parts, group, d, "front", LED_BOX.busFront, true),
+    addDisplay(THREE, parts, group, d, "rear", LED_BOX.busRear, false),
+  ];
+  group.userData.displays = displays;
+  addLamps(THREE, parts, group, d, true, 0.74, 0.09, 0.89);
+  addLamps(THREE, parts, group, d, false, 0.68, 0.06, 0.94);
   return group;
 }
 
-function makeSharedParts(THREE) {
-  return {
-    tramBody: new THREE.BoxGeometry(2.2, 2.2, 10.5),
-    tramCabin: new THREE.BoxGeometry(2.0, 0.7, 4.5),
-    pantoGeo: new THREE.BoxGeometry(0.15, 0.7, 1.2),
-    busBody: new THREE.BoxGeometry(2.4, 2.6, 9.0),
-    busCabin: new THREE.BoxGeometry(2.2, 0.75, 3.2),
-    glassMat: new THREE.MeshLambertMaterial({ color: 0x88a8c0, transparent: true, opacity: 0.8 }),
-    metalMat: new THREE.MeshLambertMaterial({ color: 0x333333 }),
-    tramMat: new THREE.MeshLambertMaterial({ color: 0xc45c28 }),
-    busMat: new THREE.MeshLambertMaterial({ color: 0xf0e6c8 }),
+function makeSharedParts(THREE, liveryBase) {
+  const loader = new THREE.TextureLoader();
+  const maps = [];
+  const load = (name) => {
+    const t = loader.load(`${liveryBase}${name}.jpg?v=${LIVERY_VERSION}`);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    maps.push(t);
+    return t;
   };
+  const litMats = [];
+  const wrap = (name, glow) => {
+    const m = new THREE.MeshLambertMaterial({
+      map: load(name),
+      emissive: 0x000000,
+      emissiveMap: glow ? load(glow) : null,
+    });
+    m.color.setScalar(1.22); // the flat wraps read grey under Lambert + ACES; lift them to paint-white
+    if (glow) litMats.push(m);
+    return m;
+  };
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0xd4d7d9 });
+  const underMat = new THREE.MeshLambertMaterial({ color: 0x25282b });
+  const tramFront = wrap("tram_front");
+  // BoxGeometry face order: +x, -x, +y, -y, +z (front), -z (rear).
+  // +x is seen with the cab on the left of the image, -x with it on the right.
+  const tramMats = [
+    wrap("tram_side_l", "tram_side_l_glow"),
+    wrap("tram_side_r", "tram_side_r_glow"),
+    roofMat,
+    underMat,
+    tramFront,
+    tramFront,
+  ];
+  // Right-hand traffic: the door side of a bus faces -x (right of travel along +z).
+  const busMats = [
+    wrap("bus_side_l", "bus_side_l_glow"),
+    wrap("bus_side_r", "bus_side_r_glow"),
+    roofMat,
+    underMat,
+    wrap("bus_front"),
+    wrap("bus_rear"),
+  ];
+  const geos = {
+    tramBody: new THREE.BoxGeometry(TRAM_DIM.w, TRAM_DIM.h, TRAM_DIM.l),
+    busBody: new THREE.BoxGeometry(BUS_DIM.w, BUS_DIM.h, BUS_DIM.l),
+    tramPod: new THREE.BoxGeometry(1.5, 0.26, 2.4),
+    busPod: new THREE.BoxGeometry(1.5, 0.3, 2.8),
+    pantoBase: new THREE.BoxGeometry(0.6, 0.12, 1.0),
+    pantoArm: new THREE.BoxGeometry(0.07, 0.9, 0.07),
+    pantoBar: new THREE.BoxGeometry(1.4, 0.05, 0.12),
+    mirrorGeo: new THREE.BoxGeometry(0.1, 0.5, 0.22),
+    lampGeo: new THREE.CircleGeometry(0.15, 12),
+  };
+  const glowMat = (color) =>
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+  return {
+    ...geos,
+    ledGeos: [],
+    maps,
+    litMats,
+    tramMats,
+    busMats,
+    allMats: [...new Set([...tramMats, ...busMats])],
+    metalMat: new THREE.MeshLambertMaterial({ color: 0x2f3336 }),
+    podMat: new THREE.MeshLambertMaterial({ color: 0x8d9296 }),
+    mirrorMat: new THREE.MeshLambertMaterial({ color: 0xffd800 }),
+    headGlowMat: glowMat(0xfff2cc),
+    tailGlowMat: glowMat(0xff2418),
+  };
+}
+
+/** Set line badge + LED displays when a vehicle (re)joins a path or reverses. */
+function setLabel(THREE, v, path) {
+  const text = lineLabel(path.lines, v.mode);
+  const dest = destinationFor(path, v.reverse);
+  const key = `${text}|${dest}`;
+  if (v.labelKey === key) return;
+  v.labelKey = key;
+  if (v.label) {
+    v.mesh.remove(v.label.sprite);
+    v.label.tex.dispose();
+    v.label.mat.dispose();
+  }
+  // GTFS labels bus lines "bus 22": the badge and LED boards only carry the number.
+  const shown = text.replace(/^(bus|tram|premetro)\s+/i, "");
+  v.label = makeLineSprite(THREE, shown, v.mode);
+  v.mesh.add(v.label.sprite);
+  v.lineText = text;
+  drawDisplays(v.mesh.userData.displays || [], shown, dest);
 }
 
 function pickNextPath(paths, path, atEnd, THREE) {
@@ -352,11 +600,8 @@ function createVehicle(paths, THREE, parts, mode) {
   const reverse = legalReverse(path, Math.random() < 0.5);
   const s = Math.random() * path.length * 0.85;
   const mesh = mode === "tram" ? makeTramMesh(THREE, parts) : makeBusMesh(THREE, parts);
-  const labelText = lineLabel(path.lines, mode);
-  const label = makeLineSprite(THREE, labelText, mode);
-  mesh.add(label.sprite);
   const base = mode === "tram" ? TRAM_SPEED : BUS_SPEED;
-  return {
+  const v = {
     mesh,
     mode,
     pathIndex: index,
@@ -367,8 +612,9 @@ function createVehicle(paths, THREE, parts, mode) {
     accel: 0,
     pos: new THREE.Vector3(),
     tan: new THREE.Vector3(),
-    label,
-    lineText: labelText,
+    label: null,
+    labelKey: "",
+    lineText: "",
     phase: "cruise", // cruise | approach | dwell
     dwellLeft: 0,
     haltIndex: -1,
@@ -385,6 +631,8 @@ function createVehicle(paths, THREE, parts, mode) {
     baseZ: 0,
     wait: "",
   };
+  setLabel(THREE, v, path);
+  return v;
 }
 
 function placeVehicle(v, paths, THREE) {
@@ -442,7 +690,8 @@ export async function createTransit(scene, THREE, opts = {}) {
   const root = new THREE.Group();
   root.name = "RuntimeTransit";
   scene.add(root);
-  const parts = makeSharedParts(THREE);
+  const liveryBase = new URL("livery/", new URL(url, document.baseURI)).href;
+  const parts = makeSharedParts(THREE, liveryBase);
   const vehicles = [];
 
   // Prefer enough trams even when only a couple of OSM ways are in the tile.
@@ -635,16 +884,8 @@ export async function createTransit(scene, THREE, opts = {}) {
         seedInside(v, tramPaths);
       }
 
-      // Refresh line label from chosen path.
-      const lbl = lineLabel(allPaths[v.pathIndex].lines, "tram");
-      if (lbl !== v.lineText) {
-        v.mesh.remove(v.label.sprite);
-        v.label.tex.dispose();
-        v.label.mat.dispose();
-        v.label = makeLineSprite(THREE, lbl, "tram");
-        v.mesh.add(v.label.sprite);
-        v.lineText = lbl;
-      }
+      // Refresh line badge + LED destination from the chosen path.
+      setLabel(THREE, v, allPaths[v.pathIndex]);
 
       root.add(v.mesh);
       vehicles.push(v);
@@ -680,14 +921,7 @@ export async function createTransit(scene, THREE, opts = {}) {
   const rideLook = new THREE.Vector3();
 
   function setVehicleLabel(v, path) {
-    const nextLabel = lineLabel(path.lines, v.mode);
-    if (nextLabel === v.lineText) return;
-    v.mesh.remove(v.label.sprite);
-    v.label.tex.dispose();
-    v.label.mat.dispose();
-    v.label = makeLineSprite(THREE, nextLabel, v.mode);
-    v.mesh.add(v.label.sprite);
-    v.lineText = nextLabel;
+    setLabel(THREE, v, path);
   }
 
   /**
@@ -1214,24 +1448,31 @@ export async function createTransit(scene, THREE, opts = {}) {
   function dispose() {
     scene.remove(root);
     for (const v of vehicles) {
-      v.label.tex.dispose();
-      v.label.mat.dispose();
+      if (v.label) {
+        v.label.tex.dispose();
+        v.label.mat.dispose();
+      }
+      for (const d of v.mesh.userData.displays || []) {
+        d.tex.dispose();
+        d.mat.dispose();
+      }
     }
-    parts.tramBody.dispose();
-    parts.tramCabin.dispose();
-    parts.pantoGeo.dispose();
-    parts.busBody.dispose();
-    parts.busCabin.dispose();
-    parts.glassMat.dispose();
-    parts.metalMat.dispose();
-    parts.tramMat.dispose();
-    parts.busMat.dispose();
+    for (const g of [
+      parts.tramBody, parts.busBody, parts.tramPod, parts.busPod, parts.pantoBase,
+      parts.pantoArm, parts.pantoBar, parts.mirrorGeo, parts.lampGeo, ...parts.ledGeos,
+    ]) g.dispose();
+    for (const m of [
+      ...parts.allMats, parts.metalMat, parts.podMat, parts.mirrorMat,
+      parts.headGlowMat, parts.tailGlowMat,
+    ]) m.dispose();
+    for (const t of parts.maps) t.dispose();
   }
 
-  /** Night: lit cabin windows on trams and buses (0 = day, 1 = full night). */
+  /** Night: lit windows (emissive glow maps), headlights and tail lights (0 = day, 1 = full night). */
   function setNight(t) {
-    parts.glassMat.emissive.setRGB(1.0 * t, 0.78 * t, 0.42 * t);
-    parts.glassMat.opacity = 0.8 + 0.15 * t;
+    for (const m of parts.litMats) m.emissive.setRGB(0.8 * t, 0.7 * t, 0.5 * t);
+    parts.headGlowMat.opacity = 0.9 * t;
+    parts.tailGlowMat.opacity = 0.85 * t;
   }
 
   return {
