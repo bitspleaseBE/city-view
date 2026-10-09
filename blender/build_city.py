@@ -1338,9 +1338,9 @@ def add_street_facade(
             _append_box(bm, sx, sy, eaves_z * 0.42, 0.32, 0.06, eaves_z * 0.75, yaw, 1)
 
     kind = window_kind or style.get("window", "rect")
-    floors = max(1, min(8, int(floors)))
+    floors = max(1, min(20, int(floors)))  # 20 = hard level cap (cityview.building_heights)
     if detail == "simple":
-        floors = min(floors, 3)
+        floors = min(floors, 6)
     floor_h = eaves_z / max(1, floors)
     bay_pitch = 4.2 if kind == "ribbon" else (2.8 if detail == "simple" else 2.35)
     bays = max(1, int(length / bay_pitch))

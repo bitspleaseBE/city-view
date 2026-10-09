@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from cityview.building_heights import FLOOR_H, MAX_EAVES_M, MAX_LEVELS
 from cityview.directions import infer_parallel_track_directions, mark_dual_carriageways
 
 
@@ -35,10 +36,10 @@ def floors_from_height(height: float, tags: dict[str, str] | None = None) -> int
     raw = tags.get("building:levels")
     if raw:
         try:
-            return max(1, min(20, int(round(float(raw.split(";")[0])))))
+            return max(1, min(MAX_LEVELS, int(round(float(raw.split(";")[0])))))
         except ValueError:
             pass
-    return max(1, min(20, int(round(height / 3.15))))
+    return max(1, min(MAX_LEVELS, int(round(height / FLOOR_H))))
 
 
 def roof_shape_for(tags: dict[str, str], style: str, osm_id: int) -> str:
@@ -176,14 +177,14 @@ def height_truth(tags: dict[str, str]) -> tuple[float, float, int]:
     if raw_h:
         try:
             total = float(raw_h.replace("m", "").split()[0])
-            eaves = max(4.0, min(80.0, total))
+            eaves = max(4.0, min(MAX_EAVES_M, total))
         except ValueError:
             pass
 
     levels = tags.get("building:levels")
     if levels:
         try:
-            floors = max(1, min(20, int(round(float(levels.split(";")[0])))))
+            floors = max(1, min(MAX_LEVELS, int(round(float(levels.split(";")[0])))))
         except ValueError:
             pass
 
@@ -225,10 +226,10 @@ def height_truth(tags: dict[str, str]) -> tuple[float, float, int]:
     }
 
     if floors is None and eaves is not None:
-        floors = max(1, min(20, int(round(eaves / floor_h))))
+        floors = max(1, min(MAX_LEVELS, int(round(eaves / floor_h))))
     if floors is None:
         eaves = eaves if eaves is not None else defaults.get(kind, 12.0)
-        floors = max(1, min(20, int(round(eaves / floor_h))))
+        floors = max(1, min(MAX_LEVELS, int(round(eaves / floor_h))))
     if eaves is None:
         eaves = floors * floor_h
 

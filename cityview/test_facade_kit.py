@@ -48,8 +48,10 @@ class FacadeKitTests(unittest.TestCase):
 
     def test_short_edge_is_cropped_not_squashed(self):
         quads = kit.plan_facade_quads(3.0, 9.0, 3, "art-nouveau", seed=1)
-        self.assertEqual(len(quads), 1)
+        self.assertEqual(len(kit.ground_quads(quads)), 1)
         q = quads[0]
+        for piece in quads:  # every vertical piece of the house shows the same slice
+            self.assertEqual((piece["uv"][0], piece["uv"][2]), (q["uv"][0], q["uv"][2]))
         full = kit.cell_uv_rect(q["cell"])
         self.assertLess(q["uv"][2] - q["uv"][0], full[2] - full[0])
         self.assertGreaterEqual(q["uv"][0], full[0] - 1e-9)
@@ -125,3 +127,91 @@ class FacadeKitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TallBuildingTests(unittest.TestCase):
+    """Storey counts from 2 to 20 must stack / drop strips, never smear one picture."""
+
+    LEVELS = (2, 3, 4, 5, 6, 8, 12, 16, 20)
+
+    def _houses(self, quads):
+        houses = {}
+        for q in quads:
+            houses.setdefault(round(q["a0"], 6), []).append(q)
+        return list(houses.values())
+
+    def test_bands_are_committed_for_most_elevations(self):
+        self.assertGreaterEqual(len(kit.band_layout()), 40)
+        for fid, b in kit.band_layout().items():
+            self.assertIn(fid, kit.FACADES)
+            self.assertTrue(0.05 < b["lo"] < b["hi"] < 0.97, fid)
+            strip_m = (b["hi"] - b["lo"]) * kit.FACADES[fid]["height_m"]
+            self.assertTrue(2.4 < strip_m < 4.4, (fid, strip_m))
+
+    def test_every_level_count_fills_ground_to_eaves_without_gaps(self):
+        for levels in self.LEVELS:
+            eaves = levels * 3.15
+            quads = kit.plan_facade_quads(24.0, eaves, levels, "international", seed=levels)
+            for house in self._houses(quads):
+                house = sorted(house, key=lambda q: q["z0"])
+                self.assertAlmostEqual(house[0]["z0"], 0.0)
+                self.assertAlmostEqual(house[-1]["z1"], eaves, places=6)
+                for lower, upper in zip(house, house[1:]):
+                    self.assertAlmostEqual(lower["z1"], upper["z0"], places=6)
+                    self.assertGreater(upper["z1"], upper["z0"])
+                self.assertEqual(house[0]["band"], "ground")
+
+    def test_pieces_keep_window_proportions(self):
+        # Vertical metres-per-picture-metre stays near 1 for every level count (no smear).
+        for levels in self.LEVELS:
+            eaves = levels * 3.15
+            for q in kit.plan_facade_quads(18.0, eaves, levels, "art-deco", seed=7 + levels):
+                f0, f1 = q["vz"]
+                metres = (f1 - f0) * kit.FACADES[q["cell"]]["height_m"]
+                scale = (q["z1"] - q["z0"]) / metres
+                self.assertTrue(0.5 < scale < 1.6, (levels, q["cell"], scale))
+
+    def test_uv_stays_inside_the_cell_and_is_never_mirrored(self):
+        for levels in self.LEVELS:
+            for q in kit.plan_facade_quads(30.0, levels * 3.15, levels, "eclectic", seed=levels):
+                u0, v0, u1, v1 = q["uv"]
+                cu0, cv0, cu1, cv1 = kit.cell_uv_rect(q["cell"])
+                self.assertLess(u0, u1)
+                self.assertLess(v0, v1)
+                self.assertTrue(cu0 - 1e-9 <= u0 and u1 <= cu1 + 1e-9)
+                self.assertTrue(cv0 - 1e-9 <= v0 and v1 <= cv1 + 1e-9)
+
+    def test_tall_strip_repeats_the_same_picture_rows(self):
+        quads = kit.plan_facade_quads(9.0, 12 * 3.15, 12, "international", seed=2)
+        mids = [q for q in quads if q["band"] == "mid"]
+        self.assertGreaterEqual(len(mids), 4)  # a 12-level tower is mostly stacked storeys
+        self.assertEqual({q["uv"] for q in mids}, {mids[0]["uv"]})
+
+    def test_door_steps_and_awnings_only_at_street_level(self):
+        quads = kit.plan_facade_quads(40.0, 12 * 3.15, 12, "international", seed=11)
+        for step in kit.door_steps(quads):
+            self.assertTrue(0.0 <= step["a"] <= 40.0)
+        for awning in kit.shop_awnings(quads):
+            ground = [q for q in kit.ground_quads(quads) if q["a0"] <= awning["a"] <= q["a1"]]
+            self.assertTrue(ground)
+            self.assertLessEqual(awning["z"], ground[0]["z1"] + 1e-6)
+
+    def test_window_reveals_stay_on_their_own_piece(self):
+        for levels in (4, 9, 14):
+            quads = kit.plan_facade_quads(18.0, levels * 3.15, levels, "art-deco", seed=3)
+            reveals = kit.window_reveals(quads)
+            for r in reveals:
+                self.assertGreaterEqual(r["z0"], 0.0)
+                self.assertLessEqual(r["z1"], levels * 3.15 + 1e-6)
+                self.assertLess(r["z0"], r["z1"])
+
+    def test_downpipes_use_one_quad_per_house(self):
+        quads = kit.plan_facade_quads(40.0, 12 * 3.15, 12, "art-deco", seed=5)
+        joints = [0.5 * (l["a1"] + r["a0"]) for l, r in zip(kit.ground_quads(quads), kit.ground_quads(quads)[1:])]
+        for p in kit.downpipes(quads, 12 * 3.15):
+            self.assertTrue(any(abs(p["a"] - j) < 1e-6 for j in joints))
+
+    def test_towers_use_wider_elevations_than_townhouses(self):
+        tower = kit.ground_quads(kit.plan_facade_quads(36.0, 12 * 3.15, 12, "international", seed=1))
+        houses = kit.ground_quads(kit.plan_facade_quads(36.0, 3 * 3.15, 3, "international", seed=1))
+        self.assertLess(len(tower), len(houses))
