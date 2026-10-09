@@ -41,6 +41,11 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify({"amenity": "post_box"}), "post_box")
         self.assertEqual(classify({"man_made": "street_cabinet"}), "cabinet")
         self.assertEqual(classify({"vending": "parking_tickets", "amenity": "vending_machine"}), "meter")
+        self.assertEqual(classify({"amenity": "vending_machine", "vending": "drinks"}), "vending")
+        self.assertEqual(classify({"amenity": "charging_station"}), "charging")
+        self.assertEqual(classify({"leisure": "picnic_table"}), "picnic_table")
+        self.assertEqual(classify({"tourism": "artwork"}), "artwork")
+        self.assertEqual(classify({"tourism": "information", "information": "board"}), "guidepost")
         self.assertEqual(classify({"highway": "street_lamp"}), "lamp")
 
     def test_things_that_do_not_stand_on_the_pavement_are_ignored(self):

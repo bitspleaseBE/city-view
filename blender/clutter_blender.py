@@ -1,8 +1,9 @@
 """Merged street clutter from OSM-surveyed points (runs inside Blender).
 
 ``layout["clutter"]`` (see ``cityview.clutter``) lists bins, bike hoops, bollards, hydrants,
-post boxes, recycling bring-sites, street cabinets, ticket machines, flagpoles and lamps at
-their mapped positions. Object convention: front on local +Y, ``yaw`` is ``rotation_z``.
+post boxes, recycling bring-sites, street cabinets, ticket machines, flagpoles, lamps,
+picnic tables, EV chargers, vending machines, artwork plinths and info boards at their
+mapped positions. Object convention: front on local +Y, ``yaw`` is ``rotation_z``.
 Everything is merged into one mesh per material (a handful of draw calls for the lot).
 """
 
@@ -115,6 +116,41 @@ def _lamp(p: Parts, b: Matrix) -> None:
     p.box("lamp_head", b, (0.34, 0.6, 0.14), (0, 1.0, 4.88))
 
 
+def _picnic_table(p: Parts, b: Matrix) -> None:
+    # Table top + two benches along local X (path / kerb direction).
+    p.box("wood", b, (1.6, 0.7, 0.06), (0, 0, 0.74))
+    for sx in (-0.55, 0.55):
+        p.box("wood", b, (0.08, 0.08, 0.7), (sx, -0.25, 0.35))
+        p.box("wood", b, (0.08, 0.08, 0.7), (sx, 0.25, 0.35))
+    for sy in (-0.85, 0.85):
+        p.box("wood", b, (1.5, 0.28, 0.05), (0, sy, 0.42))
+        for sx in (-0.55, 0.55):
+            p.box("wood", b, (0.06, 0.06, 0.4), (sx, sy, 0.2))
+
+
+def _charging(p: Parts, b: Matrix) -> None:
+    p.box("cabinet", b, (0.42, 0.28, 1.35), (0, 0, 0.72))
+    p.box("signal_white", b, (0.28, 0.02, 0.22), (0, 0.15, 1.15))  # screen
+    p.cyl("metal", b, 0.03, 0.35, (0.12, 0.05, 0.55), segs=6)  # cable stub
+
+
+def _vending(p: Parts, b: Matrix) -> None:
+    p.box("cabinet", b, (0.85, 0.55, 1.7), (0, 0, 0.9))
+    p.box("meter_blue", b, (0.7, 0.02, 1.1), (0, 0.28, 1.0))  # front panel
+    p.box("signal_white", b, (0.5, 0.01, 0.2), (0, 0.285, 1.45))  # window / display
+
+
+def _artwork(p: Parts, b: Matrix) -> None:
+    p.box("plinth", b, (0.9, 0.9, 0.35), (0, 0, 0.2))
+    p.box("artwork", b, (0.55, 0.35, 1.4), (0, 0, 1.05))
+
+
+def _guidepost(p: Parts, b: Matrix) -> None:
+    p.cyl("metal", b, 0.04, 2.2, (0, 0, 1.1), segs=6)
+    p.box("board", b, (0.7, 0.04, 0.55), (0, 0.08, 1.85))
+    p.box("signal_white", b, (0.6, 0.01, 0.45), (0, 0.105, 1.85))
+
+
 def add_clutter(layout: dict, rails, mats: dict) -> dict:
     """Create merged clutter meshes. ``mats`` maps part keys to materials."""
     parts = Parts()
@@ -146,6 +182,16 @@ def add_clutter(layout: dict, rails, mats: dict) -> dict:
             _flagpole(parts, b)
         elif kind == "lamp":
             _lamp(parts, b)
+        elif kind == "picnic_table":
+            _picnic_table(parts, b)
+        elif kind == "charging":
+            _charging(parts, b)
+        elif kind == "vending":
+            _vending(parts, b)
+        elif kind == "artwork":
+            _artwork(parts, b)
+        elif kind == "guidepost":
+            _guidepost(parts, b)
         else:
             continue
         counts[kind] = counts.get(kind, 0) + 1

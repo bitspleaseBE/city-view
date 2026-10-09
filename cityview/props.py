@@ -16,7 +16,11 @@ from typing import Any
 BARRIER_KINDS = frozenset({"fence", "wall", "hedge", "retaining"})
 POST_RADIUS = {
     "bollard": 0.09, "hydrant": 0.14, "bin": 0.25, "cabinet": 0.38, "recycling": 0.65,
-    "post_box": 0.28, "meter": 0.12, "flagpole": 0.08,
+    "post_box": 0.28, "meter": 0.12, "flagpole": 0.08, "charging": 0.28, "vending": 0.35,
+    "artwork": 0.45, "guidepost": 0.12,
+}
+BOX_KINDS = {
+    "picnic_table": (0.9, 0.55),  # half_len, half_depth
 }
 
 
@@ -48,14 +52,19 @@ def export_props_for_viewer(
             boxes.append([round(x, 2), round(y, 2), round(float(b.get("yaw") or 0.0), 3), round(half_len, 2), 0.3])
     for c in layout.get("clutter") or []:
         x, y = float(c["x"]), float(c["y"])
-        if c.get("kind") in POST_RADIUS and near(x, y):
-            trunks.append([round(x, 2), round(y, 2), POST_RADIUS[c["kind"]]])
+        kind = c.get("kind")
+        if kind in POST_RADIUS and near(x, y):
+            trunks.append([round(x, 2), round(y, 2), POST_RADIUS[kind]])
             continue
-        if c.get("kind") != "bike_rack":
-            continue
-        if near(x, y):
+        if kind == "bike_rack" and near(x, y):
             half_len = max(0.6, int(c.get("hoops") or 4) * 0.4)
             boxes.append([round(x, 2), round(y, 2), round(float(c.get("yaw") or 0.0), 3), round(half_len, 2), 0.12])
+            continue
+        if kind in BOX_KINDS and near(x, y):
+            half_len, half_depth = BOX_KINDS[kind]
+            boxes.append(
+                [round(x, 2), round(y, 2), round(float(c.get("yaw") or 0.0), 3), half_len, half_depth]
+            )
 
     segments = []
     for w in layout.get("barriers") or []:
