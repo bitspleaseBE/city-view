@@ -449,6 +449,7 @@
       import { createVelo } from "./velo.js";
       import { createScooters } from "./scooters.js";
       import { createShops } from "./shops.js";
+      import { createTerraces } from "./terraces.js";
       import { createPropCollider } from "./props-collide.js";
       import { createPlayerMotion } from "./player-motion.js";
       import { createHud } from "./hud.js";
@@ -675,6 +676,7 @@
         get scooters() { return scooters; },
         get shops() { return shops; },
         get props() { return props; },
+        get terraces() { return terraces; },
         collideWorld,
         get clock() { return { hour: gameHour, day: gameDay }; },
         get motion() { return playerMotion; },
@@ -830,6 +832,7 @@
       let velo = null;
       let scooters = null;
       let shops = null;
+      let terraces = null;
       let props = null;
       let outdoors = null;
       const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
@@ -872,6 +875,7 @@
           _vehicleSolids.push({ pos: v.pos, tan: v.tan, hl: tram ? 15.5 : 6.6, hw: tram ? 1.2 : 1.25 });
         }
         hit = props.resolveVehicles(pos, r, _vehicleSolids) || hit;
+        if (terraces) hit = props.resolveCircles(pos, r, terraces.solids) || hit;
         if (hit) playerMotion.bump(onWheels ? 0.35 : 0.6);
         if (hit && outdoors) outdoors.ensureOutdoors(pos);
       }
@@ -1517,6 +1521,7 @@
           if (shops) {
             shops.update(gameHour, gameDay);
             shops.setNight(smooth(0.4, 0.9, tod));
+            terraces = createTerraces(scene, THREE, shops.records, { groundAt });
           }
           // ---- Mini map + street name locator ----
           minimap = createMinimap(THREE, {
@@ -1775,6 +1780,7 @@
         }
 
         shops && shops.update(gameHour, gameDay);
+        terraces && terraces.update();
         refreshRideHud();
         const sRide = scooters && scooters.isRiding() ? scooters.getRideHud() : null;
         const vRide = velo && velo.isRiding && velo.isRiding() ? velo.getRideHud() : null;

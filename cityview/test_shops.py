@@ -1,7 +1,7 @@
 import unittest
 
 from cityview.geo import project
-from cityview.shops import category_for, parse_opening_hours, plan_shops
+from cityview.shops import category_for, has_terrace, parse_opening_hours, plan_shops
 
 ORIGIN = (51.2017, 4.4114)
 
@@ -34,6 +34,15 @@ def _layout() -> dict:
             }
         ]
     }
+
+
+class TerraceTests(unittest.TestCase):
+    def test_horeca_defaults_to_terrace_unless_tagged_no(self):
+        self.assertTrue(has_terrace({}, "cafe", "horeca"))
+        self.assertFalse(has_terrace({"outdoor_seating": "no"}, "pub", "horeca"))
+        self.assertFalse(has_terrace({}, "fast_food", "horeca"))
+        self.assertTrue(has_terrace({"outdoor_seating": "yes"}, "bakery", "food"))
+        self.assertFalse(has_terrace({}, "clothes", "retail"))
 
 
 class OpeningHoursTests(unittest.TestCase):
