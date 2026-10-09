@@ -542,6 +542,30 @@ _WALK_CARRIAGE_MARGIN = 0.45
 _WALK_INDOOR_REJECT = 0.12
 # OSM walk ways farther than this from a street carriageway are yard/plaza paths.
 _WALK_STREET_MAX_M = 14.0
+# Orphan stubs shorter than this only encourage sidewalk ping-pong.
+_WALK_MIN_KEEP_M = 12.0
+
+
+def _sidewalk_side_signs(road: dict[str, Any]) -> list[tuple[str, float]]:
+    """Kerb sidewalks to emit: outer kerb only on dual carriageways (median is not a path)."""
+    oneway = _direction_code(road.get("oneway"))
+    if road.get("dualCarriageway"):
+        # Traffic along ``points`` → right is the building kerb; against → left.
+        if oneway == -1:
+            return [("L", 1.0)]
+        return [("R", -1.0)]
+    return [("L", 1.0), ("R", -1.0)]
+
+
+def _roads_for_walk_export(layout: dict[str, Any]) -> list[dict[str, Any]]:
+    """Copy layout roads with normalised oneway + dual-carriageway flags for walk export."""
+    roads: list[dict[str, Any]] = []
+    for road in layout.get("roads") or []:
+        r = dict(road)
+        r["oneway"] = _direction_code(road.get("oneway"))
+        roads.append(r)
+    mark_dual_carriageways(roads)
+    return roads
 
 
 def _offset_polyline(points: list[list[float]], offset: float) -> list[list[float]]:
@@ -788,7 +812,7 @@ def export_walks_near_spawn(
     """
     sx = float(spawn["x"]) if spawn else 0.0
     sy = float(spawn["y"]) if spawn else 0.0
-    roads = layout.get("roads") or []
+    roads = _roads_for_walk_export(layout)
     buildings = _building_rings(layout)
     scored: list[tuple[float, dict[str, Any]]] = []
     for ri, road in enumerate(roads):
@@ -810,6 +834,8 @@ def export_walks_near_spawn(
             # get clipped where they cross asphalt.
             runs = [pts] if kind == "pedestrian" else _safe_sidewalk_runs(pts, roads, ri)
             for run_i, run in enumerate(runs):
+                if _polyline_length(run) < _WALK_MIN_KEEP_M:
+                    continue
                 if not _accept_walk_run(run, roads, buildings, require_street=True):
                     continue
                 scored.append(
@@ -827,9 +853,11 @@ def export_walks_near_spawn(
         if kind not in SIDEWALK_HOST_KINDS:
             continue
         half = float(road.get("width") or 6.0) * 0.5
-        for side, sign in (("L", 1.0), ("R", -1.0)):
+        for side, sign in _sidewalk_side_signs(road):
             walk = _offset_polyline(pts, sign * (half + SIDEWALK_W * 0.5))
             for run_i, run in enumerate(_safe_sidewalk_runs(walk, roads, ri)):
+                if _polyline_length(run) < _WALK_MIN_KEEP_M:
+                    continue
                 # Ribbons are already street-offset; only reject building cuts.
                 if not _accept_walk_run(run, roads, buildings, require_street=False):
                     continue

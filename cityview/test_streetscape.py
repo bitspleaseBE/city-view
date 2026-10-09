@@ -267,6 +267,48 @@ class WalkExportTests(unittest.TestCase):
         self.assertIn("R", sides)
         self.assertNotIn("L", sides)
 
+    def test_dual_carriageway_outer_kerb_only(self):
+        # RH-traffic boulevard: eastbound south half + westbound north half.
+        # Outer kerbs only — not the median between the halves.
+        layout = {
+            "roads": [
+                {
+                    "id": 10,
+                    "name": "Boulevard",
+                    "kind": "secondary",
+                    "width": 8.0,
+                    "oneway": 1,
+                    "points": [[0.0, -4.0], [80.0, -4.0]],
+                },
+                {
+                    "id": 11,
+                    "name": "Boulevard",
+                    "kind": "secondary",
+                    "width": 8.0,
+                    "oneway": 1,
+                    "points": [[80.0, 4.0], [0.0, 4.0]],
+                },
+            ]
+        }
+        walks = export_walks_near_spawn(layout, {"x": 40.0, "y": 0.0}, radius=100.0)
+        by_host: dict[str, set[str]] = {}
+        for w in walks:
+            if w["kind"] != "sidewalk":
+                continue
+            host = w["id"].split("_")[0].removeprefix("sw")
+            by_host.setdefault(host, set()).add(w.get("side") or "")
+        self.assertEqual(by_host.get("10"), {"R"})
+        self.assertEqual(by_host.get("11"), {"R"})
+        # Outer ribbons sit outside the ±4 m carriageway centres.
+        for w in walks:
+            if w["kind"] != "sidewalk":
+                continue
+            ys = [p[1] for p in w["points"]]
+            if w.get("side") == "R" and "sw10" in w["id"]:
+                self.assertTrue(all(y < -6.0 for y in ys), ys)
+            if w.get("side") == "R" and "sw11" in w["id"]:
+                self.assertTrue(all(y > 6.0 for y in ys), ys)
+
 
 if __name__ == "__main__":
     unittest.main()
