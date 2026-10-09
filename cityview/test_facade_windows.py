@@ -65,6 +65,50 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class GlassMaskTests(unittest.TestCase):
+    def test_glow_stays_on_dark_pane_not_bright_wall(self):
+        try:
+            import numpy as np
+        except ImportError:  # pragma: no cover
+            self.skipTest("numpy required")
+        # Bright wall with a darker rectangular pane in the middle.
+        lum = np.full((80, 60), 0.72, dtype="float32")
+        lum[20:55, 18:42] = 0.28
+        mask = fw.glass_mask_in_box(lum, (10, 10, 50, 70), min_frac=0.15)
+        self.assertTrue(mask[30, 30])  # inside the pane
+        self.assertFalse(mask[5, 5])  # wall outside the box
+        self.assertFalse(mask[12, 12])  # bright wall inside the box
+        # A box over plain wall must not light up.
+        self.assertFalse(fw.accept_window_box(lum, (0, 0, 15, 15)))
+
+
+class RoomInteriorTests(unittest.TestCase):
+    def test_every_kind_paints_a_full_pane_with_some_silhouette(self):
+        try:
+            import numpy as np
+        except ImportError:  # pragma: no cover
+            self.skipTest("numpy required")
+        rng = np.random.default_rng(0)
+        for kind, _w in fw.INTERIOR_KINDS:
+            patch = fw.paint_room_interior(48, 32, kind, rng)
+            self.assertEqual(patch.shape, (48, 32))
+            self.assertGreater(float(patch.mean()), 0.25)  # mostly lit room
+            self.assertLess(float(patch.min()), 0.55)  # some darker furniture / drape
+            # Edges vignette so glow doesn't look cut out of a photo blob.
+            border = float(np.concatenate([patch[0, :], patch[-1, :], patch[:, 0], patch[:, -1]]).mean())
+            centre = float(patch[16:32, 10:22].mean())
+            self.assertLess(border, centre)
+
+    def test_pick_interior_kind_covers_the_menu(self):
+        try:
+            import numpy as np
+        except ImportError:  # pragma: no cover
+            self.skipTest("numpy required")
+        rng = np.random.default_rng(1)
+        seen = {fw.pick_interior_kind(rng) for _ in range(200)}
+        self.assertGreaterEqual(len(seen), 5)
+
+
 class LayeredDetectionTests(unittest.TestCase):
     def test_overlap_is_relative_to_the_smaller_box(self):
         self.assertEqual(fw.box_overlap((0, 0, 10, 10), (20, 0, 30, 10)), 0.0)
