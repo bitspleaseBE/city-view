@@ -7,7 +7,7 @@
  */
 export const MOVE = {
   walk: { speed: 4.2, boost: 1.65, accel: 14, brake: 18, eye: 1.7 },
-  velo: { speed: 7.6, boost: 1.3, accel: 3.2, brake: 7, eye: 1.45, turn: 1.5, reverse: 1.2 },
+  velo: { speed: 7.6, boost: 1.3, accel: 3.2, brake: 7, eye: 1.62, turn: 1.5, reverse: 1.2 },
   scooter: { speed: 6.9, boost: 1.0, accel: 3.8, brake: 7.5, eye: 1.62, turn: 1.8, reverse: 1.0 },
 };
 

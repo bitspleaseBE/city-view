@@ -13,6 +13,8 @@ const MUDGUARD = 0xf5f2ec;
 const METAL = 0x3a3a3c;
 const TIRE = 0x1c1c1c;
 const RIM = 0xb8b8bc;
+// Modelled at 1:1.55 like blender/velo_blender.py; this is a real-size Velo (wheel r ≈ 0.31 m).
+const BIKE_SCALE = 1.55;
 
 /**
  * Compact Velo step-through. Front wheel toward local −Z (matches Three.js look dir).
@@ -148,6 +150,7 @@ export function makeVeloBike(THREE) {
     arm
   );
   g.userData.wheels = [front, rear];
+  g.scale.setScalar(BIKE_SCALE);
   return g;
 }
 
@@ -261,7 +264,7 @@ export async function createVelo(scene, THREE) {
     if (!ride) return false;
     const yaw = player.yaw != null ? player.yaw : 0;
     // Step the bike a little to the rider's right so you don't stand inside it.
-    const side = 0.7;
+    const side = 0.85;
     ride.mesh.position.set(
       player.x + Math.cos(yaw) * side,
       0,
@@ -367,7 +370,7 @@ export async function createVelo(scene, THREE) {
     );
     mesh.rotation.y = yaw;
     if (player.moving && mesh.userData.wheels) {
-      const spin = (player.speed ?? BIKE_SPEED) / 0.2; // wheel radius 0.2 m
+      const spin = (player.speed ?? BIKE_SPEED) / (0.2 * BIKE_SCALE);
       for (const w of mesh.userData.wheels) w.rotation.x -= dt * spin;
     }
   }

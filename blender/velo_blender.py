@@ -26,7 +26,10 @@ from cityview import velo as veloplan  # noqa: E402
 
 LIFT = 0.04
 MAX_BAKED_BIKES = 8
-SLOT_PAD = 0.55
+# The bike below is modelled at 1:1.55; this brings it to a real Velo (wheel r ≈ 0.31 m,
+# saddle ≈ 0.95 m). viewer/velo.js scales its ride bike by the same factor.
+BIKE_SCALE = 1.55
+SLOT_PAD = 0.76  # bike centre in front of the rail: front wheel sits in the dock guide
 
 
 def _box(bm, base: Matrix, size, center) -> None:
@@ -117,17 +120,27 @@ def _station_rail(p: Parts, base: Matrix, length: float, capacity: int) -> None:
         t = (i + 1) / (n_mid + 1)
         cx = -half + t * length
         _box(metal, base, (0.055, 0.36, 0.42), (cx, -0.1, LIFT + 0.26))
-    slots = max(4, min(int(capacity), 24))
+    slots = max(4, int(capacity))
     spacing = length / max(1, slots)
+    screen = p.bm("tire")
+    panel = p.bm("mudguard")
     for i in range(slots):
         cx = -half + (i + 0.5) * spacing
-        for oy in (0.1, 0.34):
-            _box(metal, base, (0.035, 0.035, 0.28), (cx, oy, LIFT + 0.18))
-        _box(metal, base, (0.035, 0.28, 0.035), (cx, 0.22, LIFT + 0.32))
-        _box(red, base, (0.04, 0.04, 0.04), (cx, 0.22, LIFT + 0.38))
-    tx = -half + 0.3
-    _cyl(metal, base, 0.045, 1.5, (tx, -0.42, LIFT + 0.78), segs=8)
-    _box(red, base, (0.2, 0.05, 0.26), (tx, -0.4, LIFT + 1.42))
+        # Dock post with a lock head and status LED, plus a short wheel guide in front.
+        _box(metal, base, (0.08, 0.08, 0.6), (cx, 0.1, LIFT + 0.3))
+        _box(metal, base, (0.12, 0.2, 0.13), (cx, 0.14, LIFT + 0.66))
+        _box(red, base, (0.05, 0.02, 0.03), (cx, 0.25, LIFT + 0.68))
+        for gx in (-0.05, 0.05):
+            _box(metal, base, (0.025, 0.42, 0.025), (cx + gx, 0.42, LIFT + 0.1))
+    # Terminal pillar at the rail head: red column, dark screen + white map panel.
+    tx = -half - 0.45
+    _box(metal, base, (0.5, 0.36, 0.08), (tx, 0.0, LIFT + 0.04))
+    _box(red, base, (0.42, 0.28, 1.9), (tx, 0.0, LIFT + 1.03))
+    _box(red, base, (0.48, 0.34, 0.08), (tx, 0.0, LIFT + 2.0))
+    _box(screen, base, (0.26, 0.02, 0.2), (tx, 0.145, LIFT + 1.42))
+    _box(panel, base, (0.3, 0.02, 0.5), (tx, 0.145, LIFT + 0.85))
+    _box(panel, base, (0.34, 0.02, 0.9), (tx, -0.145, LIFT + 1.1))
+    _box(panel, base, (0.36, 0.3, 0.14), (tx, 0.0, LIFT + 1.82))
 
 
 def _velo_bike(p: Parts, base: Matrix) -> None:
@@ -205,8 +218,12 @@ def add_velo_stations(layout: dict, rails, mats: dict) -> dict:
         for i in range(bikes_n):
             slot = int(round(i * (capacity - 1) / max(1, bikes_n - 1))) if bikes_n > 1 else capacity // 2
             cx = -half + (slot + 0.5) * spacing
-            bike_base = base @ Matrix.Translation(Vector((cx, SLOT_PAD, 0.0))) @ Matrix.Rotation(
-                math.pi / 2.0, 4, "Z"
+            # Front wheel nosed into the dock (bike +X → station −Y), at real size.
+            bike_base = (
+                base
+                @ Matrix.Translation(Vector((cx, SLOT_PAD, 0.0)))
+                @ Matrix.Rotation(-math.pi / 2.0, 4, "Z")
+                @ Matrix.Diagonal(Vector((BIKE_SCALE, BIKE_SCALE, BIKE_SCALE, 1.0)))
             )
             _velo_bike(p, bike_base)
             counts["bikes"] += 1
