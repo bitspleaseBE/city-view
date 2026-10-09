@@ -8,6 +8,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from cityview.directions import (
+    parse_oneway,
+    parse_oneway_bus,
+    parse_track_direction,
+    route_way_directions,
+)
 from cityview.geo import project
 from cityview.landmarks import attach_landmark, load_manifest
 from cityview.parking import parse_road_parking
@@ -774,6 +780,8 @@ def layout_from_osm(
     transit_lines: list[dict[str, Any]] = []
     transit_stops_raw: list[dict[str, Any]] = []
     way_refs = _route_refs_by_way(rels)
+    # Tram tracks carry no direction tag: it comes from the ordered route relations.
+    track_dirs = route_way_directions(rels, ways)
 
     for way in ways.values():
         tags = way.get("tags") or {}
@@ -796,6 +804,8 @@ def layout_from_osm(
                     "name": tags.get("name") or "",
                     "source": "osm",
                     "tunnel": _is_underground(tags),
+                    # 1 = vehicles drive along `points`, -1 = against, 0 = unknown / both.
+                    "direction": parse_track_direction(tags) or track_dirs.get(int(way["id"]), 0),
                 }
             )
             # Tram tracks are not roads; continue so they are not double-counted.
@@ -853,6 +863,10 @@ def layout_from_osm(
             parking = parse_road_parking(tags)
             if parking:
                 road["parking"] = parking
+            # Legal travel direction along `points` (1 / -1 / 0 = both ways), from the OSM
+            # oneway tags; buses may differ (oneway:bus, contraflow bus lanes).
+            road["oneway"] = parse_oneway(tags)
+            road["oneway_bus"] = parse_oneway_bus(tags)
             roads.append(road)
 
     for rel in rels.values():

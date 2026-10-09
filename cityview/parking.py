@@ -226,6 +226,10 @@ def plan_parked_cars(
         rid = int(road.get("id") or 0)
         centre_off = car_offset(half)
         my_name = road.get("name") or ""
+        try:
+            oneway = int(road.get("oneway") or 0)
+        except (TypeError, ValueError):
+            oneway = 0
         # Side streets / alleys that could be blocked by a parked car at this road's kerb.
         others: list[tuple[dict[str, Any], float]] = []
         for other in motor:
@@ -251,8 +255,16 @@ def plan_parked_cars(
                     continue
                 if len(placed) >= max_cars:
                     return placed
-                # Right-hand traffic: cars parked on the way's right face along it, on the left against it.
-                yaw = math.atan2(ty, tx) + (0.0 if side == "right" else math.pi)
+                # Cars face the legal travel direction of their kerb: one-way streets (OSM ``oneway``,
+                # 1 = along the points, -1 = against) face that way on both sides; two-way streets use
+                # right-hand traffic (right kerb faces along the way, left kerb against it).
+                if oneway > 0:
+                    facing_along = True
+                elif oneway < 0:
+                    facing_along = False
+                else:
+                    facing_along = side == "right"
+                yaw = math.atan2(ty, tx) + (0.0 if facing_along else math.pi)
                 if _blocked_spot(x, y, tx, ty, crossings, signals, stops, furniture, placed_grid, blocked):
                     continue
                 if any(

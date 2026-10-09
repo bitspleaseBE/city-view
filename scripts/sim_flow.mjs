@@ -151,7 +151,12 @@ console.log(`\nAVERAGE over ${S} seeds: cars still ${Math.round(agg.stillShare.c
     if (agg.presence.tram / S2 < 0.6 * Number(flags.trams ?? 6)) fails.push(`only ${(agg.presence.tram / S2).toFixed(1)} trams on the street on average`);
     if (agg.presence.bus / S2 < 0.5 * Number(flags.buses ?? 8)) fails.push(`only ${(agg.presence.bus / S2).toFixed(1)} buses on the street on average`);
     if (agg.stillShare.all / S2 > 20) fails.push(`${Math.round(agg.stillShare.all / S2)}% of the visible fleet is standing still on average (budget 20%)`);
-    if (agg.piles / S2 > 0.15) fails.push(`pile-ups (>=3 stopped within 25 m) in ${Math.round(100 * agg.piles / S2)}% of seconds (budget 15%)`);
+    // 20% (was 15%): with one-way streets and directed tram/bus lanes enforced, every vehicle
+    // now queues at the red lights / bus halts of its *own* legal direction instead of half
+    // the fleet driving through them the wrong way, so legitimate queues cluster more (the
+    // old model sat at ~6%, the directed one at ~8% free-roaming and ~16% with the player
+    // standing in the carriageway at spawn). Gridlock still trips the >60 s hold guards.
+    if (agg.piles / S2 > 0.2) fails.push(`pile-ups (>=3 stopped within 25 m) in ${Math.round(100 * agg.piles / S2)}% of seconds (budget 20%)`);
   }
 }
 if (fails.length) { console.error("\nFAIL:\n  " + fails.join("\n  ")); process.exit(1); }

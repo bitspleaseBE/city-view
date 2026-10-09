@@ -20,6 +20,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from cityview import trees as treeplan  # noqa: E402
+from cityview.roadclear import TRUNK_MARGIN, RoadIndex  # noqa: E402
 
 # Genus → canopy palette slot (indices into canopy_mats); others use per-tree tone.
 GENUS_CANOPY = {
@@ -114,7 +115,16 @@ def add_vegetation(
 
     wood = _Batch()
     leaves = _Batch()
-    counts = {"antwerp": 0, "osm": 0, "osm_row": 0, "fill": 0, "skipped_rail": 0, "bushes": 0}
+    counts = {
+        "antwerp": 0,
+        "osm": 0,
+        "osm_row": 0,
+        "fill": 0,
+        "skipped_rail": 0,
+        "skipped_road": 0,
+        "bushes": 0,
+    }
+    roads = RoadIndex.from_layout(layout)
 
     for tree in layout.get("trees") or []:
         x, y = float(tree["x"]), float(tree["y"])
@@ -122,6 +132,9 @@ def add_vegetation(
         clearance = treeplan.CLEAR_TREE if source == "fill" else treeplan.CLEAR_REAL_TRUNK
         if rails.within(x, y, clearance):
             counts["skipped_rail"] += 1  # safety net: nothing grows on a tram bed
+            continue
+        if roads.on_carriageway(x, y, TRUNK_MARGIN - 0.05):
+            counts["skipped_road"] += 1  # safety net: nothing grows in a traffic lane
             continue
         h = float(tree.get("height") or 8.0)
         r = float(tree.get("radius") or 2.5)

@@ -84,6 +84,14 @@ class PlanTests(unittest.TestCase):
             east = math.cos(c["yaw"]) > 0
             self.assertEqual(east, c["side"] == "right")
 
+    def test_one_way_streets_face_the_legal_direction_on_both_kerbs(self):
+        for oneway, east in ((1, True), (-1, False)):
+            road = _road(parking=BOTH)
+            road["oneway"] = oneway
+            cars = _plan([road])
+            self.assertTrue(cars)
+            self.assertTrue(all((math.cos(c["yaw"]) > 0) == east for c in cars))
+
     def test_cars_do_not_overlap_and_keep_off_junctions(self):
         side = _road(rid=2, parking=None, kind="residential", x0=0.0, x1=0.0, name="Zijstraat")
         side["points"] = [[0.0, -40.0], [0.0, 40.0]]
