@@ -17,10 +17,11 @@ BARRIER_KINDS = frozenset({"fence", "wall", "hedge", "retaining"})
 POST_RADIUS = {
     "bollard": 0.09, "hydrant": 0.14, "bin": 0.25, "cabinet": 0.38, "recycling": 0.65,
     "post_box": 0.28, "meter": 0.12, "flagpole": 0.08, "charging": 0.28, "vending": 0.35,
-    "artwork": 0.45, "guidepost": 0.12,
+    "artwork": 0.45, "guidepost": 0.12, "fountain": 0.7, "poster": 0.2,
 }
 BOX_KINDS = {
     "picnic_table": (0.9, 0.55),  # half_len, half_depth
+    "shelter": (1.6, 0.7),
 }
 
 

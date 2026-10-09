@@ -151,49 +151,62 @@ def _guidepost(p: Parts, b: Matrix) -> None:
     p.box("signal_white", b, (0.6, 0.01, 0.45), (0, 0.105, 1.85))
 
 
+def _shelter(p: Parts, b: Matrix) -> None:
+    # De Lijn-style wait bay: glass back + roof, open to the street (+Y).
+    for sx in (-1.4, 1.4):
+        p.box("metal", b, (0.06, 0.06, 2.4), (sx, -0.45, 1.2))
+    p.box("metal", b, (2.9, 0.06, 0.06), (0, -0.45, 2.4))
+    p.box("glass", b, (2.8, 0.04, 2.1), (0, -0.48, 1.15))  # back pane
+    p.box("metal", b, (3.0, 1.1, 0.05), (0, 0.0, 2.55))  # roof
+    p.box("bench_seat", b, (2.4, 0.35, 0.06), (0, -0.15, 0.48))
+
+
+def _fountain(p: Parts, b: Matrix) -> None:
+    p.cyl("plinth", b, 0.95, 0.35, (0, 0, 0.2), segs=12)
+    p.cyl("plinth", b, 0.55, 0.55, (0, 0, 0.55), segs=10)
+    p.cyl("water", b, 0.7, 0.12, (0, 0, 0.42), segs=12)
+
+
+def _poster(p: Parts, b: Matrix) -> None:
+    p.box("metal", b, (1.3, 0.28, 2.2), (0, 0, 1.15))
+    p.box("board", b, (1.1, 0.04, 1.7), (0, 0.16, 1.2))
+
+
 def add_clutter(layout: dict, rails, mats: dict) -> dict:
     """Create merged clutter meshes. ``mats`` maps part keys to materials."""
     parts = Parts()
     counts: dict[str, int] = {"skipped_rail": 0}
     for rec in layout.get("clutter") or []:
         x, y = float(rec["x"]), float(rec["y"])
-        if rails.within(x, y, CLEAR_FURNITURE) and rec["kind"] not in {"flagpole"}:
+        if rails.within(x, y, CLEAR_FURNITURE) and rec["kind"] not in {"flagpole", "shelter"}:
             counts["skipped_rail"] += 1
             continue
         b = Matrix.Translation(Vector((x, y, LIFT))) @ Matrix.Rotation(float(rec["yaw"]), 4, "Z")
         kind = rec["kind"]
-        if kind == "bin":
-            _bin(parts, b)
-        elif kind == "bike_rack":
-            _bike_rack(parts, b, int(rec.get("hoops") or 2))
-        elif kind == "bollard":
-            _bollard(parts, b)
-        elif kind == "hydrant":
-            _hydrant(parts, b)
-        elif kind == "post_box":
-            _post_box(parts, b)
-        elif kind == "recycling":
-            _recycling(parts, b, int(rec.get("bins") or 3))
-        elif kind == "cabinet":
-            _cabinet(parts, b)
-        elif kind == "meter":
-            _meter(parts, b)
-        elif kind == "flagpole":
-            _flagpole(parts, b)
-        elif kind == "lamp":
-            _lamp(parts, b)
-        elif kind == "picnic_table":
-            _picnic_table(parts, b)
-        elif kind == "charging":
-            _charging(parts, b)
-        elif kind == "vending":
-            _vending(parts, b)
-        elif kind == "artwork":
-            _artwork(parts, b)
-        elif kind == "guidepost":
-            _guidepost(parts, b)
-        else:
+        builders = {
+            "bin": lambda: _bin(parts, b),
+            "bike_rack": lambda: _bike_rack(parts, b, int(rec.get("hoops") or 2)),
+            "bollard": lambda: _bollard(parts, b),
+            "hydrant": lambda: _hydrant(parts, b),
+            "post_box": lambda: _post_box(parts, b),
+            "recycling": lambda: _recycling(parts, b, int(rec.get("bins") or 3)),
+            "cabinet": lambda: _cabinet(parts, b),
+            "meter": lambda: _meter(parts, b),
+            "flagpole": lambda: _flagpole(parts, b),
+            "lamp": lambda: _lamp(parts, b),
+            "picnic_table": lambda: _picnic_table(parts, b),
+            "charging": lambda: _charging(parts, b),
+            "vending": lambda: _vending(parts, b),
+            "artwork": lambda: _artwork(parts, b),
+            "guidepost": lambda: _guidepost(parts, b),
+            "shelter": lambda: _shelter(parts, b),
+            "fountain": lambda: _fountain(parts, b),
+            "poster": lambda: _poster(parts, b),
+        }
+        build = builders.get(kind)
+        if build is None:
             continue
+        build()
         counts[kind] = counts.get(kind, 0) + 1
     for key, bm in parts.meshes.items():
         if not bm.verts or key not in mats:

@@ -4044,6 +4044,9 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "plinth": principled("art_plinth", (0.55, 0.52, 0.48, 1.0), 0.85),
         "artwork": principled("art_piece", (0.35, 0.38, 0.42, 1.0), 0.55, metallic=0.15),
         "board": principled("info_board", (0.18, 0.22, 0.16, 1.0), 0.7),
+        "glass": principled("shelter_glass", (0.55, 0.62, 0.68, 1.0), 0.08, metallic=0.05),
+        "bench_seat": wood_mat,
+        "water": principled("fountain_water", (0.25, 0.42, 0.55, 1.0), 0.15),
     }
 
     # Only bake materials for types/variants present in this tile — keeps GLB lean.
