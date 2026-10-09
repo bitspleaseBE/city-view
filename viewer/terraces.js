@@ -46,9 +46,17 @@ export function createTerraces(scene, THREE, records, opts = {}) {
   if (!nTables) return null;
 
   const metal = new THREE.MeshStandardMaterial({ color: 0x2a2b2d, roughness: 0.45, metalness: 0.7 });
-  const top = new THREE.MeshStandardMaterial({ color: 0xd9d4ca, roughness: 0.5, metalness: 0.1 });
+  const top = new THREE.MeshStandardMaterial({
+    color: 0xd9d4ca,
+    roughness: 0.5,
+    metalness: 0.1,
+    emissive: 0xffc070,
+    emissiveIntensity: 0,
+  });
   const rattan = new THREE.MeshStandardMaterial({ color: 0x8a6440, roughness: 0.85 });
   const cloth = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, side: THREE.DoubleSide });
+  const dayCloth = cloth.color.clone();
+  const nightCloth = new THREE.Color(0x6a6570);
 
   const parts = [
     { geo: new THREE.CylinderGeometry(0.34, 0.34, 0.03, 18), mat: top, per: "table", y: 0.74 },
@@ -153,6 +161,7 @@ export function createTerraces(scene, THREE, records, opts = {}) {
   }
 
   let lastKey = "";
+  let nightGlow = 0;
   layout();
   return {
     count: nTables,
@@ -165,6 +174,14 @@ export function createTerraces(scene, THREE, records, opts = {}) {
       if (key === lastKey) return;
       lastKey = key;
       layout();
+    },
+    /** Soft table-lamp warmth + cooler parasols after dark (``glow`` 0 day → 1 night). */
+    setNight(glow) {
+      const g = Math.max(0, Math.min(1, Number(glow) || 0));
+      if (Math.abs(g - nightGlow) < 0.02) return;
+      nightGlow = g;
+      top.emissiveIntensity = 0.55 * g;
+      cloth.color.copy(dayCloth).lerp(nightCloth, 0.55 * g);
     },
   };
 }
