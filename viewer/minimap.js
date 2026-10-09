@@ -155,12 +155,26 @@ export function createMinimap(THREE, opts = {}) {
   });
 
   // ---- Draw dynamic elements each frame ----
-  function draw(playerPos, traffic, transit, pedestrians, mode, micromobility) {
+  function draw(playerPos, traffic, transit, pedestrians, mode, micromobility, velo) {
     if (!visible) return;
 
     // Clear and redraw from background
     ctx.clearRect(0, 0, W, H);
     ctx.drawImage(bgCanvas, 0, 0);
+
+    // Velo docking stations
+    if (velo && velo.stations) {
+      for (const st of velo.stations) {
+        const p = toPixel(st.x, st.z);
+        ctx.fillStyle = "#c8102e";
+        ctx.beginPath();
+        ctx.arc(p.u, p.v, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
 
     // Transit vehicles
     if (transit && transit.vehicles) {

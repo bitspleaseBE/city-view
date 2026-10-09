@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>City View — Klein Antwerpen · Gounod tram</title>
+    <title>City View — Klein Antwerpen · Velo Harmonie</title>
     <style>
       :root {
         --ink: #1a2430;
@@ -244,7 +244,7 @@
         <rect x="0" y="152" width="1200" height="8" fill="#c4b59a" />
       </svg>
       <div class="ld-card">
-        <p class="ld-kicker">Klein Antwerpen · Gounod</p>
+        <p class="ld-kicker">Klein Antwerpen · Velo Harmonie</p>
         <h2>Antwerp is loading<span class="ld-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></h2>
         <div class="ld-track"><div class="ld-fill" id="ld-fill"></div></div>
         <p class="ld-sub"><span id="ld-stage">Fetching the streets</span><span id="ld-pct"></span></p>
@@ -308,7 +308,7 @@
         window.__glbPromise.catch(() => {}); // surfaced by the viewer module
       })();
     </script>
-    <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E tram · V free · N day/night</div>
+    <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E Velo / scooter / tram · V free · N day/night</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Walk</button>
       <button type="button" id="btn-free">Free view</button>
@@ -321,10 +321,10 @@
     </div>
     <div id="prompt"></div>
     <div id="hud">
-      <h1>Gounod tram · Klein Antwerpen · 2018</h1>
-      <p>
-        Spawn at the Gounod halt. Press E on a stopped tram to ride; E again to get off at the next stop.
-      </p>
+        <h1>Velo Harmonie · Klein Antwerpen · 2018</h1>
+        <p>
+          Spawn at Velo Harmonie (042). Press E for a Velo, shared scooter, or stopped tram.
+        </p>
     </div>
     <script type="importmap">
       {
@@ -344,10 +344,12 @@
       import { createTransit } from "./transit.js";
       import { createPedestrians } from "./pedestrians.js";
       import { createMicromobility } from "./micromobility.js";
+      import { createVelo } from "./velo.js";
       import { createScooters } from "./scooters.js";
       import { createPlayerMotion } from "./player-motion.js";
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
+      import { createOutdoorsGuard } from "./outdoors.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -535,6 +537,7 @@
         get transit() { return transit; },
         scene,
         get micromobility() { return micromobility; },
+        get velo() { return velo; },
         get scooters() { return scooters; },
         get motion() { return playerMotion; },
         get pixelRatio() { return pixelRatio; },
@@ -662,7 +665,9 @@
       let transit = { update() {}, dispose() {} };
       let pedestrians = null;
       let micromobility = null;
+      let velo = null;
       let scooters = null;
+      let outdoors = null;
       const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
       /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
       function groundAt(x, z) {
@@ -687,6 +692,7 @@
         };
         if (micromobility) for (const v of micromobility.vehicles) push(v.pos.x, v.pos.z, 0.85);
         if (scooters && !scooters.isRiding()) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
+        if (outdoors) outdoors.ensureOutdoors(pos);
       }
       let minimap = null;
       let streetLocator = null;
@@ -702,6 +708,19 @@
         else if (pos.x > maxX) pos.x = maxX;
         if (pos.z < minZ) pos.z = minZ;
         else if (pos.z > maxZ) pos.z = maxZ;
+      }
+
+      /** District bounds + never inside a building footprint. */
+      function clampWalkerXZ(pos) {
+        softClampXZ(pos, playBounds);
+        if (outdoors) outdoors.ensureOutdoors(pos);
+      }
+
+      function snapWalkSavedOutdoors() {
+        if (!outdoors) return;
+        const yawHolder = { yaw: walkSaved.yaw };
+        const snapped = outdoors.ensureOutdoors(walkSaved, yawHolder);
+        if (snapped) walkSaved.yaw = yawHolder.yaw;
       }
 
       function setupDistrictBounds(root) {
@@ -725,8 +744,8 @@
           maxZ = mid + 20;
         }
         playBounds = { minX, maxX, minZ, maxZ };
-        softClampXZ(walkControls.getObject().position, playBounds);
-        softClampXZ(spawnPos, playBounds);
+        clampWalkerXZ(walkControls.getObject().position);
+        clampWalkerXZ(spawnPos);
 
         // One cheap skirt plane so looking past the GLB ground isn't a black hole.
         const skirtSpan = Math.max(size.x, size.z) * 2.8;
@@ -822,6 +841,8 @@
 
       function setMode(next) {
         if (transit.isRiding && transit.isRiding()) return;
+        if (velo && velo.isRiding && velo.isRiding()) return;
+        if (scooters && scooters.isRiding()) return;
         const prevMode = mode;
         mode = next;
         btnWalk.classList.toggle("active", mode === "walk");
@@ -830,23 +851,28 @@
           avatar.visible = false;
           if (prevMode === "free") {
             // Leave top-down: restore the walker's spot and an upright camera.
+            // Minimap teleports can land walkSaved inside a footprint — snap out first.
+            snapWalkSavedOutdoors();
+            softClampXZ(walkSaved, playBounds);
             camera.up.copy(UP_WORLD);
             camera.rotation.set(0, walkSaved.yaw, 0, "YXZ");
             walkControls.getObject().position.set(walkSaved.x, eyeHeight, walkSaved.z);
+            walkControls.getObject().rotation.y = walkSaved.yaw;
           }
           walkControls.getObject().position.y = eyeHeight;
-          softClampXZ(walkControls.getObject().position, playBounds);
-          hint.textContent = "Walk: click + WASD · Shift sprint · Space jump · E tram · Esc · V free · N night · M map";
-          status.textContent = "Walking — Gounod tram halt";
+          clampWalkerXZ(walkControls.getObject().position);
+          hint.textContent = "Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · Esc · V free · N night · M map";
+          status.textContent = "Walking — Velo Harmonie";
         } else {
           if (walkControls.isLocked) walkControls.unlock();
           const p = walkControls.getObject().position;
-          softClampXZ(p, playBounds);
+          clampWalkerXZ(p);
           if (prevMode !== "free") {
             walkSaved.x = p.x;
             walkSaved.z = p.z;
             walkSaved.yaw = walkControls.getObject().rotation.y;
           }
+          snapWalkSavedOutdoors();
           avatar.position.set(walkSaved.x, 0, walkSaved.z);
           avatar.rotation.y = walkSaved.yaw;
           avatar.visible = true;
@@ -862,10 +888,10 @@
       function applyAlightDrop(drop) {
         if (!drop) return;
         walkControls.getObject().position.set(drop.x, eyeHeight, drop.z);
-        softClampXZ(walkControls.getObject().position, playBounds);
+        clampWalkerXZ(walkControls.getObject().position);
         rideEl.style.display = "none";
         promptEl.style.display = "none";
-        hint.textContent = "Walk: click + WASD · E tram · Esc · V free · N night";
+        hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
         status.textContent = "Back on the street";
         if (mode === "walk" && !walkControls.isLocked) {
           // Keep unlocked until click — pointer lock after ride is flaky mid-frame.
@@ -891,9 +917,54 @@
         return result.action !== "none";
       }
 
-      function handleTransitE() {
+      function handleInteractE() {
         if (mode !== "walk") return;
         const p = walkControls.getObject().position;
+        const onTram = transit.isRiding && transit.isRiding();
+        const onVelo = velo && velo.isRiding && velo.isRiding();
+        // Prefer Velo when riding a bike or standing at a station; otherwise rentable scooter / tram.
+        if (velo && (onVelo || (!onTram && velo.getPrompt && velo.getPrompt({ x: p.x, z: p.z })))) {
+          const result = velo.tryInteract({
+            x: p.x,
+            z: p.z,
+            yaw: playerMotion.yaw(),
+          });
+          if (result.action === "take") {
+            avatar.visible = false;
+            rideEl.style.display = "block";
+            rideLine.textContent = "Velo";
+            rideNext.textContent = result.name;
+            promptEl.style.display = "none";
+            hint.textContent = "Cycling — WASD · E hop off / return at a station";
+            status.textContent =
+              result.capacity === "—"
+                ? `On a Velo · ${result.name}`
+                : `On a Velo · ${result.bikes}/${result.capacity} left at ${result.name}`;
+            return;
+          }
+          if (result.action === "return") {
+            avatar.visible = mode !== "walk";
+            rideEl.style.display = "none";
+            promptEl.style.display = "none";
+            hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
+            status.textContent = `Returned Velo at ${result.name}`;
+            return;
+          }
+          if (result.action === "dismount") {
+            avatar.visible = mode !== "walk";
+            rideEl.style.display = "none";
+            promptEl.style.display = "none";
+            hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
+            status.textContent = "Hopped off — E remounts the parked bike";
+            return;
+          }
+          if (result.action === "empty") {
+            status.textContent = "No bikes left here";
+            return;
+          }
+          if (onVelo) return;
+        }
+        if (onVelo) return;
         if (handleScooterE(p)) return;
         const result = transit.tryInteract({ x: p.x, z: p.z });
         if (result.action === "board") {
@@ -914,7 +985,24 @@
         }
       }
 
-      function refreshTransitHud() {
+      function refreshRideHud() {
+        const onVelo = velo && velo.isRiding && velo.isRiding();
+        const p = walkControls.getObject().position;
+        if (onVelo) {
+          const hud = velo.getRideHud();
+          rideEl.style.display = "block";
+          rideLine.textContent = "Velo";
+          rideNext.textContent = hud.name || "city bike";
+          const prompt = velo.getPrompt({ x: p.x, z: p.z });
+          if (prompt) {
+            promptEl.style.display = "block";
+            promptEl.textContent = prompt;
+          } else {
+            promptEl.style.display = "none";
+          }
+          if (hud.toast) status.textContent = hud.toast;
+          return;
+        }
         const hud = transit.getRideHud ? transit.getRideHud() : { riding: false };
         const sHud = scooters ? scooters.getRideHud() : { riding: false };
         if (sHud.toast) status.textContent = sHud.toast;
@@ -925,7 +1013,6 @@
           promptEl.style.display = "none";
           return;
         }
-        const p = walkControls.getObject().position;
         const scooterPrompt = !hud.riding && mode === "walk" && scooters ? scooters.getPrompt({ x: p.x, z: p.z }) : null;
         if (scooterPrompt) {
           promptEl.style.display = "block";
@@ -943,13 +1030,20 @@
             rideNext.textContent = `Next halt: ${hud.nextHalt}`;
           }
           promptEl.style.display = "none";
-        } else if (hud.prompt) {
-          rideEl.style.display = "none";
-          promptEl.style.display = "block";
-          promptEl.textContent = hud.prompt;
         } else {
-          if (!transit.isRiding || !transit.isRiding()) rideEl.style.display = "none";
-          promptEl.style.display = "none";
+          const veloPrompt = velo && velo.getPrompt ? velo.getPrompt({ x: p.x, z: p.z }) : null;
+          if (veloPrompt) {
+            rideEl.style.display = "none";
+            promptEl.style.display = "block";
+            promptEl.textContent = veloPrompt;
+          } else if (hud.prompt) {
+            rideEl.style.display = "none";
+            promptEl.style.display = "block";
+            promptEl.textContent = hud.prompt;
+          } else {
+            if (!transit.isRiding || !transit.isRiding()) rideEl.style.display = "none";
+            promptEl.style.display = "none";
+          }
         }
       }
 
@@ -962,16 +1056,16 @@
         if (!walkControls.isLocked) walkControls.lock();
       });
       walkControls.addEventListener("lock", () => {
-        hint.textContent = "WASD · mouse look · Space jump · Esc · V free view · N night · M map";
+        hint.textContent = "WASD · mouse look · Space jump · E Velo / tram · Esc · V free · N night · M map";
       });
       walkControls.addEventListener("unlock", () => {
-        if (mode === "walk") hint.textContent = "Walk: click + WASD · Space jump · V free view · N night · M map";
+        if (mode === "walk") hint.textContent = "Walk: click + WASD · E Velo / tram · V free · N night · M map";
       });
 
       window.addEventListener("keydown", (e) => {
         if (e.code === "KeyE") {
           e.preventDefault();
-          handleTransitE();
+          handleInteractE();
           return;
         }
         if (e.code === "KeyN") {
@@ -987,6 +1081,7 @@
         }
         if (e.code === "KeyV") {
           if (transit.isRiding && transit.isRiding()) return;
+          if (velo && velo.isRiding && velo.isRiding()) return;
           if (scooters && scooters.isRiding()) return;
           setMode(mode === "walk" ? "free" : "walk");
           return;
@@ -1012,6 +1107,7 @@
         node.getWorldPosition(p);
         spawnPos.copy(p);
         if (Math.abs(p.y - eyeHeight) > 3) spawnPos.y = eyeHeight;
+        clampWalkerXZ(spawnPos);
         walkControls.getObject().position.copy(spawnPos);
         const e = new THREE.Euler().setFromQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
         walkControls.getObject().rotation.y = e.y;
@@ -1019,6 +1115,7 @@
 
       function applySpawnJson(spawn) {
         spawnPos.set(spawn.x, spawn.z, -spawn.y);
+        clampWalkerXZ(spawnPos);
         walkControls.getObject().position.copy(spawnPos);
         walkControls.getObject().rotation.y = spawn.yaw ?? 0;
       }
@@ -1203,6 +1300,7 @@
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
           });
           micromobility = await createMicromobility(scene, THREE, { count: 28 });
+          velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             groundAt,
@@ -1215,20 +1313,30 @@
             height: 200,
           });
           streetLocator = await createStreetLocator();
+          outdoors = await createOutdoorsGuard();
+          if (outdoors.ready) {
+            clampWalkerXZ(walkControls.getObject().position);
+            clampWalkerXZ(spawnPos);
+            console.info(`[cityview] outdoors guard: ${outdoors.count} building footprints`);
+          } else {
+            console.warn("[cityview] outdoors guard: no buildings.json — indoor walk possible");
+          }
           // Cars give way to trams/buses instead of driving through them.
           if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
           const nCars = traffic.count ?? 0;
           const nTransit = transit.count ?? 0;
           const nPeds = pedestrians?.groups?.reduce((n, g) => n + g.members.length, 0) ?? 0;
           const nMicro = micromobility?.count ?? 0;
+          const nVelo = velo?.count ?? 0;
           const bits = [];
           if (nCars > 0) bits.push(`${nCars} cars`);
           if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
           if (nPeds > 0) bits.push(`${nPeds} people`);
           if (nMicro > 0) bits.push(`${nMicro} bikes/scooters`);
+          if (nVelo > 0) bits.push(`${nVelo} Velo stations`);
           status.textContent =
             bits.length > 0
-              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · E boards the tram`
+              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · E Velo / tram`
               : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
@@ -1319,10 +1427,20 @@
         }
         adaptResolution(rawDt);
 
-        const riding = transit.isRiding && transit.isRiding();
+        const ridingTram = transit.isRiding && transit.isRiding();
+        const ridingVelo = velo && velo.isRiding && velo.isRiding();
+        const riding = ridingTram;
 
         // ---- Jump physics (spacebar) ----
-        if (keys.space && JUMP.cooldown <= 0 && !JUMP.active && mode === "walk" && !riding && !(scooters && scooters.isRiding())) {
+        if (
+          keys.space &&
+          JUMP.cooldown <= 0 &&
+          !JUMP.active &&
+          mode === "walk" &&
+          !riding &&
+          !ridingVelo &&
+          !(scooters && scooters.isRiding())
+        ) {
           JUMP.v = JUMP.strength;
           JUMP.active = true;
           JUMP.cooldown = 0.3; // prevent re-trigger
@@ -1341,14 +1459,24 @@
 
         const onScooter = scooters && scooters.isRiding();
         if (!riding && mode === "walk" && walkControls.isLocked) {
-          const kind = onScooter ? "scooter" : "walk";
+          const kind = ridingVelo ? "velo" : onScooter ? "scooter" : "walk";
           const w = walkControls.getObject();
           _beforeStep.x = w.position.x;
           _beforeStep.z = w.position.z;
           playerMotion.step(dt, keys, kind);
           if (!JUMP.active) w.position.y = playerMotion.eye(kind);
-          softClampXZ(w.position, playBounds);
-          if (!onScooter) pushOutOfSolids(w.position);
+          clampWalkerXZ(w.position);
+          if (outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep)) playerMotion.bump(0.5);
+          if (!onScooter && !ridingVelo) pushOutOfSolids(w.position);
+          if (ridingVelo && velo.update) {
+            velo.update(dt, {
+              x: w.position.x,
+              z: w.position.z,
+              yaw: playerMotion.yaw(),
+              moving: Math.abs(playerMotion.speed) > 0.05,
+              speed: playerMotion.speed,
+            });
+          }
         } else {
           playerMotion.stop();
         }
@@ -1411,7 +1539,7 @@
             const { street, changed } = streetLocator.update(ppos.x, ppos.z);
             if (changed && street) minimap.showStreetName(street);
           }
-          minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility);
+          minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility, velo);
         }
 
         // Auto-alight when the requested stop dwell begins.
@@ -1423,7 +1551,7 @@
           camera.lookAt(_rideLook);
         }
 
-        refreshTransitHud();
+        refreshRideHud();
 
         renderer.render(scene, camera);
         requestAnimationFrame(tick);

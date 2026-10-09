@@ -21,24 +21,24 @@
     "style_policy": "historic",
     "osm_cache": "harmonie",
     "spawn": {
-      "label": "Antwerpen Gounod tram halt",
-      "lat": 51.2055821,
-      "lon": 4.4100280,
+      "label": "Velo Harmonie (042)",
+      "lat": 51.20228,
+      "lon": 4.41207,
       "eye_height": 1.7
     }
   },
   "klein-antwerpen": {
     "title": "Klein Antwerpen · Harmonie · 2018",
-    "description": "Human spawn at the Gounod tram halt. LOD2 roofs and style-driven procedural facades on street-facing edges.",
+    "description": "Human spawn at Velo Harmonie (042) on Mechelsesteenweg. LOD2 roofs and style-driven procedural facades on street-facing edges.",
     "bbox": [51.1970, 4.4040, 51.2075, 4.4195],
     "origin": [51.2017, 4.4114],
     "style_policy": "historic",
     "osm_cache": "harmonie",
     "viewer_glb": "klein_antwerpen.glb",
     "spawn": {
-      "label": "Antwerpen Gounod tram halt",
-      "lat": 51.2055821,
-      "lon": 4.4100280,
+      "label": "Velo Harmonie (042)",
+      "lat": 51.20228,
+      "lon": 4.41207,
       "eye_height": 1.7
     }
   }
