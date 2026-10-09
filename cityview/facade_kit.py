@@ -155,7 +155,7 @@ TYPE_WALL_TILE: dict[str, str] = {
     "school": "stucco_cream",
     "restaurant": "stucco_cream",
     "supermarket": "plaster_white",
-    "church": "brick_brown",
+    "church": "brick_red",
     "hospital": "plaster_white",
 }
 DEFAULT_TYPE = "eclectic"
@@ -178,7 +178,7 @@ DOORS: dict[str, tuple[float, float]] = {
     "facade_16": (0.28, 0.14), "facade_17": (0.62, 0.15), "facade_18": (0.48, 0.12),
     "facade_19": (0.78, 0.15), "facade_20": (0.62, 0.15), "facade_21": (0.10, 0.12),
     "facade_22": (0.52, 0.10), "facade_23": (0.38, 0.13), "facade_24": (0.23, 0.15),
-    "facade_25": (0.64, 0.16), "facade_26": (0.27, 0.17), "facade_27": (0.65, 0.12),
+    "facade_25": (0.64, 0.16), "facade_26": (0.27, 0.30), "facade_27": (0.65, 0.12),
     "facade_28": (0.47, 0.10), "facade_29": (0.50, 0.14), "facade_30": (0.63, 0.12),
     "facade_31": (0.77, 0.10), "facade_32": (0.50, 0.14), "facade_33": (0.30, 0.14),
     "facade_34": (0.62, 0.15), "facade_35": (0.70, 0.15), "facade_36": (0.78, 0.12),
@@ -204,6 +204,84 @@ TARGET_HOUSE_M = 6.4
 TOWER_LEVELS = 7
 TOWER_HOUSE_M = 9.0
 MIN_CROP_FRAC = 0.5
+
+
+def _door_spans(fid: str) -> list[tuple[float, float]]:
+    door = DOORS.get(fid)
+    if not door:
+        return []
+    centre, width = door
+    lo, hi = centre - width * 0.5, centre + width * 0.5
+    return [(max(0.0, lo), min(1.0, hi))] if hi > lo else []
+
+
+def _window_spans(fid: str) -> list[tuple[float, float]]:
+    spans: list[tuple[float, float]] = []
+    for x0, x1, _z0, _z1 in (window_layout().get(fid) or {}).get("windows", []):
+        lo, hi = float(x0), float(x1)
+        if hi > lo:
+            spans.append((max(0.0, lo), min(1.0, hi)))
+    return spans
+
+
+def _feature_spans(fid: str) -> list[tuple[float, float]]:
+    """Horizontal spans that should stay whole under a crop (doors + window bays)."""
+    return _door_spans(fid) + _window_spans(fid)
+
+
+def _edge_cuts(edge: float, lo: float, hi: float, margin: float = 0.025) -> bool:
+    """True when ``edge`` splits the span by more than ``margin`` (ignore hairline clips)."""
+    return lo + margin < edge < hi - margin
+
+
+def choose_crop_span(fid: str, frac: float, seed_key: str) -> tuple[float, float]:
+    """Pick a ``frac``-wide slice of the elevation that keeps doors/windows intact.
+
+    Narrow street edges used to take a random left- or right-aligned crop; when that
+    cut through a front door or a window bay you got a half-door / half top floor on
+    the party wall. Prefer a window that either fully includes or fully excludes each
+    feature; never bisect a door when any alternative exists.
+    """
+    frac = max(0.05, min(1.0, frac))
+    if frac >= 0.999:
+        return 0.0, 1.0
+    doors = _door_spans(fid)
+    windows = _window_spans(fid)
+    features = doors + windows
+    candidates = {0.0, 1.0 - frac}
+    for lo, hi in features:
+        # Align crop edges to feature edges (include whole feature or sit just outside).
+        for start in (lo, hi - frac, hi, lo - frac):
+            if 0.0 <= start <= 1.0 - frac + 1e-9:
+                candidates.add(max(0.0, min(1.0 - frac, start)))
+
+    prefer_left = _unit(f"{seed_key}:side") < 0.5
+
+    def score(f0: float) -> float:
+        f1 = f0 + frac
+        s = 0.0
+        for lo, hi in doors:
+            if _edge_cuts(f0, lo, hi) or _edge_cuts(f1, lo, hi):
+                s -= 50.0  # half doors read as broken geometry
+            elif f0 <= lo + 1e-4 and hi <= f1 + 1e-4:
+                s += 8.0
+            elif hi <= f0 + 1e-4 or lo >= f1 - 1e-4:
+                s += 2.0
+        for lo, hi in windows:
+            if _edge_cuts(f0, lo, hi) or _edge_cuts(f1, lo, hi):
+                s -= 8.0
+            elif f0 <= lo + 1e-4 and hi <= f1 + 1e-4:
+                s += 2.0
+            elif hi <= f0 + 1e-4 or lo >= f1 - 1e-4:
+                s += 0.5
+        if prefer_left and f0 <= 1e-6:
+            s += 0.15
+        if not prefer_left and f0 >= 1.0 - frac - 1e-6:
+            s += 0.15
+        return s
+
+    best = max(candidates, key=lambda f0: (score(f0), -f0 if prefer_left else f0))
+    return best, best + frac
 
 
 def cell_ids() -> list[str]:
@@ -399,13 +477,12 @@ def plan_facade_quads(
         u0, _v0, u1, _v1 = cell_uv_rect(fid)
         width_m = FACADES[fid]["width_m"]
         # Narrow edge: show a slice of the house instead of squeezing it.
+        # Align the slice so doors / window bays stay whole (no half-door party walls).
         if reps == 1 and rep_len < width_m * 0.75:
             frac = max(MIN_CROP_FRAC, rep_len / width_m)
-            span = (u1 - u0) * frac
-            if _unit(f"{seed}:{fid}:side") < 0.5:
-                u1 = u0 + span
-            else:
-                u0 = u1 - span
+            f0, f1 = choose_crop_span(fid, frac, f"{seed}:{fid}")
+            span_u = u1 - u0
+            u0, u1 = u0 + f0 * span_u, u0 + f1 * span_u
         for piece in plan_house_bands(fid, eaves_z):
             quads.append(
                 {

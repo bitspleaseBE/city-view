@@ -23,6 +23,7 @@ from cityview import parking as parking_plan  # noqa: E402
 from cityview.landmarks import LANDMARKS_DIR, resolve_landmark_photo  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 from cityview.shop_brands import fascia_for_brand  # noqa: E402
+from cityview.signals import face_dir, pedestrian_signal_yaw, vehicle_signal_yaw  # noqa: E402
 
 _BLENDER_DIR = str(Path(__file__).resolve().parent)
 if _BLENDER_DIR not in sys.path:
@@ -33,6 +34,14 @@ import clutter_blender  # noqa: E402
 import courtyards_blender  # noqa: E402
 import roadware_blender  # noqa: E402
 import trees_blender  # noqa: E402
+try:
+    import velo_blender  # noqa: E402
+except ImportError:  # optional — Velo docks ship separately
+    velo_blender = None
+try:
+    import cars_blender  # noqa: E402
+except ImportError:  # optional — Kenney car GLBs; box bodies otherwise
+    cars_blender = None
 
 # Surface rail corridors for the current build (set in build()).
 RAILS: RailIndex = RailIndex([])
@@ -225,13 +234,14 @@ STYLES = {
         "window": "ribbon",
     },
     "church": {
-        "wall": (0.36, 0.32, 0.28, 1.0),
-        "roof": (0.12, 0.11, 0.10, 1.0),
-        "frame": (0.08, 0.07, 0.06, 1.0),
-        "glass": (0.18, 0.22, 0.24, 1.0),
-        "plinth": (0.26, 0.24, 0.22, 1.0),
-        "trim": (0.58, 0.54, 0.48, 1.0),
+        "wall": (0.52, 0.28, 0.22, 1.0),
+        "roof": (0.14, 0.14, 0.15, 1.0),
+        "frame": (0.42, 0.40, 0.36, 1.0),
+        "glass": (0.14, 0.20, 0.24, 1.0),
+        "plinth": (0.38, 0.36, 0.34, 1.0),
+        "trim": (0.62, 0.58, 0.52, 1.0),
         "window": "arch",
+        "roof_kind": "hip",
     },
     "hospital": {
         "wall": (0.84, 0.82, 0.76, 1.0),
@@ -1688,7 +1698,7 @@ def add_landmark_photo_quad(
     crop: list[float],
     proud: float = 0.35,
 ) -> None:
-    """Photo elevation dressed onto one street wall (proud of the extruded mass, not a free billboard)."""
+    """Thin photo plane on one street wall (hospitals). Prefer ``add_church_photo_face`` for churches."""
     x0, y0 = p0
     x1, y1 = p1
     length = math.hypot(x1 - x0, y1 - y0)
@@ -1723,6 +1733,108 @@ def add_landmark_photo_quad(
     mesh.update()
     link(bpy.data.objects.new(name, mesh))
 
+
+def add_church_photo_face(
+    name: str,
+    p0: list[float],
+    p1: list[float],
+    outward: list[float],
+    facade_h: float,
+    photo_path: Path,
+    crop: list[float],
+    church_mats: dict,
+    thickness: float = 0.95,
+) -> None:
+    """Thick street elevation: photo on the front face, brick/stone on the volume sides."""
+    x0, y0 = p0
+    x1, y1 = p1
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length < 2.0 or facade_h < 4.0:
+        return
+    nx, ny = outward
+    nl = math.hypot(nx, ny) or 1.0
+    nx, ny = nx / nl, ny / nl
+    yaw = math.atan2(y1 - y0, x1 - x0)
+    ux, uy = math.cos(yaw), math.sin(yaw)
+    mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
+    # Centre of the slab sits half-thickness proud of the extruded ring face.
+    cx = mx + nx * (thickness * 0.5 + 0.08)
+    cy = my + ny * (thickness * 0.5 + 0.08)
+    photo = photo_material_cropped(f"{name}_photo", photo_path, crop)
+    brick = church_mats["brick"]
+    stone = church_mats["stone"]
+    mesh = bpy.data.meshes.new(name)
+    mesh.materials.append(photo)   # 0
+    mesh.materials.append(brick)   # 1
+    mesh.materials.append(stone)   # 2
+    bm = bmesh.new()
+    uv_layer = bm.loops.layers.uv.verify()
+    half = length * 0.985 * 0.5
+    rightwards = (uy * nx - ux * ny) > 0
+    # Solid mass so sides/top read as brick depth next to townhouses.
+    _append_box(bm, cx, cy, facade_h * 0.5, length * 0.985, thickness, facade_h, yaw, 1)
+    # Stone plinth along the street face
+    _append_box(
+        bm,
+        mx + nx * (thickness * 0.55 + 0.08),
+        my + ny * (thickness * 0.55 + 0.08),
+        0.55,
+        length * 0.99,
+        thickness * 0.7,
+        1.1,
+        yaw,
+        2,
+    )
+    # Photo sits on the street face of that slab.
+    ox, oy = mx + nx * (thickness + 0.1), my + ny * (thickness + 0.1)
+
+    def corner(a, z):
+        return (ox + ux * a, oy + uy * a, z)
+
+    pts = [corner(-half, 0.04), corner(half, 0.04), corner(half, facade_h), corner(-half, facade_h)]
+    uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+    if not rightwards:
+        pts = [pts[1], pts[0], pts[3], pts[2]]
+        uvs = [(1.0, 0.0), (0.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+    _append_photo_quad(bm, uv_layer, pts, uvs, 0)
+    # Shoulder gable peak so the west front reads as a church, not a flat box.
+    gable_w = min(length * 0.55, max(6.0, length * 0.42))
+    gable_h = min(5.5, max(3.2, facade_h * 0.22))
+    _append_box(
+        bm,
+        mx + nx * (thickness * 0.45 + 0.05),
+        my + ny * (thickness * 0.45 + 0.05),
+        facade_h + gable_h * 0.45,
+        gable_w,
+        thickness * 0.85,
+        gable_h,
+        yaw,
+        1,
+    )
+    # Stone coping on the gable
+    _append_box(
+        bm,
+        mx + nx * (thickness * 0.5 + 0.08),
+        my + ny * (thickness * 0.5 + 0.08),
+        facade_h + gable_h + 0.15,
+        gable_w * 1.05,
+        0.35,
+        0.28,
+        yaw,
+        2,
+    )
+    bm.normal_update()
+    apply_planar_uvs(
+        [f for f in bm.faces if f.material_index != 0],
+        uv_layer,
+        float(church_mats["brick_tile_m"]),
+    )
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(name, mesh))
+
+
 def _primary_street_edge(
     bldg: dict,
     ring: list[list[float]],
@@ -1754,17 +1866,146 @@ def _primary_street_edge(
     return best
 
 
-def _append_pyramid_spire(bm, cx: float, cy: float, z0: float, base: float, height: float, yaw: float, mat_i: int) -> None:
-    """Tapered box stack that reads as a pyramidal church spire."""
-    steps = 7
-    for i in range(steps):
-        t0 = i / steps
-        t1 = (i + 1) / steps
-        s0 = 1.0 - t0 * 0.92
-        s1 = 1.0 - t1 * 0.92
-        mid = 0.5 * (s0 + s1)
-        zh = height / steps
-        _append_box(bm, cx, cy, z0 + (i + 0.5) * zh, base * mid, base * mid, zh * 1.05, yaw, mat_i)
+def _uv_mesh_faces(mesh, tile_m: float = 1.6) -> None:
+    """Planar UVs so brick/stone/slate tiles read on extruded church volumes."""
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.normal_update()
+    uv_layer = bm.loops.layers.uv.verify()
+    apply_planar_uvs(list(bm.faces), uv_layer, tile_m)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+
+
+def make_church_materials(surface_mat_fn) -> dict:
+    """Dedicated textured mats for nave / tower / spire / portal (not one muddy colour)."""
+    brick_img = load_texture(TEXTURES_DIR / facade_kit.wall_tile_file("brick_red"))
+    stone_img = load_texture(TEXTURES_DIR / facade_kit.wall_tile_file("stone_buff"))
+    return {
+        "brick": textured(
+            "church_brick_red",
+            brick_img,
+            (0.52, 0.28, 0.22, 1.0),
+            rough=0.88,
+        ),
+        "stone": textured(
+            "church_stone_buff",
+            stone_img,
+            (0.62, 0.58, 0.52, 1.0),
+            rough=0.78,
+        ),
+        "slate": surface_mat_fn(
+            "roof_slate",
+            "church_slate",
+            (0.16, 0.16, 0.17, 1.0),
+            0.72,
+            tint=(0.55, 0.55, 0.56),
+        ),
+        "portal": surface_mat_fn(
+            "curb",
+            "church_portal_stone",
+            (0.42, 0.40, 0.36, 1.0),
+            0.82,
+            tint=(0.92, 0.88, 0.78),
+        ),
+        "plinth": surface_mat_fn(
+            "curb",
+            "church_plinth",
+            (0.36, 0.34, 0.32, 1.0),
+            0.9,
+            tint=(0.75, 0.74, 0.70),
+        ),
+        "glass": principled("church_glass", (0.10, 0.16, 0.20, 1.0), 0.16, metallic=0.35),
+        "door": principled("church_door", (0.20, 0.11, 0.07, 1.0), 0.78),
+        "brick_tile_m": float(facade_kit.WALL_TILES["brick_red"]["tile_m"]),
+        "stone_tile_m": float(facade_kit.WALL_TILES["stone_buff"]["tile_m"]),
+        "slate_tile_m": float(surface_kit.surface_tile_m("roof_slate")),
+    }
+
+
+def _append_pyramid(
+    bm,
+    cx: float,
+    cy: float,
+    z0: float,
+    base: float,
+    height: float,
+    yaw: float,
+    mat_i: int,
+) -> None:
+    """True four-sided pyramid (smooth silhouette, not Minecraft stair-steps)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    hx = base * 0.5
+
+    def rot(x: float, y: float) -> tuple[float, float]:
+        return cx + x * c - y * s, cy + x * s + y * c
+
+    corners = [(-hx, -hx), (hx, -hx), (hx, hx), (-hx, hx)]
+    base_vs = [bm.verts.new((*rot(x, y), z0)) for x, y in corners]
+    apex = bm.verts.new((cx, cy, z0 + height))
+    bm.verts.ensure_lookup_table()
+    for i in range(4):
+        face = bm.faces.new([base_vs[i], base_vs[(i + 1) % 4], apex])
+        face.material_index = mat_i
+
+
+def _append_prism_n(
+    bm,
+    cx: float,
+    cy: float,
+    z0: float,
+    height: float,
+    radius: float,
+    yaw: float,
+    mat_i: int,
+    sides: int = 8,
+) -> None:
+    """Regular n-gon prism (round stair turret approximation)."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    bot, top = [], []
+    for i in range(sides):
+        ang = (i / sides) * math.tau
+        lx, ly = math.cos(ang) * radius, math.sin(ang) * radius
+        wx, wy = cx + lx * c - ly * s, cy + lx * s + ly * c
+        bot.append(bm.verts.new((wx, wy, z0)))
+        top.append(bm.verts.new((wx, wy, z0 + height)))
+    bm.verts.ensure_lookup_table()
+    for i in range(sides):
+        j = (i + 1) % sides
+        face = bm.faces.new([bot[i], bot[j], top[j], top[i]])
+        face.material_index = mat_i
+    try:
+        bm.faces.new(bot[::-1]).material_index = mat_i
+        bm.faces.new(top).material_index = mat_i
+    except ValueError:
+        pass
+
+
+def _append_cone(
+    bm,
+    cx: float,
+    cy: float,
+    z0: float,
+    radius: float,
+    height: float,
+    yaw: float,
+    mat_i: int,
+    sides: int = 8,
+) -> None:
+    """Conical roof for a round turret."""
+    c, s = math.cos(yaw), math.sin(yaw)
+    ring = []
+    for i in range(sides):
+        ang = (i / sides) * math.tau
+        lx, ly = math.cos(ang) * radius, math.sin(ang) * radius
+        wx, wy = cx + lx * c - ly * s, cy + lx * s + ly * c
+        ring.append(bm.verts.new((wx, wy, z0)))
+    apex = bm.verts.new((cx, cy, z0 + height))
+    bm.verts.ensure_lookup_table()
+    for i in range(sides):
+        face = bm.faces.new([ring[i], ring[(i + 1) % sides], apex])
+        face.material_index = mat_i
 
 
 def _place_church_tower_volume(
@@ -1775,21 +2016,92 @@ def _place_church_tower_volume(
     tw: float,
     spire_h: float,
     yaw: float,
-    wall,
-    spire_mat,
+    church_mats: dict,
+    gothic: bool = False,
 ) -> None:
-    """One square shaft + belfry + pyramidal spire + finial."""
+    """Square shaft + cornice + belfry arches + smooth pyramidal slate spire + finial."""
     mesh = bpy.data.meshes.new(name)
-    mesh.materials.append(wall)
-    mesh.materials.append(spire_mat)
+    mesh.materials.append(church_mats["brick"])   # 0
+    mesh.materials.append(church_mats["slate"])   # 1
+    mesh.materials.append(church_mats["stone"])   # 2
+    mesh.materials.append(church_mats["glass"])   # 3
     bm = bmesh.new()
+    # Main shaft
     _append_box(bm, tx, ty, tower_h * 0.5, tw, tw, tower_h, yaw, 0)
-    _append_box(bm, tx, ty, tower_h + 0.55, tw * 0.92, tw * 0.92, 1.2, yaw, 0)
-    _append_pyramid_spire(bm, tx, ty, tower_h + 1.1, tw * 0.95, spire_h, yaw, 1)
-    _append_box(bm, tx, ty, tower_h + 1.1 + spire_h + 0.4, 0.16, 0.16, 0.9, yaw, 1)
+    # Stone plinth
+    _append_box(bm, tx, ty, 0.7, tw * 1.08, tw * 1.08, 1.4, yaw, 2)
+    # String-course bands (speklagen)
+    for zf in (0.28, 0.52, 0.78):
+        _append_box(bm, tx, ty, tower_h * zf, tw * 1.06, tw * 1.06, 0.22, yaw, 2)
+    # Cornice under the belfry
+    _append_box(bm, tx, ty, tower_h + 0.15, tw * 1.12, tw * 1.12, 0.45, yaw, 2)
+    # Belfry stage
+    bh = 2.4 if gothic else 2.0
+    _append_box(bm, tx, ty, tower_h + 0.35 + bh * 0.5, tw * 0.9, tw * 0.9, bh, yaw, 0)
+    # Recessed belfry openings on four faces (dark glass).
+    for ang in (0.0, math.pi * 0.5, math.pi, math.pi * 1.5):
+        ox = math.cos(yaw + ang) * (tw * 0.42)
+        oy = math.sin(yaw + ang) * (tw * 0.42)
+        _append_box(
+            bm,
+            tx + ox,
+            ty + oy,
+            tower_h + 0.35 + bh * 0.55,
+            tw * 0.28,
+            0.35,
+            bh * 0.7,
+            yaw + ang,
+            3,
+        )
+    # Smooth pyramidal spire (Heilige Geest: steep four-sided slate needle)
+    _append_pyramid(bm, tx, ty, tower_h + 0.35 + bh + 0.1, tw * 1.02, spire_h, yaw, 1)
+    # Finial / cross stub
+    _append_box(
+        bm,
+        tx,
+        ty,
+        tower_h + 0.35 + bh + spire_h + 0.55,
+        0.18,
+        0.18,
+        1.1,
+        yaw,
+        2,
+    )
+    if gothic:
+        # Corner pinnacles (Boniface-style)
+        for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+            c, s = math.cos(yaw), math.sin(yaw)
+            lx, ly = sx * tw * 0.42, sy * tw * 0.42
+            px, py = tx + lx * c - ly * s, ty + lx * s + ly * c
+            _append_box(bm, px, py, tower_h + bh + 1.2, 0.55, 0.55, 2.2, yaw, 2)
+            _append_pyramid(bm, px, py, tower_h + bh + 2.3, 0.65, 1.4, yaw, 1)
     bm.to_mesh(mesh)
     bm.free()
-    mesh.update()
+    _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
+    link(bpy.data.objects.new(name, mesh))
+
+
+def _place_round_turret(
+    name: str,
+    tx: float,
+    ty: float,
+    height: float,
+    radius: float,
+    yaw: float,
+    church_mats: dict,
+) -> None:
+    """Heilige Geest south-corner round stair turret + conical slate roof."""
+    mesh = bpy.data.meshes.new(name)
+    mesh.materials.append(church_mats["brick"])
+    mesh.materials.append(church_mats["slate"])
+    mesh.materials.append(church_mats["stone"])
+    bm = bmesh.new()
+    _append_prism_n(bm, tx, ty, 0.0, height, radius, yaw, 0, sides=10)
+    _append_box(bm, tx, ty, 0.55, radius * 2.15, radius * 2.15, 1.1, yaw, 2)
+    _append_cone(bm, tx, ty, height, radius * 1.08, radius * 1.85, yaw, 1, sides=10)
+    bm.to_mesh(mesh)
+    bm.free()
+    _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
     link(bpy.data.objects.new(name, mesh))
 
 
@@ -1798,12 +2110,10 @@ def add_church_tower(
     ring: list[list[float]],
     nave_h: float,
     massing: str,
-    wall,
-    roof,
+    church_mats: dict,
     street_edge: dict | None,
 ) -> None:
     """Parametric tower + spire matched to landmark massing (Heilige Geest / Boniface)."""
-    # Tower width from the street edge, not the whole campus span (avoids huge pillars).
     tw = 5.4
     elen = 12.0
     yaw = 0.0
@@ -1820,47 +2130,57 @@ def add_church_tower(
         nl = math.hypot(nx, ny) or 1.0
         nx, ny = nx / nl, ny / nl
         yaw = math.atan2(uy, ux)
-        tw = min(6.2, max(4.6, elen * 0.28))
+        tw = min(6.4, max(4.8, elen * 0.30))
 
-    tower_h = max(24.0, nave_h * 1.55)
-    if massing == "neo_romanesque_twin":
-        tower_h = max(26.0, nave_h * 1.65)
-        spire_h = 12.5
-        tw = min(5.8, max(4.4, elen * 0.22))
-    elif "gothic" in massing:
-        tower_h = max(30.0, nave_h * 1.85)
-        spire_h = tower_h * 0.35
+    gothic = "gothic" in massing
+    romanesque = "romanesque" in massing
+    tower_left = "tower_left" in massing or romanesque or gothic
+    if romanesque:
+        tower_h = max(28.0, nave_h * 1.75)
+        spire_h = 13.5
+        tw = min(6.0, max(4.8, elen * 0.26))
+    elif gothic:
+        tower_h = max(32.0, nave_h * 1.9)
+        spire_h = tower_h * 0.22
     else:
-        spire_h = tower_h * 0.4
+        tower_h = max(26.0, nave_h * 1.6)
+        spire_h = tower_h * 0.38
 
     cx = sum(p[0] for p in ring) / len(ring)
     cy = sum(p[1] for p in ring) / len(ring)
-    # Street-left / centre of the façade, inset into the extruded footprint.
-    along = 0.16 if massing in {"neo_gothic_tower_left", "neo_romanesque_twin"} else 0.5
+    along = 0.14 if tower_left else 0.5
     if p0 is not None:
-        tx = p0[0] + ux * (elen * along) - nx * (tw * 0.55)
-        ty = p0[1] + uy * (elen * along) - ny * (tw * 0.55)
+        # Sit the shaft just inside the extruded footprint (behind the photo face).
+        tx = p0[0] + ux * (elen * along) - nx * (tw * 0.42)
+        ty = p0[1] + uy * (elen * along) - ny * (tw * 0.42)
     else:
         tx, ty = cx, cy
 
-    # Slate spire colour (avoid asphalt flat-roof texture on the needle).
-    spire_mat = principled(f"{name}_spire", (0.14, 0.14, 0.15, 1.0), 0.72)
-    _place_church_tower_volume(f"{name}_tower", tx, ty, tower_h, tw, spire_h, yaw, wall, spire_mat)
+    _place_church_tower_volume(
+        f"{name}_tower",
+        tx,
+        ty,
+        tower_h,
+        tw,
+        spire_h,
+        yaw,
+        church_mats,
+        gothic=gothic,
+    )
 
-    if massing == "neo_romanesque_twin" and p0 is not None:
-        # Matching street-right tower (Heilige Geestkerk twin west front).
-        rtx = p0[0] + ux * (elen * 0.84) - nx * (tw * 0.55)
-        rty = p0[1] + uy * (elen * 0.84) - ny * (tw * 0.55)
-        _place_church_tower_volume(
-            f"{name}_tower_r",
+    # Heilige Geest: round stair turret on street-right (not a second twin spire).
+    if romanesque and p0 is not None:
+        rw = tw * 0.34
+        rtx = p0[0] + ux * (elen * 0.88) - nx * (rw * 0.9)
+        rty = p0[1] + uy * (elen * 0.88) - ny * (rw * 0.9)
+        _place_round_turret(
+            f"{name}_turret",
             rtx,
             rty,
-            tower_h * 0.96,
-            tw * 0.95,
-            spire_h * 0.95,
+            nave_h * 1.08,
+            rw,
             yaw,
-            wall,
-            spire_mat,
+            church_mats,
         )
 
 
@@ -1868,11 +2188,10 @@ def add_church_entrance(
     name: str,
     ring: list[list[float]],
     nave_h: float,
-    wall,
-    trim,
+    church_mats: dict,
     street_edge: dict | None,
 ) -> None:
-    """Street-facing portal, rose recess, and buttresses so churches read from the sidewalk."""
+    """Deep arched portal, rose recess, buttress piers — textured stone/brick/glass."""
     if street_edge is None:
         return
     i0, i1 = int(street_edge["i0"]), int(street_edge["i1"])
@@ -1888,71 +2207,91 @@ def add_church_entrance(
     nx, ny = nx / nl, ny / nl
     yaw = math.atan2(uy, ux)
     mx, my = (p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5
-    portal_w = min(5.8, max(3.4, elen * 0.24))
-    portal_h = min(8.0, max(5.2, nave_h * 0.48))
-    glass = principled(f"{name}_rose", (0.12, 0.18, 0.22, 1.0), 0.25)
+    portal_w = min(6.2, max(3.6, elen * 0.26))
+    portal_h = min(9.0, max(5.6, nave_h * 0.52))
     mesh = bpy.data.meshes.new(f"{name}_portal")
-    mesh.materials.append(wall)
-    mesh.materials.append(trim)
-    mesh.materials.append(glass)
+    mesh.materials.append(church_mats["brick"])    # 0
+    mesh.materials.append(church_mats["portal"])   # 1 stone portal
+    mesh.materials.append(church_mats["glass"])    # 2
+    mesh.materials.append(church_mats["door"])     # 3
+    mesh.materials.append(church_mats["stone"])    # 4
     bm = bmesh.new()
-    # Proud porch mass
+    # Stepped arch recess (outer brick → stone → glass) so the portal has real depth.
+    for dw, dh, depth, mat_i in (
+        (1.0, 1.0, 0.55, 0),
+        (0.78, 0.88, 0.95, 1),
+        (0.52, 0.72, 1.35, 2),
+    ):
+        _append_box(
+            bm,
+            mx + nx * (0.55 + depth),
+            my + ny * (0.55 + depth),
+            portal_h * 0.48 * dh,
+            portal_w * dw,
+            0.55,
+            portal_h * dh,
+            yaw,
+            mat_i,
+        )
+    # Door leaf plane
     _append_box(
         bm,
-        mx + nx * 0.7,
-        my + ny * 0.7,
-        portal_h * 0.5,
-        portal_w,
-        1.35,
-        portal_h,
-        yaw,
-        0,
-    )
-    # Door recess
-    _append_box(
-        bm,
-        mx + nx * 1.15,
-        my + ny * 1.15,
-        portal_h * 0.36,
-        portal_w * 0.52,
-        0.4,
-        portal_h * 0.68,
-        yaw,
-        1,
-    )
-    # Pediment / gable above the portal
-    _append_box(
-        bm,
-        mx + nx * 0.55,
-        my + ny * 0.55,
-        portal_h + 0.7,
-        portal_w * 0.9,
-        1.05,
-        1.4,
-        yaw,
-        0,
-    )
-    # Rose-window recess above the door
-    rose_z = min(nave_h * 0.72, portal_h + 3.2)
-    _append_box(
-        bm,
-        mx + nx * 0.35,
-        my + ny * 0.35,
-        rose_z,
+        mx + nx * 2.05,
+        my + ny * 2.05,
+        portal_h * 0.32,
         portal_w * 0.42,
-        0.55,
-        portal_w * 0.42,
+        0.18,
+        portal_h * 0.58,
         yaw,
-        2,
+        3,
     )
-    # Flanking buttress piers
+    # Triple lancet / round-arch window bank above the portal
+    rose_z = min(nave_h * 0.68, portal_h + 2.8)
+    for side in (-1.0, 0.0, 1.0):
+        ww = portal_w * (0.22 if side == 0.0 else 0.16)
+        wh = portal_w * (0.55 if side == 0.0 else 0.42)
+        _append_box(
+            bm,
+            mx + ux * side * portal_w * 0.28 + nx * 0.55,
+            my + uy * side * portal_w * 0.28 + ny * 0.55,
+            rose_z,
+            ww,
+            0.45,
+            wh,
+            yaw,
+            2,
+        )
+        # Stone surround
+        _append_box(
+            bm,
+            mx + ux * side * portal_w * 0.28 + nx * 0.4,
+            my + uy * side * portal_w * 0.28 + ny * 0.4,
+            rose_z,
+            ww * 1.25,
+            0.28,
+            wh * 1.15,
+            yaw,
+            4,
+        )
+    # Flanking buttress piers with stone setbacks
     for side in (-1.0, 1.0):
-        bx = mx + ux * side * (portal_w * 0.62) + nx * 0.45
-        by = my + uy * side * (portal_w * 0.62) + ny * 0.45
-        _append_box(bm, bx, by, nave_h * 0.42, 0.85, 1.2, nave_h * 0.84, yaw, 0)
+        bx = mx + ux * side * (portal_w * 0.68) + nx * 0.55
+        by = my + uy * side * (portal_w * 0.68) + ny * 0.55
+        _append_box(bm, bx, by, nave_h * 0.45, 1.05, 1.45, nave_h * 0.9, yaw, 0)
+        _append_box(
+            bm,
+            bx + nx * 0.2,
+            by + ny * 0.2,
+            nave_h * 0.72,
+            0.85,
+            1.1,
+            nave_h * 0.35,
+            yaw,
+            4,
+        )
     bm.to_mesh(mesh)
     bm.free()
-    mesh.update()
+    _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
     link(bpy.data.objects.new(f"{name}_portal", mesh))
 
 
@@ -2079,25 +2418,35 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     landmark = bldg.get("landmark") or {}
     massing = str(landmark.get("massing") or f"{type_id}_default")
     photo_path = resolve_landmark_photo(landmark, LANDMARKS_DIR) if landmark.get("photo") else None
-    # Churches always get extruded OSM mass + hip roof + tower. Landmark photos dress
-    # the street wall only — never a free-standing silhouette billboard.
+    # Churches: extruded OSM mass + pitched roof + tower/turret. Landmark photos dress a
+    # thick street-elevation face — never a free-standing silhouette billboard.
     body_h = max(2.5, eaves)
+    church_mats = mats.get("church") or {}
     if type_id == "church":
-        body_h = min(20.0, max(12.0, eaves * 0.7))
+        body_h = min(18.0, max(13.0, eaves * 0.65))
         shape = "hip"
-        roof_h = max(2.4, roof_h if roof_h > 0.5 else 3.2)
-        brick = mats["wall"].get("red-brick") or mats["wall"].get("neo-flemish")
-        if brick is not None:
-            wall = brick
+        roof_h = max(3.2, roof_h if roof_h > 0.5 else 4.0)
+        if church_mats.get("brick") is not None:
+            wall = church_mats["brick"]
+        if church_mats.get("slate") is not None:
+            roof = church_mats["slate"]
+        style_name = "church" if "church" in mats["wall"] else style_name
 
-    base_type = style_name.split("__v")[0]
+    base_type = "church" if type_id == "church" else style_name.split("__v")[0]
     wall_tile_m = float(facade_kit.WALL_TILES[facade_kit.wall_tile_for_type(base_type, TYPES_DOC)]["tile_m"])
+    if type_id == "church" and church_mats.get("brick_tile_m"):
+        wall_tile_m = float(church_mats["brick_tile_m"])
     add_ring(name, ring, body_h, 0.0, wall, uv_tile_m=wall_tile_m)
     roof_uv_tile = None
     roof_pool = mats.get("roof_tex") or {}
     # Irregular footprints fall back to a mansard stack inside add_lod2_roof.
     eff_shape = "mansard" if shape in {"gable", "hip"} and not _prism_roof_ok(ring) else shape
-    if roof_pool:
+    if type_id == "church" and church_mats.get("slate") is not None:
+        # Churches always wear slate — matches spire/turret and the real Harmonie roofs.
+        roof = church_mats["slate"]
+        roof_uv_tile = float(church_mats.get("slate_tile_m") or surface_kit.surface_tile_m("roof_slate"))
+        ROOF_STATS["roof_slate"] = ROOF_STATS.get("roof_slate", 0) + 1
+    elif roof_pool:
         bseed = int(bid) if str(bid).lstrip("-").isdigit() else 1
         measured = surface_kit.roof_choice(ROOF_AERIAL, bid, eff_shape)
         if measured and measured[0] in roof_pool:
@@ -2123,47 +2472,74 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         near_spawn = dist <= 95.0
         if dist > 140.0:
             detail = "simple"
-        if dist > 360.0:
-            # Far LOD1 colour blocks only — still keep roofs.
-            return
-
     primary = _primary_street_edge(bldg, ring, spawn_xy)
+
+    # Landmark churches/hospitals keep tower + photo elevation even when far — the
+    # skyline and street recognition matter more than LOD savings on a handful of sites.
+    if type_id in {"church", "hospital"}:
+        if detail not in {"full", "simple"}:
+            detail = "simple"
+
+    if spawn_xy is not None and dist > 360.0 and type_id not in {"church", "hospital"}:
+        # Far LOD1 colour blocks only — still keep roofs.
+        return
 
     if type_id in {"church", "hospital"} and detail in {"full", "simple"}:
         trim = mats["trim"].get(style_name) or mats["trim"].get(type_id) or mats["trim"]["eclectic"]
         if type_id == "church":
-            add_church_tower(name, ring, body_h, massing, wall, roof, primary)
+            cm = church_mats or {
+                "brick": wall,
+                "stone": trim,
+                "slate": roof,
+                "portal": trim,
+                "plinth": trim,
+                "glass": mats["glass"].get(style_name) or mats["glass"]["eclectic"],
+                "door": trim,
+                "brick_tile_m": wall_tile_m,
+                "stone_tile_m": 2.4,
+                "slate_tile_m": 1.8,
+            }
+            add_church_tower(name, ring, body_h, massing, cm, primary)
             if detail == "full":
-                add_church_entrance(name, ring, body_h, wall, trim, primary)
+                add_church_entrance(name, ring, body_h, cm, primary)
         else:
             add_hospital_extras(name, ring, body_h, wall, trim, primary)
-        # Hospitals may dress one street wall with a photo. Churches never get a
-        # free-standing photo plane — massing (nave + tower/spire + portal) carries
-        # recognition; arched street façades dress every edge including the front.
+        # Photo dresses a thick street face (churches + hospitals). Never a free-standing
+        # silhouette billboard taller than the extruded mass.
         photo_on_primary = False
-        if (
-            type_id == "hospital"
-            and photo_path is not None
-            and primary is not None
-            and detail == "full"
-        ):
+        if photo_path is not None and primary is not None and detail == "full":
             i0, i1 = int(primary["i0"]), int(primary["i1"])
             p0, p1 = ring[i0], ring[i1]
             edge_len = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
             nx, ny = primary.get("outward") or [0.0, 1.0]
             crop = landmark.get("crop") or [0.0, 0.0, 1.0, 1.0]
             aspect = _landmark_crop_aspect(crop)
-            facade_h = min(48.0, max(body_h, edge_len / max(aspect, 0.2)))
-            add_landmark_photo_quad(
-                f"{name}_landmark",
-                p0,
-                p1,
-                [nx, ny],
-                facade_h,
-                photo_path,
-                crop,
-                proud=0.28,
-            )
+            if type_id == "church":
+                # Clamp to nave height so the spire stays real 3D geometry above.
+                facade_h = min(body_h * 1.08, max(body_h, edge_len / max(aspect, 0.35) * 0.55))
+                add_church_photo_face(
+                    f"{name}_landmark",
+                    p0,
+                    p1,
+                    [nx, ny],
+                    facade_h,
+                    photo_path,
+                    crop,
+                    cm,
+                    thickness=1.05,
+                )
+            else:
+                facade_h = min(48.0, max(body_h, edge_len / max(aspect, 0.2)))
+                add_landmark_photo_quad(
+                    f"{name}_landmark",
+                    p0,
+                    p1,
+                    [nx, ny],
+                    facade_h,
+                    photo_path,
+                    crop,
+                    proud=0.28,
+                )
             photo_on_primary = True
         for ei, edge in enumerate(bldg.get("street_edges") or []):
             if photo_on_primary and edge is primary:
@@ -2430,35 +2806,48 @@ def add_parked_cars(
     tire_mat,
     max_cars: int = 64,
 ) -> dict:
-    """GTA3-simple parked cars, only where OSM maps parallel kerbside parking.
+    """Parked cars on OSM parallel kerbside parking — Kenney fleet GLBs when present.
 
     Placement (side, spacing, clearance from the runtime traffic lane, junctions, crossings,
-    signals, stops, trees) is planned by ``cityview.parking``; this just builds the boxes.
+    signals, stops, trees) is planned by ``cityview.parking``. Meshes come from
+    ``viewer/cars/`` (Antwerp-weighted mix); box bodies are the fallback only.
     """
+
+    def _box_fallback(plan: list) -> dict:
+        for placed, car in enumerate(plan):
+            x, y, yaw, lift = car["x"], car["y"], car["yaw"], car.get("lift", 0.0)
+            body = add_box(f"car_{placed}", (4.2, 1.75, 1.35), (x, y, 0.75 + lift), yaw)
+            assign(body, body_mats[placed % len(body_mats)])
+            cabin = add_box(
+                f"car_g_{placed}",
+                (2.0, 1.55, 0.65),
+                (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 1.45 + lift),
+                yaw,
+            )
+            assign(cabin, glass_mat)
+            for wx, wy in ((1.35, 0.85), (1.35, -0.85), (-1.35, 0.85), (-1.35, -0.85)):
+                lx = x + math.cos(yaw) * wx - math.sin(yaw) * wy
+                ly = y + math.sin(yaw) * wx + math.cos(yaw) * wy
+                wheel = add_box(f"car_w_{placed}_{wx}_{wy}", (0.55, 0.22, 0.55), (lx, ly, 0.28 + lift), yaw)
+                assign(wheel, tire_mat)
+        return {"cars": len(plan), "summary": parking_plan.summarize(plan)}
+
+    if cars_blender is not None:
+        return cars_blender.add_parked_cars(
+            layout,
+            spawn_xy,
+            RAILS,
+            railclear.CLEAR_PARKED_CAR,
+            max_cars=max_cars,
+            fallback=_box_fallback,
+        )
     plan = parking_plan.plan_parked_cars(
         layout,
         spawn_xy,
         max_cars=max_cars,
         blocked=lambda x, y: RAILS.within(x, y, railclear.CLEAR_PARKED_CAR),
     )
-    for placed, car in enumerate(plan):
-        x, y, yaw, lift = car["x"], car["y"], car["yaw"], car.get("lift", 0.0)
-        body = add_box(f"car_{placed}", (4.2, 1.75, 1.35), (x, y, 0.75 + lift), yaw)
-        assign(body, body_mats[placed % len(body_mats)])
-        cabin = add_box(
-            f"car_g_{placed}",
-            (2.0, 1.55, 0.65),
-            (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 1.45 + lift),
-            yaw,
-        )
-        assign(cabin, glass_mat)
-        # Four stub wheels — reads as a car from street POV.
-        for wx, wy in ((1.35, 0.85), (1.35, -0.85), (-1.35, 0.85), (-1.35, -0.85)):
-            lx = x + math.cos(yaw) * wx - math.sin(yaw) * wy
-            ly = y + math.sin(yaw) * wx + math.cos(yaw) * wy
-            wheel = add_box(f"car_w_{placed}_{wx}_{wy}", (0.55, 0.22, 0.55), (lx, ly, 0.28 + lift), yaw)
-            assign(wheel, tire_mat)
-    return {"cars": len(plan), "summary": parking_plan.summarize(plan)}
+    return _box_fallback(plan)
 
 
 def bounds(layout: dict) -> tuple[float, float, float, float]:
@@ -2786,17 +3175,20 @@ def collect_signal_placements(
             # Prefer right-hand curb; flip to left if that lands on a tram bed.
             rx, ry = ty, -tx
             pole_x = pole_y = None
+            side = 1.0
             for sign in (1.0, -1.0):
                 px = sx + rx * sign * (half + 0.85)
                 py = sy + ry * sign * (half + 0.85)
                 if RAILS and RAILS.within(px, py, railclear.CLEAR_SIGNAL_POLE):
                     continue
                 pole_x, pole_y = px, py
+                side = sign
                 break
             if pole_x is None:
                 continue
-            # Face the head toward oncoming traffic (look back along approach).
-            yaw = math.atan2(-ty, -tx)
+            # Local +Y = front: lenses look at the traffic this approach controls.
+            yaw = vehicle_signal_yaw(tx, ty)
+            ped_yaw = pedestrian_signal_yaw(rx, ry, side)
             placements.append(
                 {
                     "pole_x": pole_x,
@@ -2806,6 +3198,7 @@ def collect_signal_placements(
                     "tx": tx,
                     "ty": ty,
                     "yaw": yaw,
+                    "ped_yaw": ped_yaw,
                     "width": width,
                     "jx": jx,
                     "jy": jy,
@@ -2822,20 +3215,75 @@ def add_traffic_light(
     pole_mat,
     housing_mat,
     lamp_mats,
+    *,
+    ped_yaw: float | None = None,
+    ped_mats: list | None = None,
 ) -> None:
-    """Pole on the curb; head faces oncoming traffic."""
+    """Pole on the curb; vehicle head faces controlled traffic; optional ped head."""
     pole = add_box(f"{name}_pole", (0.12, 0.12, 3.4), (x, y, 1.7), yaw)
     assign(pole, pole_mat)
-    # Local +Y is the face direction after rot_z=yaw (Blender).
-    fx, fy = math.cos(yaw), math.sin(yaw)
+    # Local +Y is the face direction after rot_z=yaw (same convention as clutter).
+    fx, fy = face_dir(yaw)
     hx, hy = x + fx * 0.2, y + fy * 0.2
     head = add_box(f"{name}_head", (0.28, 0.22, 0.85), (hx, hy, 3.55), yaw)
     assign(head, housing_mat)
     for i, mat in enumerate(lamp_mats):
         lx = hx + fx * 0.14
         ly = hy + fy * 0.14
+        # Dark “off” lenses in the GLB; the viewer lights the active aspect.
         lamp = add_box(f"{name}_l{i}", (0.16, 0.08, 0.16), (lx, ly, 3.85 - i * 0.26), yaw)
         assign(lamp, mat)
+
+    if ped_yaw is None or not ped_mats:
+        return
+    # Pedestrian signal: smaller two-aspect head facing people waiting to cross.
+    pfx, pfy = face_dir(ped_yaw)
+    phx, phy = x + pfx * 0.18, y + pfy * 0.18
+    ped_head = add_box(f"{name}_ped_head", (0.22, 0.14, 0.55), (phx, phy, 2.35), ped_yaw)
+    assign(ped_head, housing_mat)
+    for i, mat in enumerate(ped_mats[:2]):
+        plx = phx + pfx * 0.1
+        ply = phy + pfy * 0.1
+        lamp = add_box(
+            f"{name}_ped_l{i}",
+            (0.14, 0.06, 0.18),
+            (plx, ply, 2.52 - i * 0.22),
+            ped_yaw,
+        )
+        assign(lamp, mat)
+        # Stick-figure silhouette on each aspect (standing red / walking green).
+        _add_ped_figure(f"{name}_ped_fig{i}", plx, ply, 2.52 - i * 0.22, ped_yaw, mat, walking=i == 1)
+
+
+def _add_ped_figure(
+    name: str,
+    x: float,
+    y: float,
+    z: float,
+    yaw: float,
+    mat,
+    *,
+    walking: bool,
+) -> None:
+    """Tiny standing / walking man silhouette in the pedestrian lens plane."""
+    fx, fy = face_dir(yaw)
+    # Sit the figure on the front of the lens.
+    cx, cy = x + fx * 0.04, y + fy * 0.04
+    head = add_box(f"{name}_h", (0.04, 0.03, 0.04), (cx, cy, z + 0.06), yaw)
+    assign(head, mat)
+    torso = add_box(f"{name}_t", (0.05, 0.03, 0.08), (cx, cy, z + 0.0), yaw)
+    assign(torso, mat)
+    if walking:
+        # Stride: one leg forward, one back; one arm forward.
+        leg_a = add_box(f"{name}_la", (0.025, 0.03, 0.07), (cx + fx * 0.02, cy + fy * 0.02, z - 0.07), yaw)
+        leg_b = add_box(f"{name}_lb", (0.025, 0.03, 0.07), (cx - fx * 0.02, cy - fy * 0.02, z - 0.07), yaw)
+        arm = add_box(f"{name}_a", (0.06, 0.025, 0.025), (cx + fx * 0.03, cy + fy * 0.03, z + 0.02), yaw)
+        assign(leg_a, mat)
+        assign(leg_b, mat)
+        assign(arm, mat)
+    else:
+        legs = add_box(f"{name}_lg", (0.04, 0.03, 0.08), (cx, cy, z - 0.07), yaw)
+        assign(legs, mat)
 
 
 def _add_zebra_stripe(name: str, cx: float, cy: float, tx: float, ty: float, span: float, stripe_mat) -> int:
@@ -3340,10 +3788,15 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     roof_metal_mat = principled("roof_plant", (0.60, 0.62, 0.63, 1.0), 0.5, metallic=0.4)
     pole_mat = principled("pole", (0.18, 0.18, 0.18, 1.0), 0.5, metallic=0.4)
     housing_mat = principled("tl_housing", (0.08, 0.08, 0.08, 1.0), 0.45, metallic=0.35)
+    # Dim “off” lenses in the baked GLB — the walk viewer lights the active aspect.
     lamp_mats = [
-        principled("tl_red", (0.85, 0.12, 0.08, 1.0), 0.25),
-        principled("tl_amber", (0.9, 0.55, 0.08, 1.0), 0.25),
-        principled("tl_green", (0.12, 0.7, 0.22, 1.0), 0.25),
+        principled("tl_red", (0.22, 0.05, 0.04, 1.0), 0.55),
+        principled("tl_amber", (0.22, 0.14, 0.04, 1.0), 0.55),
+        principled("tl_green", (0.04, 0.18, 0.07, 1.0), 0.55),
+    ]
+    ped_mats = [
+        principled("tl_ped_red", (0.2, 0.04, 0.04, 1.0), 0.55),
+        principled("tl_ped_green", (0.04, 0.16, 0.06, 1.0), 0.55),
     ]
     car_mats = [
         principled("car_black", (0.08, 0.08, 0.09, 1.0), 0.35, metallic=0.45),
@@ -3398,6 +3851,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
             tint=wall_tint(st["wall"], tile_avgs[tid]),
         )
 
+    church_mats = make_church_materials(surface_mat)
     mats = {
         "wall": {n: wall_mat(n, s) for n, s in style_items},
         "roof": {n: principled(f"roof_{n}", s["roof"], 0.72, metallic=0.05) for n, s in style_items},
@@ -3415,8 +3869,12 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "ivy": ivy_mats,
         "climber": climber_mats,
         "shutter": shutter_mats,
+        "church": church_mats,
     }
-    print(f"Facade material keys: {len(style_items)}")
+    # Ensure the church style wall uses the same red-brick tile as the landmark volumes.
+    if "church" in mats["wall"]:
+        mats["wall"]["church"] = church_mats["brick"]
+    print(f"Facade material keys: {len(style_items)}; church mats: brick/stone/slate/portal")
 
     spawn = layout.get("spawn") or {}
     spawn_xy = (float(spawn["x"]), float(spawn["y"])) if spawn.get("x") is not None else None
@@ -3503,6 +3961,16 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Courtyard barriers (OSM walls, hedges, fences): {barrier_stats}")
     clutter_stats = clutter_blender.add_clutter(layout, RAILS, clutter_mats)
     print(f"Street clutter (OSM-mapped bins, hoops, bollards, hydrants, ...): {clutter_stats}")
+    if velo_blender is not None:
+        velo_mats = {
+            "metal": principled("velo_dock_metal", (0.08, 0.08, 0.09, 1.0), 0.45),
+            "frame": principled("velo_frame_red", (0.72, 0.06, 0.12, 1.0), 0.55),
+            "mudguard": principled("velo_mudguard", (0.94, 0.93, 0.90, 1.0), 0.7),
+            "tire": principled("velo_tire", (0.08, 0.08, 0.08, 1.0), 0.95),
+            "signal_red": principled("velo_accent_red", (0.78, 0.05, 0.1, 1.0), 0.5),
+        }
+        velo_stats = velo_blender.add_velo_stations(layout, RAILS, velo_mats)
+        print(f"Velo docks (GBFS stations): {velo_stats}")
 
     signal_placements = collect_signal_placements(layout, spawn_xy=spawn_xy)
     lights_n = 0
@@ -3515,6 +3983,8 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
             pole_mat,
             housing_mat,
             lamp_mats,
+            ped_yaw=float(pl["ped_yaw"]),
+            ped_mats=ped_mats,
         )
         lights_n += 1
     print(f"Traffic lights: {lights_n} (from {len(signal_placements)} approaches)")

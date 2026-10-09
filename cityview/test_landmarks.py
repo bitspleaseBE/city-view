@@ -20,7 +20,7 @@ class LandmarkTests(unittest.TestCase):
     def test_match_by_name(self):
         hit = match_landmark(1, "Heilige Geestkerk", "church")
         self.assertIsNotNone(hit)
-        self.assertEqual(hit["massing"], "neo_romanesque_twin")
+        self.assertEqual(hit["massing"], "neo_romanesque_tower_left")
 
 
 class BrandTests(unittest.TestCase):

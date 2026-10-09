@@ -1,9 +1,9 @@
 """Named church/hospital landmark photos + massing presets.
 
-Churches use extruded OSM footprints with hip roofs, portals, and parametric
-towers/spires from ``massing`` (no free-standing photo billboards). Hospital
-photos may still dress one street wall; church photos in the manifest are
-reference/attribution only.
+Churches use extruded OSM footprints with pitched roofs, portals, and parametric
+towers/spires from ``massing``. Landmark photos may dress a thick street-elevation
+face (never a free-standing silhouette billboard). Heilige Geestkerk uses
+``neo_romanesque_tower_left`` (square tower + round stair turret).
 """
 
 from __future__ import annotations
