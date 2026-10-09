@@ -233,12 +233,26 @@ function lineLabel(lines, mode) {
 // real geometry on top.
 // ---------------------------------------------------------------------------
 const LIVERY_VERSION = "2"; // bump when viewer/livery/*.jpg change (Pages caches aggressively)
-// Articulated De Lijn tram: 5 wagons, each about a normal car long, coupled by bellows.
+// Articulated De Lijn tram: 5 wagons coupled by bellows. Lead/tail cab cars are
+// a bit longer than the mid sections (Albatros-style).
 const TRAM_WAGONS = 5;
-const TRAM_WAGON = { w: 2.2, h: 2.85, l: 4.6, lift: 0.28 }; // one wagon ≈ car length
+const TRAM_WAGON = { w: 2.2, h: 2.85, l: 4.6, lift: 0.28 }; // mid wagon ≈ car length
+const TRAM_WAGON_END_L = 5.55; // cab cars (first + last)
+const TRAM_WAGON_LENS = Array.from({ length: TRAM_WAGONS }, (_, i) =>
+  i === 0 || i === TRAM_WAGONS - 1 ? TRAM_WAGON_END_L : TRAM_WAGON.l,
+);
 const TRAM_JOINT_GAP = 0.5; // clear gap between wagon bodies (bellows sit here)
-const TRAM_PITCH = TRAM_WAGON.l + TRAM_JOINT_GAP; // centre-to-centre on a straight
-const TRAM_LEN = TRAM_WAGONS * TRAM_WAGON.l + (TRAM_WAGONS - 1) * TRAM_JOINT_GAP;
+/** Centre-to-centre distance from lead wagon to wagon `i` on a straight. */
+function tramWagonOffset(i) {
+  let s = 0;
+  for (let k = 0; k < i; k++) {
+    s += TRAM_WAGON_LENS[k] * 0.5 + TRAM_JOINT_GAP + TRAM_WAGON_LENS[k + 1] * 0.5;
+  }
+  return s;
+}
+const TRAM_TRAIL_SPAN = tramWagonOffset(TRAM_WAGONS - 1); // lead→tail centre distance
+const TRAM_LEN =
+  TRAM_WAGON_LENS.reduce((a, b) => a + b, 0) + (TRAM_WAGONS - 1) * TRAM_JOINT_GAP;
 BODY_LEN.tram = TRAM_LEN;
 const TRAM_DIM = { w: TRAM_WAGON.w, h: TRAM_WAGON.h, l: TRAM_LEN, lift: TRAM_WAGON.lift };
 const BUS_DIM = { w: 2.4, h: 2.7, l: 13.5, lift: 0.05 };
@@ -428,25 +442,62 @@ function makeRoundedBox(THREE, width, height, depth, radius, segments = 3) {
   return roundBoxCorners(geo, radius);
 }
 
+/**
+ * Pull the cab face into a more slanted windshield: top of the nose/tail moves
+ * inward along travel (+z front / -z rear), with a mild side taper.
+ * `face` is "front" (+z) or "rear" (-z). Mutates `geo` in place.
+ */
+function slantCabFace(geo, face, depth = 0.62) {
+  const pos = geo.attributes && geo.attributes.position;
+  if (!pos || typeof pos.getX !== "function") return geo;
+  const w = (geo.parameters?.width ?? 1) / 2;
+  const h = (geo.parameters?.height ?? 1) / 2;
+  const d = (geo.parameters?.depth ?? 1) / 2;
+  const sign = face === "front" ? 1 : -1;
+  const zoneStart = d * 0.28; // only the outer ~72% of half-length is affected
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    const along = sign * z;
+    if (along < zoneStart) continue;
+    const t = Math.min(1, (along - zoneStart) / Math.max(1e-6, d - zoneStart));
+    const yh = Math.max(0, Math.min(1, (y + h) / (2 * h))); // 0 floor → 1 roof
+    // Stronger at the roof (windshield rake); mild tuck at the skirt.
+    const pull = depth * t * t * (0.18 + 0.82 * yh * yh);
+    const taper = 1 - 0.16 * t * yh;
+    pos.setXYZ(i, x * taper, y, z - sign * pull);
+  }
+  pos.needsUpdate = true;
+  if (typeof geo.computeVertexNormals === "function") geo.computeVertexNormals();
+  return geo;
+}
+
 function makeTramMesh(THREE, parts) {
   const group = new THREE.Group();
-  const d = TRAM_WAGON;
   const wagons = [];
   const joints = [];
-  const roofY = d.lift + d.h / 2;
+  const wagonDims = [];
 
   for (let i = 0; i < TRAM_WAGONS; i++) {
     const wagon = new THREE.Group();
     const isLead = i === 0;
     const isTail = i === TRAM_WAGONS - 1;
+    const len = TRAM_WAGON_LENS[i];
+    const d = { w: TRAM_WAGON.w, h: TRAM_WAGON.h, l: len, lift: TRAM_WAGON.lift };
+    wagonDims.push(d);
+    const roofY = d.lift + d.h / 2;
     // Cab texture only on the outer nose/tail; bellows-facing ends stay dark.
     const mats = isLead ? parts.tramLeadMats : isTail ? parts.tramTailMats : parts.tramMidMats;
-    const body = new THREE.Mesh(parts.tramWagonBody, mats);
+    const bodyGeo = isLead ? parts.tramLeadBody : isTail ? parts.tramTailBody : parts.tramWagonBody;
+    const body = new THREE.Mesh(bodyGeo, mats);
     body.position.y = d.lift;
     wagon.add(body);
 
     const pod = new THREE.Mesh(parts.tramPod, parts.podMat);
-    pod.position.set(0, roofY + 0.12, 0);
+    // Cab cars: slide the A/C pod toward the bellows end so the slanted nose stays clean.
+    const podZ = isLead ? -0.35 : isTail ? 0.35 : 0;
+    pod.position.set(0, roofY + 0.12, podZ);
     wagon.add(pod);
 
     if (i === 2) {
@@ -470,21 +521,22 @@ function makeTramMesh(THREE, parts) {
 
   for (let i = 0; i < TRAM_WAGONS - 1; i++) {
     const joint = new THREE.Mesh(parts.tramJoint, parts.jointMat);
-    joint.position.y = d.lift;
+    joint.position.y = TRAM_WAGON.lift;
     group.add(joint);
     joints.push(joint);
   }
 
   // Destination LEDs + lamps live on the lead and tail wagons (wagon-local dims).
   const displays = [
-    addDisplay(THREE, parts, wagons[0], d, "front", LED_BOX.tramFront, true),
-    addDisplay(THREE, parts, wagons[TRAM_WAGONS - 1], d, "front", LED_BOX.tramFront, false),
+    addDisplay(THREE, parts, wagons[0], wagonDims[0], "front", LED_BOX.tramFront, true),
+    addDisplay(THREE, parts, wagons[TRAM_WAGONS - 1], wagonDims[TRAM_WAGONS - 1], "front", LED_BOX.tramFront, false),
   ];
-  addLamps(THREE, parts, wagons[0], d, true, 0.76, 0.13, 0.87);
-  addLamps(THREE, parts, wagons[TRAM_WAGONS - 1], d, false, 0.76, 0.13, 0.87);
+  addLamps(THREE, parts, wagons[0], wagonDims[0], true, 0.76, 0.13, 0.87);
+  addLamps(THREE, parts, wagons[TRAM_WAGONS - 1], wagonDims[TRAM_WAGONS - 1], false, 0.76, 0.13, 0.87);
 
   group.userData.wagons = wagons;
   group.userData.joints = joints;
+  group.userData.wagonLens = TRAM_WAGON_LENS;
   group.userData.displays = displays;
   return group;
 }
@@ -668,10 +720,24 @@ function makeSharedParts(THREE, liveryBase) {
     wrap("bus_rear"),
   ];
   const wagonR = 0.22; // rounded body corners (~modern Albatros look)
+  const busR = 0.28; // soften the sharp box corners of the bus body
+  // Cab cars: longer body + windshield rake on the outer face only (bellows end stays square).
+  const tramLeadBody = makeRoundedBox(THREE, TRAM_WAGON.w, TRAM_WAGON.h, TRAM_WAGON_END_L, wagonR, 4);
+  slantCabFace(tramLeadBody, "front", 0.72);
+  const tramTailBody = makeRoundedBox(THREE, TRAM_WAGON.w, TRAM_WAGON.h, TRAM_WAGON_END_L, wagonR, 4);
+  slantCabFace(tramTailBody, "rear", 0.72);
   const geos = {
     tramWagonBody: makeRoundedBox(THREE, TRAM_WAGON.w, TRAM_WAGON.h, TRAM_WAGON.l, wagonR, 3),
+    tramLeadBody,
+    tramTailBody,
     tramJoint: new THREE.BoxGeometry(TRAM_WAGON.w * 0.82, TRAM_WAGON.h * 0.86, TRAM_JOINT_GAP),
-    busBody: new THREE.BoxGeometry(BUS_DIM.w, BUS_DIM.h, BUS_DIM.l),
+    busBody: (() => {
+      const g = makeRoundedBox(THREE, BUS_DIM.w, BUS_DIM.h, BUS_DIM.l, busR, 4);
+      // Mild cab rake front and rear so the bus doesn't read as a sharp brick.
+      slantCabFace(g, "front", 0.55);
+      slantCabFace(g, "rear", 0.45);
+      return g;
+    })(),
     tramPod: new THREE.BoxGeometry(1.35, 0.24, 1.8),
     busPod: new THREE.BoxGeometry(1.5, 0.3, 2.8),
     pantoBase: new THREE.BoxGeometry(0.6, 0.12, 1.0),
@@ -802,7 +868,7 @@ function createVehicle(paths, THREE, parts, mode) {
   const index = paths.indexOf(path);
   const reverse = legalReverse(path, Math.random() < 0.5);
   // Leave room behind a tram for its trailing wagons to sit on the path.
-  const minS = mode === "tram" ? (TRAM_WAGONS - 1) * TRAM_PITCH + 1 : 1;
+  const minS = mode === "tram" ? TRAM_TRAIL_SPAN + 1 : 1;
   const span = Math.max(8, path.length * 0.85 - minS);
   const s = minS + Math.random() * span;
   const mesh = mode === "tram" ? makeTramMesh(THREE, parts) : makeBusMesh(THREE, parts);
@@ -844,18 +910,19 @@ function createVehicle(paths, THREE, parts, mode) {
 /**
  * Place each tram wagon on the path behind the lead, so the consist bends through
  * corners instead of sliding as one rigid box. `v.s` is travel distance of the
- * lead wagon centre; trailing wagons sample `v.s - i * TRAM_PITCH`.
+ * lead wagon centre; trailing wagons sample `v.s - tramWagonOffset(i)`.
  */
 function placeTramArticulated(v, path, THREE) {
   const wagons = v.mesh.userData.wagons;
   const joints = v.mesh.userData.joints;
+  const lens = v.mesh.userData.wagonLens || TRAM_WAGON_LENS;
   if (!wagons || !wagons.length) return;
 
   const tmpPos = v.pos;
   const tmpTan = v.tan;
   const n = wagons.length;
   for (let i = 0; i < n; i++) {
-    const travel = Math.max(0.05, v.s - i * TRAM_PITCH);
+    const travel = Math.max(0.05, v.s - tramWagonOffset(i));
     const pathS = v.reverse ? path.length - travel : travel;
     const clamped = Math.max(0, Math.min(path.length, pathS));
     samplePath(path, clamped, THREE, tmpPos, tmpTan);
@@ -888,19 +955,20 @@ function placeTramArticulated(v, path, THREE) {
   }
 
   if (joints) {
-    const half = TRAM_WAGON.l * 0.5;
     for (let i = 0; i < joints.length; i++) {
       const a = _tramPos[i];
       const b = _tramPos[i + 1];
       const ta = _tramTan[i];
       const tb = _tramTan[i + 1];
+      const halfA = (lens[i] || TRAM_WAGON.l) * 0.5;
+      const halfB = (lens[i + 1] || TRAM_WAGON.l) * 0.5;
       // Coupler points at the facing ends of neighbouring wagons.
-      _jointA.x = a.x - ta.x * half;
+      _jointA.x = a.x - ta.x * halfA;
       _jointA.y = a.y;
-      _jointA.z = a.z - ta.z * half;
-      _jointB.x = b.x + tb.x * half;
+      _jointA.z = a.z - ta.z * halfA;
+      _jointB.x = b.x + tb.x * halfB;
       _jointB.y = b.y;
-      _jointB.z = b.z + tb.z * half;
+      _jointB.z = b.z + tb.z * halfB;
       const jx = (_jointA.x + _jointB.x) * 0.5;
       const jz = (_jointA.z + _jointB.z) * 0.5;
       const dx = _jointB.x - _jointA.x;
@@ -1294,7 +1362,7 @@ export async function createTransit(scene, THREE, opts = {}) {
     v.pathIndex = next.index;
     v.reverse = next.reverse;
     // Keep the consist on the path: lead starts far enough ahead for trailing wagons.
-    v.s = v.mode === "tram" ? (TRAM_WAGONS - 1) * TRAM_PITCH + 0.5 : 0.5;
+    v.s = v.mode === "tram" ? TRAM_TRAIL_SPAN + 0.5 : 0.5;
     v.phase = "cruise";
     v.currentHalt = null;
     setVehicleLabel(v, np);
@@ -1749,7 +1817,7 @@ export async function createTransit(scene, THREE, opts = {}) {
       }
     }
     for (const g of [
-      parts.tramWagonBody, parts.tramJoint, parts.busBody, parts.tramPod, parts.busPod,
+      parts.tramWagonBody, parts.tramLeadBody, parts.tramTailBody, parts.tramJoint, parts.busBody, parts.tramPod, parts.busPod,
       parts.pantoBase, parts.pantoArm, parts.pantoBar, parts.mirrorGeo, parts.lampGeo,
       ...parts.ledGeos,
     ]) g.dispose();
