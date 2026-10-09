@@ -449,6 +449,7 @@
       import { createVelo } from "./velo.js";
       import { createScooters } from "./scooters.js";
       import { createShops } from "./shops.js";
+      import { createPropCollider } from "./props-collide.js";
       import { createPlayerMotion } from "./player-motion.js";
       import { createHud } from "./hud.js";
       import { createMinimap } from "./minimap.js";
@@ -673,6 +674,8 @@
         get velo() { return velo; },
         get scooters() { return scooters; },
         get shops() { return shops; },
+        get props() { return props; },
+        collideWorld,
         get clock() { return { hour: gameHour, day: gameDay }; },
         get motion() { return playerMotion; },
         get pixelRatio() { return pixelRatio; },
@@ -827,6 +830,7 @@
       let velo = null;
       let scooters = null;
       let shops = null;
+      let props = null;
       let outdoors = null;
       const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
       /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
@@ -853,6 +857,23 @@
         if (micromobility) for (const v of micromobility.vehicles) push(v.pos.x, v.pos.z, 0.85);
         if (scooters && !scooters.isRiding()) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
         if (outdoors) outdoors.ensureOutdoors(pos);
+      }
+      const _vehicleSolids = [];
+      /** Trunks, posts, benches, racks, fences, cars, buses and trams: solid on foot and on wheels. */
+      function collideWorld(pos, onWheels) {
+        if (!props) return;
+        const r = onWheels ? 0.42 : 0.3;
+        let hit = props.resolveStatic(pos, r);
+        _vehicleSolids.length = 0;
+        for (const c of traffic.cars || []) _vehicleSolids.push({ pos: c.pos, tan: c.tan, hl: 2.15, hw: 0.9 });
+        for (const v of transit.vehicles || []) {
+          if (!v || !v.pos || !v.tan || v.phase === "gone") continue;
+          const tram = v.mode === "tram";
+          _vehicleSolids.push({ pos: v.pos, tan: v.tan, hl: tram ? 15.5 : 6.6, hw: tram ? 1.2 : 1.25 });
+        }
+        hit = props.resolveVehicles(pos, r, _vehicleSolids) || hit;
+        if (hit) playerMotion.bump(onWheels ? 0.35 : 0.6);
+        if (hit && outdoors) outdoors.ensureOutdoors(pos);
       }
       let minimap = null;
       let streetLocator = null;
@@ -1313,7 +1334,12 @@
       }
 
       const loader = new GLTFLoader();
-      const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+      // Hidden tabs never fire rAF; the timeout keeps loading moving in the background.
+      const nextFrame = () =>
+        new Promise((r) => {
+          requestAnimationFrame(() => r());
+          setTimeout(r, 100);
+        });
       const setLoad = (f, label) => window.__loading && window.__loading.set(f, label);
       let cityReady = false;
 
@@ -1511,6 +1537,7 @@
           }
           streetLocator = await createStreetLocator();
           outdoors = await createOutdoorsGuard();
+          props = await createPropCollider();
           if (outdoors.ready) {
             clampWalkerXZ(walkControls.getObject().position);
             clampWalkerXZ(spawnPos);
@@ -1666,6 +1693,7 @@
           clampWalkerXZ(w.position);
           if (outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep)) playerMotion.bump(0.5);
           if (!onScooter && !ridingVelo) pushOutOfSolids(w.position);
+          collideWorld(w.position, onScooter || ridingVelo);
           if (ridingVelo && velo.update) {
             velo.update(dt, {
               x: w.position.x,

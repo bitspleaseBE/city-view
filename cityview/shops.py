@@ -61,6 +61,7 @@ DEFAULT_HOURS: dict[str, list[list[tuple[float, float]]]] = {
 }
 
 FACADE_SEARCH_M = 14.0  # a shop node farther than this from any façade is dropped
+STREET_BONUS_M = 12.0  # a street-facing wall wins over a nearer side / courtyard wall
 MIN_SPACING_M = 3.2  # two signs on one façade keep this far apart
 SIGN_MAX_W = 6.5
 SIGN_MIN_W = 2.4
@@ -259,7 +260,8 @@ def snap_to_facade(
             # A node outside a building must sit in front of the face it snaps to.
             if not inside and (x - a[0]) * nx + (y - a[1]) * ny < -0.5:
                 continue
-            score = d - (4.0 if street else 0.0) - (2.0 if inside else 0.0)
+            # Only street edges carry a shopfront elevation; side / courtyard walls are blank.
+            score = d - (STREET_BONUS_M if street else 0.0) - (2.0 if inside else 0.0)
             if best is None or score < best[0]:
                 best = (score, b, i0, i1, t, length, (nx, ny), street)
     if best is None:
@@ -328,7 +330,7 @@ def plan_shops(
 
 
 def export_shops_for_viewer(
-    shops: list[dict[str, Any]], spawn: dict[str, Any] | None, radius: float = 900.0
+    shops: list[dict[str, Any]], spawn: dict[str, Any] | None, radius: float = 1500.0
 ) -> dict[str, Any]:
     sx = float(spawn["x"]) if spawn else 0.0
     sy = float(spawn["y"]) if spawn else 0.0

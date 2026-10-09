@@ -2632,6 +2632,9 @@ def add_supermarket_fascia(
         link(obj)
 
 
+FAR_FACADE_M = 360.0  # beyond this: photo elevations only, no chimneys / roof plant
+
+
 def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = None) -> None:
     style_name = style_key_for(bldg)
     type_id = bldg.get("building_type") or bldg.get("style") or "eclectic"
@@ -2719,9 +2722,9 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         if detail not in {"full", "simple"}:
             detail = "simple"
 
-    if spawn_xy is not None and dist > 360.0 and type_id not in {"church", "hospital"}:
-        # Far LOD1 colour blocks only — still keep roofs.
-        return
+    # Beyond the spawn district the walker / rider still reaches every street, so far
+    # buildings keep their photo elevation (doors + windows) but drop rooftop clutter.
+    far = spawn_xy is not None and dist > FAR_FACADE_M and type_id not in {"church", "hospital"}
 
     if type_id in {"church", "hospital"} and detail in {"full", "simple"}:
         trim = mats["trim"].get(style_name) or mats["trim"].get(type_id) or mats["trim"]["eclectic"]
@@ -2807,7 +2810,9 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     seed_id = int(bid) if str(bid).lstrip("-").isdigit() else 1
     # LOD: chimneys and plant also crown the "simple" ring (skyline from the orbit view);
     # corbels, pots, vents and aerials are near-spawn only.
-    if eff_shape != "flat" and seed_id % 2 == 0:
+    if far:
+        pass
+    elif eff_shape != "flat" and seed_id % 2 == 0:
         ROOFTOP_STATS["chimneys"] += add_chimneys(
             ring, max(2.5, eaves), roof_h, eff_shape, {**mats, "roof": roof}, abs(seed_id) or 1, near_spawn
         )
