@@ -1973,32 +1973,38 @@
                 ? freeCam
                 : avatar.position;
           if (minimap.showStreetName) {
-            const lm =
-              landmarkLocator && landmarkLocator.update
-                ? landmarkLocator.update(ppos.x, ppos.z)
-                : null;
-            if (lm && lm.landmark) {
+            const lm = landmarkLocator?.update?.(ppos.x, ppos.z);
+            if (lm?.landmark) {
               if (lm.changed) {
                 minimap.showStreetName(lm.landmark.name, "Onroerend erfgoed");
                 if (lm.firstVisit && hud.notify) hud.notify(lm.landmark.name, 4800);
               }
-            } else if (transit && transit.locateStop) {
-              const hs = transit.locateStop(ppos.x, ppos.z);
-              if (hs.stop) {
-                if (hs.changed) {
-                  const lines = (hs.stop.lines || []).filter(Boolean).join(" · ");
+            } else {
+              const vs = velo?.locateStation?.(ppos.x, ppos.z);
+              if (vs?.station) {
+                if (vs.changed) {
+                  const bikes = vs.station.bikesAvailable ?? 0;
+                  const cap = vs.station.capacity ?? "?";
                   minimap.showStreetName(
-                    hs.stop.name,
-                    lines ? `De Lijn · lijn ${lines}` : "De Lijn halte",
+                    vs.station.name,
+                    `Velo Antwerpen · ${bikes}/${cap} fietsen`,
                   );
                 }
-              } else if (streetLocator) {
-                const { street, changed } = streetLocator.update(ppos.x, ppos.z);
-                if (changed && street) minimap.showStreetName(street);
+              } else {
+                const hs = transit?.locateStop?.(ppos.x, ppos.z);
+                if (hs?.stop) {
+                  if (hs.changed) {
+                    const lines = (hs.stop.lines || []).filter(Boolean).join(" · ");
+                    minimap.showStreetName(
+                      hs.stop.name,
+                      lines ? `De Lijn · lijn ${lines}` : "De Lijn halte",
+                    );
+                  }
+                } else if (streetLocator) {
+                  const { street, changed } = streetLocator.update(ppos.x, ppos.z);
+                  if (changed && street) minimap.showStreetName(street);
+                }
               }
-            } else if (streetLocator) {
-              const { street, changed } = streetLocator.update(ppos.x, ppos.z);
-              if (changed && street) minimap.showStreetName(street);
             }
           }
           if (minimap.setHeading) minimap.setHeading(playerMotion.yaw());
