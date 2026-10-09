@@ -1547,6 +1547,9 @@
           streetLocator = await createStreetLocator();
           outdoors = await createOutdoorsGuard();
           props = await createPropCollider();
+          if (pedestrians && outdoors.ready && pedestrians.setBlocker) {
+            pedestrians.setBlocker((x, z) => outdoors.insideBuilding(x, z));
+          }
           if (outdoors.ready) {
             clampWalkerXZ(walkControls.getObject().position);
             clampWalkerXZ(spawnPos);
