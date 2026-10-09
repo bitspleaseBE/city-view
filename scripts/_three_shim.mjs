@@ -34,6 +34,7 @@ export const THREE = {
   Vector3, Group: Obj, Mesh: Obj, Sprite: Obj,
   BoxGeometry: Disposable,
   MeshLambertMaterial: Disposable,
+  MeshBasicMaterial: Disposable,
   SpriteMaterial: Disposable,
   CanvasTexture: class extends Disposable {},
 };

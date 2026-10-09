@@ -3,6 +3,9 @@
  * Halt dwell (smooth brake / 20s stop / accel), E to board/alight.
  */
 
+import { shared } from "./lanes.js";
+
+const TRANSIT_URL = "./transit.json";
 const TRAM_COUNT = 6;
 const BUS_COUNT = 8;
 const TRAM_SPEED = 7.5;
@@ -10,7 +13,7 @@ const BUS_SPEED = 8.5;
 const FOLLOW_DIST = 14;
 const PLAYER_STOP_DIST = 5;
 const SNAP_M = 14;
-const DWELL_S = 20;
+const DWELL_S = 10;
 const DECEL_DIST = 22;
 const ARRIVE_DIST = 2.2;
 const BOARD_DIST = 9;
@@ -24,7 +27,16 @@ const STUCK_QUEUE_SEC = 100; // longer than any dwell: only a circular queue get
 const STUCK_FREE_SEC = 4; // held this long with nothing in front -> shove on
 const GHOST_SEC = 8;
 const GHOST_CREEP = 1.8;
-const FIRST_TRAM_DWELL_S = 45; // waiting tram at the spawn halt
+const FIRST_TRAM_DWELL_S = 30; // waiting tram at the spawn halt
+const MAX_STEP = 1 / 30; // s: the sim never integrates a bigger step (stable at any frame rate)
+const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame (tab switch, hitch)
+const HARD_BRAKE = 3.0; // m/s^2 a tram / bus can shed speed when a car is right in front
+const PLAYER_PATIENCE_SEC = 6; // a pedestrian in the lane holds a tram / bus this long, then it creeps past
+const CAR_EVICT_SEC = 3; // a car holding a tram / bus still this long is cleared
+const GATE_MARGIN = 24; // m inside the district edge where vehicles (re-)enter
+const GATE_CLEAR_M = 45; // m of free road required around a gate before a vehicle enters
+const SEED_GAP_M = 150; // seeding: min distance between two vehicles on the same track
+const GATE_DELAY_S = [4, 24]; // hidden time between leaving the district and re-entering
 
 function blenderToThree(x, y, out) {
   out.set(x, 0, -y);
@@ -148,6 +160,9 @@ function attachHaltsToPaths(paths, stops, THREE) {
       const hit = projectOnPath(path, stop.x, stop.z);
       if (hit.dist > STOP_PROJECT_M) continue;
       if (halts.some((h) => Math.abs(h.s - hit.s) < 12)) continue;
+      // One platform = one stop: OSM maps both ends of a long platform (30 m apart) as separate
+      // stops with the same name, and vehicles used to dwell twice in a row at the same halt.
+      if (halts.some((h) => h.name === stop.name && Math.abs(h.s - hit.s) < 90)) continue;
       halts.push({
         s: hit.s,
         name: stop.name,
@@ -288,6 +303,21 @@ function distToHalt(v, path, halt) {
   return Math.abs(halt.s - ts);
 }
 
+const _lane = { x: 0, z: 0 };
+/** Ease a bus into the lane of the car road it is driving on (rate = 1/s; Infinity = snap). */
+function steerBus(v, rate, dt) {
+  if (v.mode !== "bus" || !v.offSet) return;
+  let tx = -v.tan.z * 1.1;
+  let tz = v.tan.x * 1.1;
+  if (shared.laneAt && shared.laneAt(v.baseX, v.baseZ, v.tan.x, v.tan.z, _lane)) {
+    tx = _lane.x - v.baseX;
+    tz = _lane.z - v.baseZ;
+  }
+  const k = Math.min(1, rate * dt);
+  v.offX += (tx - v.offX) * k;
+  v.offZ += (tz - v.offZ) * k;
+}
+
 function createVehicle(paths, THREE, parts, mode) {
   const pool = paths.filter((p) =>
     mode === "tram" ? p.mode === "tram" || p.mode === "subway" : p.mode === "bus",
@@ -322,20 +352,37 @@ function createVehicle(paths, THREE, parts, mode) {
     currentHalt: null,
     stuckT: 0,
     ghostUntil: 0,
+    respawnAt: 0,
+    carBlockT: 0,
+    playerT: 0,
+    offX: 0,
+    offZ: 0,
+    offSet: false,
+    baseX: 0,
+    baseZ: 0,
     wait: "",
   };
 }
 
 function placeVehicle(v, paths, THREE) {
+  if (v.phase === "gone") return; // hidden off-map: keep its parked position
   const path = paths[v.pathIndex];
   if (!path) return;
   const s = v.reverse ? path.length - v.s : v.s;
   samplePath(path, s, THREE, v.pos, v.tan);
   if (v.reverse) v.tan.multiplyScalar(-1);
   if (v.mode === "bus") {
-    // Right-hand traffic (same lane convention as cars in traffic.js).
-    v.pos.x += -v.tan.z * 1.1;
-    v.pos.z += v.tan.x * 1.1;
+    // Right-hand traffic. The sideways offset follows the car lane when one runs alongside
+    // (steerBus), else the default 1.1 m to the right of the route.
+    v.baseX = v.pos.x;
+    v.baseZ = v.pos.z;
+    if (!v.offSet) {
+      v.offX = -v.tan.z * 1.1;
+      v.offZ = v.tan.x * 1.1;
+      v.offSet = true;
+    }
+    v.pos.x += v.offX;
+    v.pos.z += v.offZ;
   }
   v.pos.y = v.mode === "tram" ? 1.3 : 1.35;
   v.mesh.position.copy(v.pos);
@@ -345,10 +392,11 @@ function placeVehicle(v, paths, THREE) {
 /**
  * @param {import('three').Scene} scene
  * @param {typeof import('three')} THREE
- * @param {{ url?: string, tramCount?: number, busCount?: number }} [opts]
+ * @param {{ tramCount?: number, busCount?: number }} [opts]
  */
 export async function createTransit(scene, THREE, opts = {}) {
-  const url = opts.url || "./transit.json";
+  // Fixed same-origin data file (no caller-supplied URL).
+  const url = TRANSIT_URL;
   let data;
   try {
     const res = await fetch(url);
@@ -381,6 +429,42 @@ export async function createTransit(scene, THREE, opts = {}) {
   const spawnLocal = data.spawn
     ? blenderToThree(data.spawn.x, data.spawn.y, new THREE.Vector3())
     : new THREE.Vector3();
+
+  const DISTRICT_R = Math.max(320, (data.radius || 280) * 1.2);
+  const ENTRY_R = DISTRICT_R - GATE_MARGIN;
+
+  /**
+   * Where each path crosses into / sits inside the district bubble. Routes are kilometres
+   * long but only ~0.7 km of each lies inside the walkable tile, so vehicles must be seeded
+   * inside it and re-enter through a gate where the route crosses the rim. (They used to be
+   * respawned at the far *ends* of the route - kilometres outside the bubble - and were
+   * immediately "left the tile"-recycled again, every frame, forever: after ~2 minutes the
+   * district had no moving trams or buses at all, and the headless soak counted the
+   * teleporting ghosts as "moving".)
+   */
+  const gates = { tram: [], bus: [] };
+  {
+    const tmpP = new THREE.Vector3();
+    const tmpT = new THREE.Vector3();
+    const STEP = 3;
+    for (let pi = 0; pi < allPaths.length; pi++) {
+      const path = allPaths[pi];
+      const grp = path.mode === "bus" ? gates.bus : gates.tram;
+      path.inside = [];
+      let prevIn = null;
+      for (let c = 0; c <= path.length; c += STEP) {
+        samplePath(path, c, THREE, tmpP, tmpT);
+        const inside = Math.hypot(tmpP.x - spawnLocal.x, tmpP.z - spawnLocal.z) < ENTRY_R;
+        if (inside) path.inside.push(c);
+        if (prevIn !== null && inside !== prevIn) {
+          // outside -> inside going forward = forward gate; inside -> outside = reverse gate
+          if (inside) grp.push({ pathIndex: pi, reverse: false, coord: Math.min(path.length - 1, c + 2) });
+          else grp.push({ pathIndex: pi, reverse: true, coord: Math.max(1, c - STEP - 2) });
+        }
+        prevIn = inside;
+      }
+    }
+  }
 
   /** Closest named halt (on a tram path) to the human spawn. */
   function findServiceHalt() {
@@ -415,22 +499,55 @@ export async function createTransit(scene, THREE, opts = {}) {
     v.dwellLeft = 0;
     v.velocity = v.speed * 0.55;
     placeVehicle(v, allPaths, THREE);
+    if (v.mode === "bus") {
+      steerBus(v, Infinity, 1); // snap straight into the car lane: no sideways glide on (re-)entry
+      placeVehicle(v, allPaths, THREE);
+    }
+  }
+
+  /** Is (path, direction, coord) free of other (visible) vehicles for `gap` metres? */
+  function trackClear(v, gap) {
+    if (shared.cars) {
+      for (const c of shared.cars) {
+        if (c.pos.distanceTo(v.pos) < 16) return false;
+      }
+    }
+    for (const o of vehicles) {
+      if (o === v || o.phase === "gone") continue;
+      if (o.pos.distanceTo(v.pos) < 40) return false;
+      if (o.pathIndex === v.pathIndex && o.reverse === v.reverse) {
+        const path = allPaths[v.pathIndex];
+        if (Math.abs(travelS(o, path) - travelS(v, path)) < gap) return false;
+      }
+    }
+    return true;
+  }
+
+  /** Put `v` somewhere on the part of the route that lies inside the district, well spaced. */
+  function seedInside(v, pathPool) {
+    const usable = pathPool.filter((p) => p.inside && p.inside.length);
+    if (!usable.length) return false;
+    for (let tries = 0; tries < 80; tries++) {
+      const path = usable[(Math.random() * usable.length) | 0];
+      const coord = path.inside[(Math.random() * path.inside.length) | 0];
+      placeOnPath(v, allPaths.indexOf(path), coord, Math.random() < 0.5);
+      if (trackClear(v, tries < 60 ? SEED_GAP_M : SEED_GAP_M * 0.5)) break;
+    }
+    v.velocity = v.speed * (0.7 + Math.random() * 0.2);
+    setVehicleLabel(v, allPaths[v.pathIndex]);
+    return true;
   }
 
   function spawnFleet(n, mode, pathPool) {
     if (!pathPool.length || n <= 0) return;
     for (let i = 0; i < n; i++) {
       const v = createVehicle(allPaths, THREE, parts, mode);
-      let tries = 0;
-      while (tries < 12) {
-        placeVehicle(v, allPaths, THREE);
-        const clash = vehicles.some((o) => o.pos.distanceToSquared(v.pos) < 100);
-        if (!clash) break;
-        v.pathIndex = allPaths.indexOf(pathPool[(Math.random() * pathPool.length) | 0]);
-        v.s = Math.random() * allPaths[v.pathIndex].length * 0.85;
-        tries++;
+      if (!seedInside(v, pathPool)) {
+        // Route never enters the district: keep the vehicle parked out of sight.
+        v.phase = "gone";
+        v.mesh.visible = false;
+        v.respawnAt = Infinity;
       }
-      placeVehicle(v, allPaths, THREE);
       root.add(v.mesh);
       vehicles.push(v);
     }
@@ -485,25 +602,15 @@ export async function createTransit(scene, THREE, opts = {}) {
         const approach = Math.max(1, h.s - 55);
         placeOnPath(v, pi, approach, reverse);
         v.velocity = v.speed;
-      } else if (i === 2) {
-        // Opposite direction inbound.
-        reverse = true;
-        const approach = Math.min(p.length - 1, h.s + 55);
-        placeOnPath(v, pi, approach, reverse);
-        v.velocity = v.speed;
       } else {
-        // Further out on the same corridor, still heading toward a halt.
-        reverse = i % 2 === 0;
-        const offset = 90 + (i - 3) * 100;
-        const travel = reverse
-          ? Math.min(p.length - 1, h.s + offset)
-          : Math.max(1, h.s - offset);
-        placeOnPath(v, pi, travel, reverse);
-        v.velocity = v.speed;
+        // The rest are spread along the part of the line that lies inside the district. They
+        // used to be stacked in a convoy right behind the halt: every tram then queued for
+        // the one dwelling at the stop and the first minute at spawn was a wall of parked trams.
+        seedInside(v, tramPaths);
       }
 
       // Refresh line label from chosen path.
-      const lbl = lineLabel(p.lines, "tram");
+      const lbl = lineLabel(allPaths[v.pathIndex].lines, "tram");
       if (lbl !== v.lineText) {
         v.mesh.remove(v.label.sprite);
         v.label.tex.dispose();
@@ -546,8 +653,6 @@ export async function createTransit(scene, THREE, opts = {}) {
   const rideCamPos = new THREE.Vector3();
   const rideLook = new THREE.Vector3();
 
-  const DISTRICT_R = Math.max(320, (data.radius || 280) * 1.2);
-
   function setVehicleLabel(v, path) {
     const nextLabel = lineLabel(path.lines, v.mode);
     if (nextLabel === v.lineText) return;
@@ -559,42 +664,61 @@ export async function createTransit(scene, THREE, opts = {}) {
     v.lineText = nextLabel;
   }
 
-  /** Respawn at a district-edge entry so the fleet keeps flowing. */
+  /**
+   * Take a vehicle out of the district (it left the walkable tile / ran off the end of its
+   * route). It stays hidden for a few seconds, then re-enters through a gate on the rim
+   * (see tryEnter) so the fleet keeps flowing and the street never empties.
+   */
   function recycleVehicle(v) {
     if (ride && ride.vehicle === v) {
       const drop = alightAt(v);
       ride = { pendingDrop: drop };
     }
-    const pool =
-      v.mode === "bus"
-        ? busPaths
-        : allPaths.filter((p) => p.mode === "tram" || p.mode === "subway");
-    if (!pool.length) {
-      v.mesh.visible = false;
-      v.phase = "gone";
-      return;
-    }
-    const path = pool[(Math.random() * pool.length) | 0];
-    const pi = allPaths.indexOf(path);
-    const dStart = path.start.distanceToSquared(spawnLocal);
-    const dEnd = path.end.distanceToSquared(spawnLocal);
-    // Enter from the farther tip so vehicles travel through the district.
-    let reverse;
-    let travel;
-    if (dStart >= dEnd) {
-      reverse = false;
-      travel = 3 + Math.random() * 40;
-    } else {
-      reverse = true;
-      travel = Math.max(3, path.length - 3 - Math.random() * 40);
-    }
-    placeOnPath(v, pi, travel, reverse);
-    v.mesh.visible = true;
-    v.velocity = v.speed * (0.65 + Math.random() * 0.25);
-    v.ghostUntil = simTime + 3;
+    v.mesh.visible = false;
+    v.phase = "gone";
+    v.velocity = 0;
+    v.pos.set(1e5, -100, 1e5); // far off-map so nothing can ever collide with / follow a hidden vehicle
+    v.currentHalt = null;
+    v.dwellLeft = 0;
     v.stuckT = 0;
     v.wait = "";
-    setVehicleLabel(v, path);
+    const [lo, hi] = GATE_DELAY_S;
+    v.respawnAt = simTime + lo + Math.random() * (hi - lo);
+  }
+
+  /** Try to bring a hidden vehicle back in through a free gate. Retries every second. */
+  function tryEnter(v) {
+    const list = v.mode === "bus" ? gates.bus : gates.tram;
+    if (!list.length) {
+      // No route crosses the rim: drop it somewhere inside instead.
+      const pool = v.mode === "bus" ? busPaths : tramPaths;
+      if (seedInside(v, pool)) {
+        v.mesh.visible = true;
+        v.ghostUntil = simTime + 3;
+        return;
+      }
+      v.respawnAt = Infinity;
+      return;
+    }
+    const start = (Math.random() * list.length) | 0;
+    for (let k = 0; k < list.length; k++) {
+      const g = list[(start + k) % list.length];
+      placeOnPath(v, g.pathIndex, g.coord, g.reverse);
+      if (trackClear(v, GATE_CLEAR_M)) {
+        v.mesh.visible = true;
+        v.velocity = v.speed * (0.7 + Math.random() * 0.2);
+        v.ghostUntil = simTime + 2;
+        v.stuckT = 0;
+        v.wait = "";
+        setVehicleLabel(v, allPaths[g.pathIndex]);
+        return;
+      }
+    }
+    v.phase = "gone";
+    v.mesh.visible = false;
+    v.pos.set(1e5, -100, 1e5);
+    v.velocity = 0;
+    v.respawnAt = simTime + 1; // every gate is busy: wait a second and look again
   }
 
   function advanceOrRecycle(v) {
@@ -626,9 +750,14 @@ export async function createTransit(scene, THREE, opts = {}) {
   }
 
   function updateVehicleMotion(v, dt, walkObject) {
+    if (v.phase === "gone") {
+      if (simTime >= v.respawnAt) tryEnter(v);
+      return;
+    }
     const path = allPaths[v.pathIndex];
     if (!path) return;
     placeVehicle(v, allPaths, THREE);
+    steerBus(v, 3, dt);
 
     if (v.phase === "dwell") {
       v.velocity = 0;
@@ -678,7 +807,7 @@ export async function createTransit(scene, THREE, opts = {}) {
     if (!ghosting) {
       for (let j = 0; j < vehicles.length; j++) {
         const other = vehicles[j];
-        if (other === v) continue;
+        if (other === v || other.phase === "gone") continue;
         const dx = other.pos.x - v.pos.x;
         const dz = other.pos.z - v.pos.z;
         const distSq = dx * dx + dz * dz;
@@ -701,6 +830,52 @@ export async function createTransit(scene, THREE, opts = {}) {
       }
     }
 
+    // Cars share the street. They give way to us (traffic.js), but a car that is in our lane
+    // right in front of us (queued at a red, stopped for the player, ...) must not be driven
+    // through: follow it like a leader. A car that keeps us stationary for a few seconds is
+    // dead weight and is cleared (despawned), never ghosted through.
+    let carBlocker = null;
+    const cars = shared.cars;
+    if (cars && !ghosting) {
+      const half = (BODY_LEN[v.mode] || BODY_LEN.bus) * 0.5;
+      const hw = v.mode === "tram" ? 1.3 : 1.25;
+      for (let j = 0; j < cars.length; j++) {
+        const c = cars[j];
+        const dx = c.pos.x - v.pos.x;
+        const dz = c.pos.z - v.pos.z;
+        if (dx * dx + dz * dz > 40 * 40) continue;
+        const dot = c.tan.x * v.tan.x + c.tan.z * v.tan.z;
+        const crs = c.tan.x * v.tan.z - c.tan.z * v.tan.x;
+        // The car's footprint projected on our axes (it may be crossing us sideways).
+        const extA = 2.1 * Math.abs(dot) + 0.875 * Math.abs(crs);
+        const extS = 2.1 * Math.abs(crs) + 0.875 * Math.abs(dot);
+        const ahead = dx * v.tan.x + dz * v.tan.z;
+        if (ahead < 0.5 || ahead - extA > half + 3 + (v.velocity * v.velocity) / (2 * HARD_BRAKE) * 1.15) continue;
+        const side = Math.abs(dx * v.tan.z - dz * v.tan.x);
+        if (side > hw + extS - 0.1) continue;
+        // Moving cars that are not heading our way (crossing / oncoming) look after themselves:
+        // they brake for us. Only react to ones that are slow or stopped.
+        if (dot < 0.35 && c.velocity > 1.5) continue;
+        const gap = ahead - extA - half - 2.2;
+        const lead = dot > 0.35 ? c.velocity * 0.9 : 0;
+        const safe = lead + Math.sqrt(2 * COMFORT_BRAKE * Math.max(0, gap));
+        if (safe < desire) {
+          desire = Math.max(0, safe);
+          limitedBy = c.wait === "red" || c.wait === "queue" ? "queue" : "car";
+          carBlocker = c;
+        }
+      }
+    }
+    if (carBlocker && v.velocity < 0.3 && limitedBy === "car") {
+      v.carBlockT += dt;
+      if (v.carBlockT > CAR_EVICT_SEC) {
+        carBlocker.evict = true;
+        v.carBlockT = 0;
+      }
+    } else {
+      v.carBlockT = Math.max(0, v.carBlockT - dt * 2);
+    }
+
     if (walkObject && !(ride && ride.vehicle === v)) {
       const dx = playerPos.x - v.pos.x;
       const dz = playerPos.z - v.pos.z;
@@ -715,12 +890,28 @@ export async function createTransit(scene, THREE, opts = {}) {
       }
     }
 
+    // A walker standing in the lane holds the vehicle for a moment (and everything queued behind
+    // it); after that it creeps past rather than blocking the line for as long as they stand there.
+    if (limitedBy === "player" && v.velocity < 0.3) {
+      v.playerT += dt;
+      if (v.playerT > PLAYER_PATIENCE_SEC) {
+        v.ghostUntil = simTime + GHOST_SEC;
+        v.playerT = 0;
+      }
+    } else {
+      v.playerT = Math.max(0, v.playerT - dt);
+    }
+
     // Recovery: a vehicle that is held for too long (leader jam, bad geometry)
     // slides through at a crawl instead of sitting there for the rest of the session.
     if (v.velocity < 0.3 && limitedBy !== "player") {
       v.stuckT += dt;
       const limit =
-        limitedBy === "queue" ? STUCK_QUEUE_SEC : limitedBy === "leader" ? STUCK_GHOST_SEC : STUCK_FREE_SEC;
+        limitedBy === "queue" || limitedBy === "car"
+          ? STUCK_QUEUE_SEC
+          : limitedBy === "leader"
+            ? STUCK_GHOST_SEC
+            : STUCK_FREE_SEC;
       if (v.stuckT > limit) {
         v.ghostUntil = simTime + GHOST_SEC;
         v.stuckT = 0;
@@ -731,9 +922,12 @@ export async function createTransit(scene, THREE, opts = {}) {
     v.wait = v.velocity < 0.3 && v.phase !== "dwell" ? limitedBy : "";
     if (simTime < v.ghostUntil) desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
 
+    const prevV = v.velocity;
     // Smooth accel / brake (approach uses stronger brake).
     const rate = v.phase === "approach" ? 2.2 : 1.4;
     v.velocity += (desire - v.velocity) * Math.min(1, dt * rate);
+    // Smooth easing is for halts and comfort; a car in the lane needs a firm, bounded stop.
+    if (carBlocker && v.velocity > desire) v.velocity = Math.max(desire, Math.min(v.velocity, prevV - HARD_BRAKE * dt));
     if (v.velocity < 0.08 && desire < 0.08) v.velocity = 0;
 
     v.s += v.velocity * dt;
@@ -804,12 +998,8 @@ export async function createTransit(scene, THREE, opts = {}) {
     return drop;
   }
 
-  function update(dt, walkObject) {
-    if (dt <= 0 || !vehicles.length) return;
+  function step(dt, walkObject) {
     simTime += dt;
-    if (walkObject) {
-      playerPos.set(walkObject.position.x, 0, walkObject.position.z);
-    }
     for (const v of vehicles) {
       updateVehicleMotion(v, dt, walkObject);
     }
@@ -819,6 +1009,23 @@ export async function createTransit(scene, THREE, opts = {}) {
       const drop = alightAt(ride.vehicle);
       ride = { pendingDrop: drop };
     }
+  }
+
+  /**
+   * Advance the simulation by `dt` wall-clock seconds. Time is integrated in steps of at most
+   * MAX_STEP, so a slow frame (the 60 MB district renders at 10-20 fps on many machines) does
+   * not slow the trams down: previously dt was clamped to 0.05 s by the caller, which made a
+   * 10 fps session run the whole street at half speed - dwell, red lights and all.
+   */
+  function update(dt, walkObject) {
+    if (!(dt > 0) || !vehicles.length) return;
+    if (walkObject) {
+      playerPos.set(walkObject.position.x, 0, walkObject.position.z);
+    }
+    const total = Math.min(dt, MAX_FRAME);
+    const n = Math.max(1, Math.ceil(total / MAX_STEP));
+    const h = total / n;
+    for (let i = 0; i < n; i++) step(h, walkObject);
   }
 
   function tryInteract(player) {
@@ -886,6 +1093,7 @@ export async function createTransit(scene, THREE, opts = {}) {
     let bestV = null;
     for (const v of vehicles) {
       if (v.mode !== "tram" && v.mode !== "subway") continue;
+      if (v.phase === "gone") continue;
       if (v.phase === "dwell" && v.currentHalt && v.currentHalt.name === halt.name) {
         return { eta: 0, vehicle: v, dwelling: true };
       }

@@ -813,7 +813,11 @@
 
       function tick() {
         const time = performance.now();
-        const dt = Math.min(0.05, (time - prevTime) / 1000);
+        const frameSec = (time - prevTime) / 1000;
+        const dt = Math.min(0.05, frameSec);
+        // Traffic and transit integrate real elapsed time themselves (sub-stepped), so a slow
+        // frame does not put the whole street in slow motion. Walking/camera keep the 50 ms cap.
+        const simDt = Math.min(0.25, frameSec);
         prevTime = time;
 
         const riding = transit.isRiding && transit.isRiding();
@@ -843,8 +847,8 @@
         }
         updateLampLights(dt, walker);
         if (stars.visible) stars.position.copy(camera.position);
-        traffic.update(dt, walker);
-        transit.update(dt, walker);
+        traffic.update(simDt, walker);
+        transit.update(simDt, walker);
 
         // Auto-alight when the requested stop dwell begins.
         const pending = transit.consumePendingDrop && transit.consumePendingDrop();
