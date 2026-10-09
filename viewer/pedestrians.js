@@ -1,5 +1,7 @@
 /**
- * Pedestrian simulation: Mixamo humanoids on real sidewalk / footway routes.
+ * Pedestrian simulation: households of Rocketbox people (./people.js) on real sidewalk /
+ * footway routes. Out-of-sight groups are re-dressed now and then, so people streaming in
+ * show up on the street. Falls back to capsule stand-ins if the people fail to load.
  *
  * Routes come from ``roads.json`` → ``walks`` (kerb-side sidewalk ribbons, OSM
  * footways, and short crossing links at zebras). People follow a path, continue
@@ -8,8 +10,7 @@
  * forward option. At signalised crossings they wait on the kerb until
  * ``setCrossingGate`` says the ped light is green. Lateral offset stays on the pavement.
  */
-import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
-import { loadCharacterTemplates } from "./characters.js";
+import { createPeoplePool } from "./people.js";
 
 const ROADS_URL = "./roads.json";
 const JOIN_M = 5.0; // endpoints this close are the same junction
@@ -18,6 +19,9 @@ const SAFE_KINDS = new Set(["sidewalk", "footway", "path", "pedestrian", "steps"
 const KNOCK_SPEED = 1.8;
 const SLIDE_DECEL = 5.5;
 const GET_UP_S = 1.4;
+const REDRESS_EVERY_S = 2.5;
+const REDRESS_HIDDEN_M = 28; // out of view and at least this far from the camera
+const REDRESS_FAR_M = 90; // or simply this far away
 
 export async function createPedestrians(scene, THREE, opts = {}) {
   const COUNT = opts.count || 40;
@@ -29,8 +33,12 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const walks = opts.walks || (await loadWalks());
   const walkRoutes = buildWalkRoutes(walks, SPAWN_CENTER);
   const graph = buildGraph(walkRoutes);
-  const templates = await loadCharacterTemplates("Walking");
-  const useMixamo = templates.length > 0;
+  let pool = null;
+  try {
+    pool = await createPeoplePool(THREE, opts.people);
+  } catch (err) {
+    console.warn("[cityview] people unavailable, using stand-ins", err);
+  }
   /** `(routeId) => boolean` — false means wait at the kerb (red ped light). */
   let crossingOk = () => true;
 
@@ -118,50 +126,18 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     return group;
   }
 
-  function makeMixamoHumanoid(profile, groupId, memberIdx, preferIdx) {
-    // Prefer a distinct character per group member so couples don't look like ghosts.
-    const tmpl =
-      templates.length > 1 && preferIdx != null
-        ? templates[preferIdx % templates.length]
-        : templates[(Math.random() * templates.length) | 0];
-    const root = cloneSkeleton(tmpl.scene);
-    root.traverse((o) => {
-      if (o.isMesh) {
-        o.castShadow = true;
-        o.receiveShadow = true;
-        o.frustumCulled = true;
-      }
-    });
-
-    const box = new THREE.Box3().setFromObject(root);
-    const size = new THREE.Vector3();
-    box.getSize(size);
-    const targetH = 1.7 * (profile.scale || 1);
-    const s = size.y > 0.01 ? targetH / size.y : 1;
-    root.scale.setScalar(s);
-
-    box.setFromObject(root);
-    root.position.y -= box.min.y;
-
-    const mixer = new THREE.AnimationMixer(root);
-    let action = null;
-    if (tmpl.clips.length) {
-      const clip = tmpl.clips.find((c) => /walk/i.test(c.name)) || tmpl.clips[0];
-      action = mixer.clipAction(clip);
-      action.enabled = true;
-      action.setEffectiveTimeScale(1);
-      action.setEffectiveWeight(1);
-      action.play();
-      action.time = Math.random() * clip.duration;
-    }
-
-    root.userData = { groupId, memberIdx, baseY: root.position.y, mixamo: true, mixer, action };
-    return root;
-  }
-
-  function makeHumanoid(profile, groupId, memberIdx) {
-    if (useMixamo) return makeMixamoHumanoid(profile, groupId, memberIdx, groupId * 3 + memberIdx);
-    return makeProceduralHumanoid(profile, groupId, memberIdx);
+  function makePerson(template, groupId, memberIdx) {
+    const inst = pool.instance(template);
+    inst.root.userData = {
+      groupId,
+      memberIdx,
+      baseY: inst.root.position.y,
+      mixamo: true,
+      mixer: inst.mixer,
+      action: inst.action,
+      person: inst,
+    };
+    return inst.root;
   }
 
   function routePosition(route, s) {
@@ -271,45 +247,72 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     return safe.length ? safe : walkRoutes.filter((r) => r.kind !== "crossing");
   }
 
-  function spawnGroup(profiles, routes) {
-    const prof = profiles[(Math.random() * profiles.length) | 0];
-    const route = routes[(Math.random() * routes.length) | 0];
+  /** `at` keeps an existing group's place ({ routeIdx, s, dir, side0 }) when re-dressing it. */
+  function spawnGroup(profiles, routes, groupId, at) {
+    const route = at ? walkRoutes[at.routeIdx] : routes[(Math.random() * routes.length) | 0];
+    const routeIdx = walkRoutes.indexOf(route);
     const rLen = routeLength(route);
-    const startS = Math.random() * Math.max(1, rLen - 4);
-    const dir = Math.random() < 0.5 ? 1 : -1;
+    const startS = at ? at.s : Math.random() * Math.max(1, rLen - 4);
+    const dir = at ? at.dir : Math.random() < 0.5 ? 1 : -1;
     // Pavement lane: group centre, then fan members slightly so they don't stack.
-    const side0 = (Math.random() < 0.5 ? -1 : 1) * (0.1 + Math.random() * LATERAL_M);
-    const nMem = prof.members.length;
+    const side0 = at ? at.side0 : (Math.random() < 0.5 ? -1 : 1) * (0.1 + Math.random() * LATERAL_M);
+    const member = (mesh, s, side, speed, prof) => ({
+      mesh,
+      routeIdx,
+      s: ((s % rLen) + rLen) % rLen,
+      dir,
+      side: Math.max(-0.55, Math.min(0.55, side)),
+      phase: Math.random() * Math.PI * 2,
+      speed,
+      animRate: speed / WALK_SPEED,
+      prof,
+      recent: new Set(),
+      offX: 0,
+      offZ: 0,
+      down: null,
+      routeX: 0,
+      routeZ: 0,
+    });
 
     const members = [];
-    for (let mi = 0; mi < nMem; mi++) {
-      const mProf = prof.members[mi];
-      const mesh = makeHumanoid(mProf, groups.length, mi);
-      // ``spread`` is metres of path separation (was wrongly scaled by 0.12 → ghost stacks).
-      const along = nMem > 1 ? (mi * prof.spread) / (nMem - 1) - prof.spread * 0.5 : 0;
-      const side = side0 + (nMem > 1 ? (mi - (nMem - 1) * 0.5) * 0.22 : 0);
-      const speed = WALK_SPEED * (0.85 + Math.random() * 0.3);
-      if (mesh.userData.action) {
-        mesh.userData.action.setEffectiveTimeScale(speed / WALK_SPEED);
-      }
-      members.push({
-        mesh,
-        routeIdx: routes.indexOf(route) >= 0 ? walkRoutes.indexOf(route) : 0,
-        s: startS + along,
-        dir,
-        side: Math.max(-0.55, Math.min(0.55, side)),
-        phase: Math.random() * Math.PI * 2,
-        speed,
-        prof: mProf,
-        recent: new Set(),
-        offX: 0,
-        offZ: 0,
-        down: null,
-        routeX: 0,
-        routeZ: 0,
+    let kind = "stand-ins";
+    if (pool) {
+      const hh = pool.household();
+      kind = hh.kind;
+      const meshes = hh.members.map((t, mi) => makePerson(t, groupId, mi));
+      // One pace for the household; each walk cycle is retimed so feet match the ground.
+      const natural = meshes.map((m) => m.userData.person.naturalSpeed);
+      const speed = (natural.reduce((a, b) => a + b, 0) / natural.length) * (0.94 + Math.random() * 0.1);
+      meshes.forEach((mesh, mi) => {
+        const p = mesh.userData.person;
+        // Side by side in rows of two, the second row a step behind.
+        const row = mi >> 1;
+        const lateral = Math.min(2, meshes.length - row * 2) === 2 ? ((mi & 1) - 0.5) * 0.5 : 0;
+        const m = member(mesh, startS - row * 0.95 * dir, side0 + lateral, speed, { scale: p.height / 1.75 });
+        m.animRate = speed / p.naturalSpeed;
+        p.action?.setEffectiveTimeScale(m.animRate);
+        members.push(m);
       });
+    } else {
+      const prof = profiles[(Math.random() * profiles.length) | 0];
+      const nMem = prof.members.length;
+      for (let mi = 0; mi < nMem; mi++) {
+        const mProf = prof.members[mi];
+        // ``spread`` is metres of path separation (was wrongly scaled by 0.12 → ghost stacks).
+        const along = nMem > 1 ? (mi * prof.spread) / (nMem - 1) - prof.spread * 0.5 : 0;
+        const side = side0 + (nMem > 1 ? (mi - (nMem - 1) * 0.5) * 0.22 : 0);
+        const speed = WALK_SPEED * (0.85 + Math.random() * 0.3);
+        members.push(member(makeProceduralHumanoid(mProf, groupId, mi), startS + along, side, speed, mProf));
+      }
     }
-    return { members, routeIdx: walkRoutes.indexOf(route), route };
+    return { members, routeIdx, route, kind, side0 };
+  }
+
+  function releaseGroup(g) {
+    for (const m of g.members) {
+      root.remove(m.mesh);
+      if (m.mesh.userData.person) pool.release(m.mesh.userData.person);
+    }
   }
 
   const root = new THREE.Group();
@@ -324,7 +327,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       update() {},
       dispose() {},
       groups,
-      mixamo: useMixamo,
+      mixamo: false,
       hitTest() {
         return 0;
       },
@@ -333,7 +336,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     };
   }
   for (let i = 0; i < COUNT; i++) {
-    const g = spawnGroup(PROFILES, spawnPool);
+    const g = spawnGroup(PROFILES, spawnPool, i);
     for (const m of g.members) root.add(m.mesh);
     groups.push(g);
   }
@@ -365,11 +368,50 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     }
   }
 
+  const camera = opts.camera || null;
+  const _frustum = new THREE.Frustum();
+  const _pv = new THREE.Matrix4();
+  const _sphere = new THREE.Sphere(new THREE.Vector3(), 1.2);
+  let redressIn = REDRESS_EVERY_S;
+
+  /** Swap one out-of-sight group for a fresh household from the pool. */
+  function redressOne() {
+    if (!pool || !camera) return;
+    _pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _frustum.setFromProjectionMatrix(_pv);
+    const cam = camera.getWorldPosition(new THREE.Vector3());
+    const start = (Math.random() * groups.length) | 0;
+    const order = groups.map((_, k) => (start + k) % groups.length);
+    const wearsRetiring = (gi) => groups[gi].members.some((m) => m.mesh.userData.person?.template === pool.retiring);
+    order.sort((a, b) => wearsRetiring(b) - wearsRetiring(a));
+    for (const gi of order) {
+      const g = groups[gi];
+      const hidden = g.members.every((m) => {
+        if (m.down) return false;
+        const d = m.mesh.position.distanceTo(cam);
+        if (d > REDRESS_FAR_M) return true;
+        _sphere.center.copy(m.mesh.position).y += 0.9;
+        return d > REDRESS_HIDDEN_M && !_frustum.intersectsSphere(_sphere);
+      });
+      if (!hidden) continue;
+      const lead = g.members[0];
+      releaseGroup(g);
+      const at = { routeIdx: lead.routeIdx, s: lead.s, dir: lead.dir, side0: g.side0 };
+      const fresh = spawnGroup(PROFILES, spawnPool, gi, at);
+      for (const m of fresh.members) {
+        root.add(m.mesh);
+        placeMember(m);
+      }
+      groups[gi] = fresh;
+      return;
+    }
+  }
+
   console.info(
     `[cityview] pedestrians: ${groups.reduce((n, g) => n + g.members.length, 0)} people` +
       ` on ${walkRoutes.length} walks` +
       ` (${spawnPool.length} safe spawn)` +
-      (useMixamo ? ` (Mixamo ×${templates.length})` : " (procedural fallback)")
+      (pool ? ` (${pool.residentCount} of ${pool.total} Rocketbox people loaded)` : " (procedural fallback)")
   );
 
   const UP = new THREE.Vector3(0, 1, 0);
@@ -472,7 +514,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
 
   function setWalkAnim(m, moving) {
     const action = m.mesh.userData.action;
-    if (action) action.setEffectiveTimeScale(moving ? m.speed / WALK_SPEED : 0);
+    if (action) action.setEffectiveTimeScale(moving ? m.animRate : 0);
   }
 
   /** Still on the kerb of a crossing (not committed mid-road). */
@@ -484,6 +526,10 @@ export async function createPedestrians(scene, THREE, opts = {}) {
 
   function update(dt) {
     if (!(dt > 0)) return;
+    if ((redressIn -= dt) <= 0) {
+      redressIn = REDRESS_EVERY_S;
+      redressOne();
+    }
     for (const g of groups) {
       for (const m of g.members) {
         if (m.down && updateDown(m, dt)) continue;
@@ -536,18 +582,15 @@ export async function createPedestrians(scene, THREE, opts = {}) {
 
   function dispose() {
     scene.remove(root);
-    for (const g of groups) {
-      for (const m of g.members) {
-        if (m.mesh.userData.mixer) m.mesh.userData.mixer.stopAllAction();
-      }
-    }
+    if (pool) for (const g of groups) releaseGroup(g);
   }
 
   return {
     update,
     dispose,
     groups,
-    mixamo: useMixamo,
+    mixamo: !!pool,
+    people: pool,
     routes: walkRoutes,
     hitTest,
     setBlocker(fn) {
