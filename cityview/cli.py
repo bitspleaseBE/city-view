@@ -23,6 +23,7 @@ from cityview.paths import (
     OUTPUT,
     ROOT,
     TREES_CACHE,
+    VELO_CACHE,
     VIEWER,
 )
 from cityview.benches import attach_benches, summarize as summarize_benches
@@ -30,7 +31,13 @@ from cityview.barriers import attach_barriers, summarize as summarize_barriers
 from cityview.courtyards import attach_courtyards, summarize as summarize_courtyards
 from cityview.clutter import attach_clutter, summarize as summarize_clutter
 from cityview.trees import attach_trees, summarize as summarize_trees
+from cityview.velo import (
+    attach_velo,
+    export_velo_for_viewer,
+    summarize as summarize_velo,
+)
 from cityview.streetscape import (
+    export_buildings_near_spawn,
     export_roads_near_spawn,
     export_transit_near_spawn,
     spawn_from_place,
@@ -149,6 +156,10 @@ def city_command(args: argparse.Namespace) -> int:
     benches_cache = BENCHES_CACHE / f"{cache_key or place_name}.json"
     bench_plan = attach_benches(layout, osm, bbox, origin, benches_cache, refresh=bool(args.refresh))
     print("benches: " + summarize_benches(bench_plan))
+    # Velo Antwerpen docking stations (Clear Channel GBFS); cached under assets/velo.
+    velo_cache = VELO_CACHE / f"{cache_key or place_name}.json"
+    velo_plan = attach_velo(layout, bbox, origin, velo_cache, refresh=bool(args.refresh))
+    print("velo: " + summarize_velo(velo_plan))
     # Prefer committed photo-remix JSON (CI has no macOS sips / may lack Pillow).
     if BUILDING_TYPES_PATH.exists():
         types_path = BUILDING_TYPES_PATH
@@ -237,6 +248,13 @@ def city_command(args: argparse.Namespace) -> int:
     roads_path = VIEWER / "roads.json"
     roads_path.write_text(json.dumps(roads_payload) + "\n")
     print(f"Wrote {roads_path} ({len(roads_payload['roads'])} roads near spawn)")
+    buildings_payload = export_buildings_near_spawn(layout, spawn)
+    buildings_path = VIEWER / "buildings.json"
+    buildings_path.write_text(json.dumps(buildings_payload) + "\n")
+    print(
+        f"Wrote {buildings_path} "
+        f"({len(buildings_payload['buildings'])} building footprints near spawn)"
+    )
     transit_payload = export_transit_near_spawn(layout, spawn)
     transit_path = VIEWER / "transit.json"
     transit_path.write_text(json.dumps(transit_payload) + "\n")
@@ -244,6 +262,10 @@ def city_command(args: argparse.Namespace) -> int:
         f"Wrote {transit_path} "
         f"({len(transit_payload['paths'])} paths, {len(transit_payload['stops'])} stops near spawn)"
     )
+    velo_payload = export_velo_for_viewer(layout.get("velo_stations") or [])
+    velo_path = VIEWER / "velo.json"
+    velo_path.write_text(json.dumps(velo_payload) + "\n")
+    print(f"Wrote {velo_path} ({len(velo_payload['stations'])} Velo stations)")
     print(f"Outputs in {output_dir}")
     return 0
 

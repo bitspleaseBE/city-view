@@ -175,8 +175,12 @@ ROUTE_MODES = {
 
 
 def _is_underground(tags: dict[str, str]) -> bool:
-    """Tunnelled / sub-surface ways (Antwerp premetro) must not be drawn at grade."""
-    if tags.get("tunnel") in {"yes", "building_passage", "culvert"}:
+    """Tunnelled / sub-surface ways (Antwerp premetro) must not be drawn at grade.
+
+    ``tunnel=building_passage`` is an at-grade porte-cochère through a building, not
+    underground — those are handled by ``cityview.passages`` when cutting footprints.
+    """
+    if tags.get("tunnel") in {"yes", "culvert"}:
         return True
     try:
         return int(str(tags.get("layer", "0")).split(";")[0]) < 0
@@ -944,6 +948,9 @@ def layout_from_osm(
             # oneway tags; buses may differ (oneway:bus, contraflow bus lanes).
             road["oneway"] = parse_oneway(tags)
             road["oneway_bus"] = parse_oneway_bus(tags)
+            # Porte-cochère / covered driveway through a building (cut in annotate_layout).
+            if tags.get("tunnel") == "building_passage":
+                road["passage"] = True
             roads.append(road)
 
     for rel in rels.values():

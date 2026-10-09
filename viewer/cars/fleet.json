@@ -1,0 +1,61 @@
+{
+  "source": "Kenney Car Kit 3.1 (CC0)",
+  "url": "https://kenney.nl/assets/car-kit",
+  "note": "Archetypes weighted toward Flanders / Antwerp new-registration mix. Lengths are nudged long and widths slim so Kenney's stubby toy silhouettes read as European cars at street scale.",
+  "models": [
+    {
+      "id": "compact_suv",
+      "file": "suv.glb",
+      "weight": 28,
+      "length": 4.55,
+      "width": 1.72,
+      "height": 1.58,
+      "inspiredBy": "BMW X1, Peugeot 2008, Renault Captur, Audi Q3"
+    },
+    {
+      "id": "crossover_ev",
+      "file": "suv-luxury.glb",
+      "weight": 18,
+      "length": 4.7,
+      "width": 1.78,
+      "height": 1.62,
+      "inspiredBy": "Audi Q4/Q6, Tesla Model Y, Mercedes EQB, VW ID.4"
+    },
+    {
+      "id": "hatchback",
+      "file": "hatchback-sports.glb",
+      "weight": 28,
+      "length": 4.25,
+      "width": 1.62,
+      "height": 1.42,
+      "inspiredBy": "Dacia Sandero, Citroën C3, Toyota Yaris, Renault Clio, Mini Cooper, Peugeot 208"
+    },
+    {
+      "id": "sedan",
+      "file": "sedan.glb",
+      "weight": 14,
+      "length": 4.85,
+      "width": 1.72,
+      "height": 1.42,
+      "inspiredBy": "BMW 4/5 Series and other fleet saloons"
+    },
+    {
+      "id": "coupe",
+      "file": "sedan-sports.glb",
+      "weight": 5,
+      "length": 4.7,
+      "width": 1.7,
+      "height": 1.35,
+      "inspiredBy": "Sportier 4-series / coupe fleet cars"
+    },
+    {
+      "id": "van",
+      "file": "van.glb",
+      "weight": 7,
+      "length": 5.1,
+      "width": 1.85,
+      "height": 1.9,
+      "inspiredBy": "City delivery / trades vans"
+    }
+  ]
+}

@@ -7,6 +7,8 @@ from typing import Any
 
 from cityview.building_heights import FLOOR_H, MAX_EAVES_M, MAX_LEVELS
 from cityview.directions import infer_parallel_track_directions, mark_dual_carriageways
+from cityview.passages import apply_building_passages
+from cityview.signals import pedestrian_signal_yaw, vehicle_signal_yaw
 
 
 def _dist(ax: float, ay: float, bx: float, by: float) -> float:
@@ -292,7 +294,8 @@ def street_facing_edges(
 
 
 def annotate_layout(layout: dict[str, Any]) -> dict[str, Any]:
-    """Attach street_edges to buildings using road proximity."""
+    """Cut building passages, then attach street_edges from road proximity."""
+    apply_building_passages(layout)
     segments = _road_segments(layout.get("roads") or [])
     for bldg in layout.get("buildings") or []:
         ring = bldg.get("ring") or []
@@ -585,6 +588,46 @@ def export_roads_near_spawn(
     }
 
 
+def export_buildings_near_spawn(
+    layout: dict[str, Any],
+    spawn: dict[str, Any] | None,
+    *,
+    radius: float = 280.0,
+    max_buildings: int = 1500,
+) -> dict[str, Any]:
+    """Building footprint rings near spawn for runtime outdoors collision.
+
+    Viewer keeps the walker outside these rings (solid extruded boxes have no
+    interiors). Rings use the same Blender XY as roads.json.
+    """
+    sx = float(spawn["x"]) if spawn else 0.0
+    sy = float(spawn["y"]) if spawn else 0.0
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for bldg in layout.get("buildings") or []:
+        ring = bldg.get("ring") or []
+        if len(ring) < 3:
+            continue
+        pts = [[float(p[0]), float(p[1])] for p in ring]
+        dmin = min(_dist(sx, sy, p[0], p[1]) for p in pts)
+        if dmin > radius:
+            continue
+        scored.append(
+            (
+                dmin,
+                {
+                    "id": bldg.get("id"),
+                    "ring": pts,
+                },
+            )
+        )
+    scored.sort(key=lambda item: item[0])
+    return {
+        "spawn": {"x": sx, "y": sy},
+        "radius": radius,
+        "buildings": [item[1] for item in scored[:max_buildings]],
+    }
+
+
 def _export_signal_stop_lines(
     layout: dict[str, Any],
     sx: float,
@@ -657,15 +700,23 @@ def _export_signal_stop_lines(
             width = float(ap["width"])
             half = width * 0.5
             rx, ry = ty, -tx
+            # Right-hand curb first (Belgian RHT); same rule as the Blender builder.
+            side = 1.0
+            pole_x = stop_x + rx * side * (half + 0.85)
+            pole_y = stop_y + ry * side * (half + 0.85)
+            yaw = vehicle_signal_yaw(tx, ty)
+            ped_yaw = pedestrian_signal_yaw(rx, ry, side)
             out.append(
                 {
                     "id": cluster[0][2],
-                    "x": stop_x + rx * (half + 0.85),
-                    "y": stop_y + ry * (half + 0.85),
+                    "x": pole_x,
+                    "y": pole_y,
                     "stopX": stop_x,
                     "stopY": stop_y,
                     "tx": tx,
                     "ty": ty,
+                    "yaw": yaw,
+                    "pedYaw": ped_yaw,
                     "width": width,
                     "kind": "traffic_signals",
                 }

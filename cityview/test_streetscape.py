@@ -1,12 +1,14 @@
 import unittest
 
 from cityview.streetscape import (
+    export_buildings_near_spawn,
     export_roads_near_spawn,
     floors_from_height,
     footprint_supports_prism_roof,
     height_truth,
     nearest_road_pose,
     parse_maxspeed_kmh,
+    point_in_ring,
     road_speed_kmh,
     roof_shape_for,
     safe_roof_shape,
@@ -119,6 +121,28 @@ class RoadsExportTests(unittest.TestCase):
         # Clustered OSM nodes → stop-line approaches, not raw centre spam.
         self.assertGreaterEqual(len(payload["signals"]), 1)
         self.assertIn("stopX", payload["signals"][0])
+        self.assertIn("yaw", payload["signals"][0])
+        self.assertIn("pedYaw", payload["signals"][0])
+
+
+class BuildingExportTests(unittest.TestCase):
+    def test_export_buildings_near_spawn(self):
+        ring_near = [[0.0, 0.0], [10.0, 0.0], [10.0, 8.0], [0.0, 8.0]]
+        ring_far = [[500.0, 500.0], [510.0, 500.0], [510.0, 510.0], [500.0, 510.0]]
+        layout = {
+            "buildings": [
+                {"id": 1, "ring": ring_near},
+                {"id": 2, "ring": ring_far},
+                {"id": 3, "ring": [[1.0, 1.0]]},  # too few verts
+            ]
+        }
+        payload = export_buildings_near_spawn(
+            layout, {"x": 5.0, "y": 4.0}, radius=100.0, max_buildings=10
+        )
+        self.assertEqual(len(payload["buildings"]), 1)
+        self.assertEqual(payload["buildings"][0]["id"], 1)
+        self.assertTrue(point_in_ring(5.0, 4.0, payload["buildings"][0]["ring"]))
+        self.assertFalse(point_in_ring(20.0, 20.0, payload["buildings"][0]["ring"]))
 
 
 class MaxspeedTests(unittest.TestCase):

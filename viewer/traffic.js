@@ -1,7 +1,8 @@
 /**
- * Runtime GTA3-simple traffic: box cars follow driveable OSM centrelines
- * with car-following, 30s lights at real stop-lines, and stuck recovery.
- * Never uses tram/rail ways.
+ * Runtime traffic: Antwerp-weighted Kenney car GLBs (see cars.js / cars/fleet.json)
+ * follow driveable OSM centrelines with car-following, 30s lights at real
+ * stop-lines, and stuck recovery. Falls back to box cars when GLBs cannot load
+ * (headless Node soaks). Never uses tram/rail ways.
  *
  * Directions: every road carries `oneway` (1 = only along its points, -1 = only against, 0 =
  * both ways) straight from the OSM oneway tags, and `onewayBus` for buses. Cars only ever
@@ -18,6 +19,7 @@
  */
 
 import { shared } from "./lanes.js";
+import { cloneCarMesh, loadCarTemplates, makeLampParts, pickCarTemplate } from "./cars.js";
 
 const KMH = 1 / 3.6;
 const DEFAULT_SPEED_KMH = {
@@ -52,6 +54,8 @@ const BLOCK_RESPAWN_SEC = 8; // blocked this long by a car / crossing car -> des
 const RESPAWN_CLEARANCE = 14; // m of free space required around a respawn point
 const HALF_L = CAR_LEN * 0.5;
 const HALF_W = 0.875;
+/** Road surface in viewer Y (matches Blender ``Z_ROAD`` / kerbs.Z_ROAD_SURFACE). */
+const ROAD_Y = 0.05;
 const OBSTACLE_ZONE = HALF_W + 0.05; // a tram / bus in the neighbouring lane is not in our way
 const ZONE_HALF_W = HALF_W + 0.3; // swept corridor ahead of a car (oncoming lane stays clear of it)
 const NEXT_LOOKAHEAD = 34; // m before a junction: pick the next road early and check it is free
@@ -69,6 +73,7 @@ const QUEUE_STUCK_SEC = 10; // even queueing cars should move eventually
 const MAX_STEP = 0.05; // s: largest integration step (kinematics tuned and soaked at <= 20 Hz)
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame
 const CYCLE_SEC = 30;
+const AMBER_SEC = 3; // green → amber → red → green (no amber returning to green)
 const METERS_PER_CAR = 480;
 const MIN_CARS = 8;
 const MAX_CARS = 16;
@@ -311,12 +316,20 @@ function buildSignals(raw, THREE, cycleSec, paths = []) {
     }
     // Axis group: NS vs EW for alternating greens within the 30s cycle.
     const ns = Math.abs(tan.z) >= Math.abs(tan.x);
+    const pole = new THREE.Vector3();
+    if (Number.isFinite(s.x) && Number.isFinite(s.y)) blenderToThree(s.x, s.y, pole);
+    else pole.copy(stop);
+    const yawBlender = Number(s.yaw);
+    const pedYawBlender = Number(s.pedYaw);
     signals.push({
       stop,
+      pole: pole.clone(),
       tan,
       ns,
       phaseOffset,
       width: s.width || 6,
+      yawBlender: Number.isFinite(yawBlender) ? yawBlender : null,
+      pedYawBlender: Number.isFinite(pedYawBlender) ? pedYawBlender : null,
     });
   }
   // A signalised junction must control every arm, not only the arms that happened to carry an
@@ -327,18 +340,218 @@ function buildSignals(raw, THREE, cycleSec, paths = []) {
       if (arm.hasHead) continue;
       const setback = Math.max(4.4, (arm.width || 6) * 0.6 + 1.2);
       const stop = new THREE.Vector3(node.c.x + arm.ux * setback, 0, node.c.z + arm.uz * setback);
+      // Approach tangent into the junction (cars travel along this toward the stop).
       const tan = new THREE.Vector3(-arm.ux, 0, -arm.uz);
+      const halfW = (arm.width || 6) * 0.5 + 0.85;
+      // Right-hand curb relative to inbound tan.
+      const pole = new THREE.Vector3(
+        stop.x + -tan.z * halfW,
+        0,
+        stop.z + tan.x * halfW,
+      );
       signals.push({
         stop,
+        pole,
         tan,
         ns: Math.abs(tan.z) >= Math.abs(tan.x),
         phaseOffset: node.offset,
         width: arm.width || 6,
+        yawBlender: null,
+        pedYawBlender: null,
         synthesized: true,
       });
     }
   }
   return { signals, cycleSec };
+}
+
+/** Blender local-+Y yaw → Three.js rotation.y when local +Z is the front. */
+function blenderFaceYawToThree(yaw) {
+  const fx = -Math.sin(yaw);
+  const fy = Math.cos(yaw);
+  return Math.atan2(fx, -fy);
+}
+
+/** Face oncoming traffic from an inbound Three.js tangent. */
+function faceYawFromTan(tan) {
+  // Lenses look opposite the travel direction.
+  return Math.atan2(-tan.x, -tan.z);
+}
+
+function signalPhase(sig, nowSec, cycleSec) {
+  const phase = ((nowSec + sig.phaseOffset) % cycleSec + cycleSec) % cycleSec;
+  const half = cycleSec * 0.5;
+  const mine = sig.ns ? phase < half : phase >= half;
+  if (!mine) return "red";
+  const local = sig.ns ? phase : phase - half;
+  if (local >= half - AMBER_SEC) return "amber";
+  return "green";
+}
+
+function makeEmissiveMat(THREE, color, on) {
+  const mat = new THREE.MeshBasicMaterial({
+    color,
+    fog: false,
+    toneMapped: false,
+  });
+  mat.userData = mat.userData || {};
+  mat.userData.base = color;
+  mat.userData.on = !!on;
+  return mat;
+}
+
+function setLampLit(mat, lit, litColor, dimColor) {
+  const next = lit ? litColor : dimColor;
+  const ud = mat.userData || (mat.userData = {});
+  if (ud.on === lit && ud.base === next) return;
+  if (mat.color && typeof mat.color.setHex === "function") mat.color.setHex(next);
+  ud.on = lit;
+  ud.base = next;
+}
+
+function addPedFigure(THREE, parent, y, walking, mat) {
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.04), mat);
+  head.position.set(0, y + 0.07, 0.02);
+  parent.add(head);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.09, 0.04), mat);
+  torso.position.set(0, y, 0.02);
+  parent.add(torso);
+  if (walking) {
+    const legA = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.04), mat);
+    legA.position.set(0.025, y - 0.08, 0.02);
+    parent.add(legA);
+    const legB = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.04), mat);
+    legB.position.set(-0.025, y - 0.08, 0.04);
+    parent.add(legB);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.03, 0.03), mat);
+    arm.position.set(0.04, y + 0.02, 0.03);
+    parent.add(arm);
+  } else {
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.04), mat);
+    legs.position.set(0, y - 0.08, 0.02);
+    parent.add(legs);
+  }
+}
+
+function buildSignalVisuals(signals, THREE, root) {
+  const housingMat = new THREE.MeshLambertMaterial({ color: 0x141414 });
+  const poleMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+  const dims = {
+    redOn: 0xff2a1a,
+    amberOn: 0xffa010,
+    greenOn: 0x1ad64a,
+    redOff: 0x3a100c,
+    amberOff: 0x3a2410,
+    greenOff: 0x0c2a14,
+    pedRedOn: 0xff3030,
+    pedGreenOn: 0x22e060,
+    pedRedOff: 0x351010,
+    pedGreenOff: 0x0e2814,
+  };
+  const lampGeo = new THREE.BoxGeometry(0.18, 0.16, 0.1);
+  const disposables = [housingMat, poleMat, lampGeo];
+
+  for (let i = 0; i < signals.length; i++) {
+    const sig = signals[i];
+    const group = new THREE.Group();
+    group.name = `runtime_signal_${i}`;
+    const polePos = sig.pole || sig.stop;
+    group.position.set(polePos.x, 0, polePos.z);
+    const faceYaw =
+      sig.yawBlender != null ? blenderFaceYawToThree(sig.yawBlender) : faceYawFromTan(sig.tan);
+    group.rotation.y = faceYaw;
+
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.4, 0.1), poleMat);
+    pole.position.y = 1.7;
+    group.add(pole);
+
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.9, 0.22), housingMat);
+    head.position.set(0, 3.55, 0.18);
+    group.add(head);
+
+    const redMat = makeEmissiveMat(THREE, dims.redOff, false);
+    const amberMat = makeEmissiveMat(THREE, dims.amberOff, false);
+    const greenMat = makeEmissiveMat(THREE, dims.greenOff, false);
+    disposables.push(redMat, amberMat, greenMat);
+    const lamps = [
+      { mat: redMat, mesh: new THREE.Mesh(lampGeo, redMat), y: 3.85 },
+      { mat: amberMat, mesh: new THREE.Mesh(lampGeo, amberMat), y: 3.59 },
+      { mat: greenMat, mesh: new THREE.Mesh(lampGeo, greenMat), y: 3.33 },
+    ];
+    for (const lamp of lamps) {
+      lamp.mesh.position.set(0, lamp.y, 0.32);
+      group.add(lamp.mesh);
+    }
+
+    // Pedestrian head: faces across the zebra (people waiting to cross).
+    const pedGroup = new THREE.Group();
+    pedGroup.position.set(0, 0, 0);
+    let pedYaw;
+    if (sig.pedYawBlender != null) pedYaw = blenderFaceYawToThree(sig.pedYawBlender);
+    else {
+      // From the right-hand curb, face into the carriageway (−right).
+      pedYaw = Math.atan2(sig.tan.z, -sig.tan.x);
+    }
+    // Ped group is parented under the vehicle group; apply relative yaw.
+    pedGroup.rotation.y = pedYaw - faceYaw;
+    const pedHead = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.55, 0.14), housingMat);
+    pedHead.position.set(0, 2.35, 0.16);
+    pedGroup.add(pedHead);
+    const pedRedMat = makeEmissiveMat(THREE, dims.pedRedOff, false);
+    const pedGreenMat = makeEmissiveMat(THREE, dims.pedGreenOff, false);
+    disposables.push(pedRedMat, pedGreenMat);
+    const pedRed = new THREE.Group();
+    pedRed.position.set(0, 2.52, 0.26);
+    const pedRedLens = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.08), pedRedMat);
+    pedRed.add(pedRedLens);
+    addPedFigure(THREE, pedRed, 0, false, pedRedMat);
+    pedGroup.add(pedRed);
+    const pedGreen = new THREE.Group();
+    pedGreen.position.set(0, 2.3, 0.26);
+    const pedGreenLens = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.08), pedGreenMat);
+    pedGreen.add(pedGreenLens);
+    addPedFigure(THREE, pedGreen, 0, true, pedGreenMat);
+    pedGroup.add(pedGreen);
+    group.add(pedGroup);
+
+    root.add(group);
+    sig.visual = {
+      redMat,
+      amberMat,
+      greenMat,
+      pedRedMat,
+      pedGreenMat,
+      dims,
+      group,
+    };
+  }
+  return disposables;
+}
+
+function updateSignalVisuals(signals, nowSec, cycleSec) {
+  for (let i = 0; i < signals.length; i++) {
+    const sig = signals[i];
+    const v = sig.visual;
+    if (!v) continue;
+    const phase = signalPhase(sig, nowSec, cycleSec);
+    const d = v.dims;
+    setLampLit(v.redMat, phase === "red", d.redOn, d.redOff);
+    setLampLit(v.amberMat, phase === "amber", d.amberOn, d.amberOff);
+    setLampLit(v.greenMat, phase === "green", d.greenOn, d.greenOff);
+    // Pedestrians walk while cars on this approach are held (red only — not amber).
+    const walk = phase === "red";
+    setLampLit(v.pedRedMat, !walk, d.pedRedOn, d.pedRedOff);
+    setLampLit(v.pedGreenMat, walk, d.pedGreenOn, d.pedGreenOff);
+  }
+}
+
+/** Hide baked GLB signal lamps (always-on colours); runtime heads own the aspect. */
+function hideBakedSignalLamps(scene) {
+  if (!scene || typeof scene.traverse !== "function") return;
+  scene.traverse((obj) => {
+    const n = obj.name || "";
+    if (/^signal_\d/i.test(n)) obj.visible = false;
+  });
 }
 
 function samplePath(path, s, THREE, outPos, outTan) {
@@ -360,7 +573,9 @@ function samplePath(path, s, THREE, outPos, outTan) {
   } else {
     outTan.normalize();
   }
-  outPos.y = 0.75;
+  // GLB cars are authored with wheels on y=0; old box cars used a 0.75 m lift because their
+  // geometry was centred on the origin. Both meshes are now grounded — sit on the asphalt.
+  outPos.y = ROAD_Y;
 }
 
 /**
@@ -377,19 +592,9 @@ function applyLane(path, travelTan, outPos) {
 }
 
 function makeSharedParts(THREE) {
-  return {
-    bodyGeo: new THREE.BoxGeometry(1.75, 1.35, 4.2),
-    cabinGeo: new THREE.BoxGeometry(1.55, 0.65, 2.0),
-    wheelGeo: new THREE.BoxGeometry(0.22, 0.45, 0.55),
-    glassMat: new THREE.MeshLambertMaterial({ color: 0x88a0b8, transparent: true, opacity: 0.75 }),
-    tireMat: new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
-    bodyMats: BODY_COLORS.map((c) => new THREE.MeshLambertMaterial({ color: c })),
-    lampGeo: new THREE.BoxGeometry(0.34, 0.16, 0.06),
-    // Lamps: dull glass by day, glowing at night (see setNight). Unlit + fog-exempt tone
-    // mapping so they stay punchy against the dark street.
-    headMat: new THREE.MeshBasicMaterial({ color: 0xcfd2cc, toneMapped: false }),
-    tailMat: new THREE.MeshBasicMaterial({ color: 0x5a1212, toneMapped: false }),
-  };
+  // Lamps: dull glass by day, glowing at night (see setNight). Unlit + fog-exempt tone
+  // mapping so they stay punchy against the dark street. Box geos are the headless fallback.
+  return makeLampParts(THREE, BODY_COLORS);
 }
 
 const HEAD_DAY = [0.81, 0.82, 0.8];
@@ -397,20 +602,23 @@ const HEAD_NIGHT = [1.0, 0.94, 0.72];
 const TAIL_DAY = [0.12, 0.02, 0.02];
 const TAIL_NIGHT = [1.0, 0.1, 0.08];
 
-function makeCarMesh(THREE, parts, colorIndex) {
+function makeBoxCarMesh(THREE, parts, colorIndex) {
+  // Geometry is authored around y=0; shift so the wheel bottoms sit on y=0 (same as GLB cars).
   const group = new THREE.Group();
   const body = new THREE.Mesh(parts.bodyGeo, parts.bodyMats[colorIndex % parts.bodyMats.length]);
+  body.position.y = 0.675;
   const cabin = new THREE.Mesh(parts.cabinGeo, parts.glassMat);
-  cabin.position.set(0, 0.7, 0.1);
+  cabin.position.set(0, 1.375, 0.1);
   group.add(body, cabin);
   // +z is the direction of travel (rotation.y = atan2(tan.x, tan.z)).
   for (const sx of [-0.55, 0.55]) {
     const head = new THREE.Mesh(parts.lampGeo, parts.headMat);
-    head.position.set(sx, -0.08, 2.11);
+    head.position.set(sx, 0.595, 2.11);
     const tail = new THREE.Mesh(parts.lampGeo, parts.tailMat);
-    tail.position.set(sx, 0.02, -2.11);
+    tail.position.set(sx, 0.695, -2.11);
     group.add(head, tail);
   }
+  const wheels = [];
   for (const [lx, lz] of [
     [0.85, 1.35],
     [-0.85, 1.35],
@@ -418,10 +626,22 @@ function makeCarMesh(THREE, parts, colorIndex) {
     [-0.85, -1.35],
   ]) {
     const wheel = new THREE.Mesh(parts.wheelGeo, parts.tireMat);
-    wheel.position.set(lx, -0.45, lz);
+    wheel.position.set(lx, 0.225, lz);
     group.add(wheel);
+    wheels.push(wheel);
   }
+  group.userData.wheels = wheels;
+  group.userData.wheelRadius = 0.32;
+  group.userData.halfL = HALF_L;
+  group.userData.halfW = HALF_W;
+  group.userData.carId = "box";
   return group;
+}
+
+function makeCarMesh(THREE, parts, colorIndex, templates) {
+  const template = pickCarTemplate(templates);
+  if (template) return cloneCarMesh(THREE, parts, template);
+  return makeBoxCarMesh(THREE, parts, colorIndex);
 }
 
 function tipTangent(path, atEnd, THREE) {
@@ -492,13 +712,13 @@ function pickNextPath(paths, path, atEnd, cars, car, THREE) {
   return pool[0];
 }
 
-function createCar(paths, THREE, parts) {
+function createCar(paths, THREE, parts, templates) {
   const index = (Math.random() * paths.length) | 0;
   const path = paths[index];
   const reverse = legalReverse(path);
   const s = 2 + Math.random() * Math.max(1, path.length * 0.8 - 4);
   const colorIndex = (Math.random() * BODY_COLORS.length) | 0;
-  const mesh = makeCarMesh(THREE, parts, colorIndex);
+  const mesh = makeCarMesh(THREE, parts, colorIndex, templates);
   // Per-driver variance: 85-100% of the posted limit (rarely a touch over).
   const driver = 0.85 + Math.random() * 0.15 + (Math.random() < 0.08 ? 0.05 : 0);
   const speed = path.speedLimit * driver;
@@ -550,9 +770,8 @@ function fleetCount(paths, requested) {
 }
 
 function signalIsGreen(sig, nowSec, cycleSec) {
-  const phase = ((nowSec + sig.phaseOffset) % cycleSec + cycleSec) % cycleSec;
-  const nsGreen = phase < cycleSec * 0.5;
-  return sig.ns ? nsGreen : !nsGreen;
+  // Amber is not green: approaching cars must stop when they can.
+  return signalPhase(sig, nowSec, cycleSec) === "green";
 }
 
 /**
@@ -584,12 +803,21 @@ export async function createTraffic(scene, THREE, opts = {}) {
   const root = new THREE.Group();
   root.name = "RuntimeTraffic";
   scene.add(root);
+  hideBakedSignalLamps(scene);
+  const signalDisposables = buildSignalVisuals(signals, THREE, root);
+  updateSignalVisuals(signals, 0, cycleSec);
   const parts = makeSharedParts(THREE);
+  const templates = (await loadCarTemplates(THREE)) || [];
+  if (templates.length) {
+    console.info(`[cityview] Traffic fleet: ${templates.length} Antwerp-weighted car models`);
+  } else {
+    console.warn("[cityview] Traffic fleet: using box cars (GLB templates unavailable)");
+  }
 
   const cars = [];
   shared.cars = cars;
   for (let i = 0; i < count; i++) {
-    const car = createCar(paths, THREE, parts);
+    const car = createCar(paths, THREE, parts, templates);
     let tries = 0;
     while (tries < 20) {
       placeCar(car, paths, THREE);
@@ -947,6 +1175,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     const n = Math.max(1, Math.ceil(total / MAX_STEP));
     const h = total / n;
     for (let i = 0; i < n; i++) stepSim(h, walkObject);
+    updateSignalVisuals(signals, simTime, cycleSec);
   }
 
   function stepSim(step, walkObject) {
@@ -1282,6 +1511,11 @@ export async function createTraffic(scene, THREE, opts = {}) {
         advanceJunction(car, car.s - (path.length - 0.5));
       }
       placeCar(car, paths, THREE);
+      const wheels = car.mesh.userData.wheels;
+      if (wheels && wheels.length && car.velocity > 0.05) {
+        const spin = (car.velocity * step) / (car.mesh.userData.wheelRadius || 0.32);
+        for (const w of wheels) w.rotation.x -= spin;
+      }
     }
   }
 
@@ -1309,6 +1543,9 @@ export async function createTraffic(scene, THREE, opts = {}) {
     parts.headMat.dispose();
     parts.tailMat.dispose();
     for (const m of parts.bodyMats) m.dispose();
+    for (const d of signalDisposables) {
+      if (d && typeof d.dispose === "function") d.dispose();
+    }
   }
 
   /** Night glow for every car's head/tail lamps: 0 = day, 1 = full night. */

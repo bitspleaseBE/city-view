@@ -1,13 +1,36 @@
 /**
  * Micromobility: bicycles, e-scooters, and electric cargo bikes.
  * Ride kerb-side on driveable OSM roads (cycleway export not required).
- * Procedural meshes + simple riders — no Mixamo dependency.
+ * Procedural vehicle meshes + Mixamo riders (Riding / Scooter clips).
  */
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 
-const ROADS_URL = "./roads.json";
 const KMH = 1 / 3.6;
 const SNAP_M = 14;
 const BIKE_LANE_EXTRA = 1.45; // m outside car lane, toward the kerb
+const SPAWN_GAP = 7; // m between riders at spawn
+const LOOK_AHEAD = 9; // m: riders react to anything this far ahead in their lane
+const LANE_HALF = 0.55; // m: half a bike's swept width
+const STOP_GAP = 1.6; // m nose-to-tail when queued
+const SWERVE = 0.75; // m to the right when an oncoming rider shares the lane
+const OVERTAKE = 1.3; // m to the left when passing something that blocks the lane
+
+const RIDING_FILES = [
+  "Remy_Riding.glb",
+  "Amy_Riding.glb",
+  "James_Riding.glb",
+  "Michelle_Riding.glb",
+  "Aj_Riding.glb",
+];
+
+const SCOOTER_FILES = [
+  "Remy_Scooter.glb",
+  "Amy_Scooter.glb",
+  "James_Scooter.glb",
+  "Michelle_Scooter.glb",
+  "Aj_Scooter.glb",
+];
 
 const DRIVEABLE = new Set([
   "motorway",
@@ -136,7 +159,7 @@ function makeWheel(THREE, tireMat, rimMat, radius, thick = 0.04) {
   return g;
 }
 
-function makeRider(THREE, seated) {
+function makeProceduralRider(THREE, seated) {
   const g = new THREE.Group();
   const skin = new THREE.MeshLambertMaterial({ color: 0xd4a882 });
   const cloth = new THREE.MeshLambertMaterial({
@@ -155,41 +178,90 @@ function makeRider(THREE, seated) {
   return g;
 }
 
-function makeBicycle(THREE, color) {
+function makeMixamoRider(THREE, templates, seated) {
+  if (!templates.length) return makeProceduralRider(THREE, seated);
+  const tmpl = templates[(Math.random() * templates.length) | 0];
+  const root = cloneSkeleton(tmpl.scene);
+  root.traverse((o) => {
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+      o.frustumCulled = true;
+    }
+  });
+
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const targetH = seated ? 1.55 : 1.65;
+  const s = size.y > 0.01 ? targetH / size.y : 1;
+  root.scale.setScalar(s);
+  box.setFromObject(root);
+  root.position.y -= box.min.y;
+
+  const mixer = new THREE.AnimationMixer(root);
+  let action = null;
+  if (tmpl.clips.length) {
+    const clip =
+      tmpl.clips.find((c) => (seated ? /rid|bike|cycl/i : /scoot|kick/i).test(c.name)) ||
+      tmpl.clips[0];
+    action = mixer.clipAction(clip);
+    action.enabled = true;
+    action.setEffectiveTimeScale(1);
+    action.setEffectiveWeight(1);
+    action.setLoop(THREE.LoopRepeat, Infinity);
+    action.play();
+    action.time = Math.random() * clip.duration;
+  }
+
+  root.userData = { mixamo: true, mixer, action };
+  return root;
+}
+
+function makeRider(THREE, templates, seated) {
+  return makeMixamoRider(THREE, templates, seated);
+}
+
+function makeBicycle(THREE, color, rideTemplates) {
   const g = new THREE.Group();
   const frameMat = new THREE.MeshLambertMaterial({ color });
   const tireMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
-  const metal = new THREE.MeshLambertMaterial({ color: 0x888888 });
+  const metal = new THREE.MeshLambertMaterial({ color: 0x777777 });
 
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.95), frameMat);
-  frame.position.set(0, 0.42, 0);
-  const downtube = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.7), frameMat);
-  downtube.position.set(0, 0.28, 0.05);
-  downtube.rotation.x = 0.4;
-  const seatPost = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.35, 6), metal);
-  seatPost.position.set(0, 0.55, -0.28);
+  // Diamond-frame city bike (NPC traffic — distinct from docked Velo step-throughs).
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.045, 0.72), frameMat);
+  top.position.set(0, 0.55, 0.02);
+  const down = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.7), frameMat);
+  down.position.set(0, 0.32, 0.05);
+  down.rotation.x = 0.42;
+  const seatTube = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.35, 0.04), frameMat);
+  seatTube.position.set(0, 0.42, -0.28);
+  const seatPost = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.28, 6), metal);
+  seatPost.position.set(0, 0.62, -0.28);
   const seat = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.04, 0.22), tireMat);
-  seat.position.set(0, 0.74, -0.28);
-  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.35, 6), metal);
-  stem.position.set(0, 0.55, 0.38);
-  const bars = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.45, 6), metal);
-  bars.rotation.z = Math.PI / 2;
-  bars.position.set(0, 0.72, 0.4);
+  seat.position.set(0, 0.78, -0.28);
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.28, 6), metal);
+  stem.position.set(0, 0.62, 0.36);
+  const bars = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.028, 0.028), metal);
+  bars.position.set(0, 0.78, 0.38);
+  const fork = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.28, 0.03), metal);
+  fork.position.set(0, 0.32, 0.42);
 
-  const front = makeWheel(THREE, tireMat, metal, 0.32);
-  front.position.set(0, 0.32, 0.48);
-  const rear = makeWheel(THREE, tireMat, metal, 0.32);
-  rear.position.set(0, 0.32, -0.48);
+  const front = makeWheel(THREE, tireMat, metal, 0.3);
+  front.position.set(0, 0.3, 0.46);
+  const rear = makeWheel(THREE, tireMat, metal, 0.3);
+  rear.position.set(0, 0.3, -0.46);
 
-  g.add(frame, downtube, seatPost, seat, stem, bars, front, rear);
-  const rider = makeRider(THREE, true);
-  rider.position.set(0, 0, -0.12);
+  g.add(top, down, seatTube, seatPost, seat, stem, bars, fork, front, rear);
+  const rider = makeRider(THREE, rideTemplates, true);
+  rider.position.set(0, 0.55, -0.22);
   g.add(rider);
   g.userData.wheels = [front, rear];
+  g.userData.rider = rider;
   return g;
 }
 
-function makeScooter(THREE, color) {
+function makeScooter(THREE, color, scooterTemplates) {
   const g = new THREE.Group();
   const bodyMat = new THREE.MeshLambertMaterial({ color });
   const tireMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
@@ -212,14 +284,15 @@ function makeScooter(THREE, color) {
   rear.position.set(0, 0.12, -0.38);
 
   g.add(deck, stem, bars, head, front, rear);
-  const rider = makeRider(THREE, false);
-  rider.position.set(0, 0, -0.05);
+  const rider = makeRider(THREE, scooterTemplates, false);
+  rider.position.set(0, 0.08, -0.08);
   g.add(rider);
   g.userData.wheels = [front, rear];
+  g.userData.rider = rider;
   return g;
 }
 
-function makeCargoBike(THREE, color) {
+function makeCargoBike(THREE, color, rideTemplates) {
   const g = new THREE.Group();
   const frameMat = new THREE.MeshLambertMaterial({ color });
   const boxMat = new THREE.MeshLambertMaterial({ color: 0xe8e0d0 });
@@ -256,20 +329,21 @@ function makeCargoBike(THREE, color) {
   battery.position.set(0, 0.28, -0.15);
 
   g.add(frame, box, lid, seatPost, seat, stem, bars, frontL, frontR, rear, battery);
-  const rider = makeRider(THREE, true);
-  rider.position.set(0, 0, -0.28);
+  const rider = makeRider(THREE, rideTemplates, true);
+  rider.position.set(0, 0.52, -0.32);
   g.add(rider);
   g.userData.wheels = [frontL, frontR, rear];
+  g.userData.rider = rider;
   return g;
 }
 
-function makeVehicle(THREE, kind) {
+function makeVehicle(THREE, kind, rideTemplates, scooterTemplates) {
   const cfg = KINDS[kind];
   const colors = cfg.color;
   const color = colors[(Math.random() * colors.length) | 0];
-  if (kind === "scooter") return makeScooter(THREE, color);
-  if (kind === "cargo") return makeCargoBike(THREE, color);
-  return makeBicycle(THREE, color);
+  if (kind === "scooter") return makeScooter(THREE, color, scooterTemplates);
+  if (kind === "cargo") return makeCargoBike(THREE, color, rideTemplates);
+  return makeBicycle(THREE, color, rideTemplates);
 }
 
 function buildHandoffs(paths, THREE) {
@@ -299,13 +373,37 @@ function buildHandoffs(paths, THREE) {
   return links;
 }
 
+async function loadRiderTemplates(files) {
+  const loader = new GLTFLoader();
+  const base = new URL("./characters/", import.meta.url);
+  const out = [];
+  await Promise.all(
+    files.map(async (file) => {
+      try {
+        const url = new URL(file, base).href;
+        const gltf = await loader.loadAsync(url);
+        gltf.scene.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+        out.push({ name: file, scene: gltf.scene, clips: gltf.animations || [] });
+      } catch (err) {
+        console.warn(`[cityview] rider load failed: ${file}`, err);
+      }
+    })
+  );
+  return out;
+}
+
 export async function createMicromobility(scene, THREE, opts = {}) {
   const COUNT = opts.count ?? 28;
-  const url = opts.roadsUrl || ROADS_URL;
 
   let roads = [];
   try {
-    const res = await fetch(url);
+    // Fixed relative path only (opts.roadsUrl ignored — avoids SSRF on user-controlled URLs).
+    const res = await fetch("./roads.json");
     if (res.ok) {
       const data = await res.json();
       roads = data.roads || [];
@@ -320,6 +418,11 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     return { update() {}, dispose() {}, vehicles: [], count: 0 };
   }
 
+  const [rideTemplates, scooterTemplates] = await Promise.all([
+    loadRiderTemplates(RIDING_FILES),
+    loadRiderTemplates(SCOOTER_FILES),
+  ]);
+
   const handoffs = buildHandoffs(paths, THREE);
   const root = new THREE.Group();
   root.name = "Micromobility";
@@ -333,6 +436,10 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     samplePath(v.path, v.s, THREE, _pos, _tan);
     if (v.reverse) _tan.negate();
     applyBikeLane(v.path, _tan, _pos);
+    if (v.swerve) {
+      _pos.x += -_tan.z * v.swerve;
+      _pos.z += _tan.x * v.swerve;
+    }
     v.mesh.position.copy(_pos);
     v.mesh.rotation.y = Math.atan2(_tan.x, _tan.z);
     v.pos.set(_pos.x, 0, _pos.z);
@@ -346,19 +453,31 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   }
 
   function spawnOne() {
-    const path = paths[(Math.random() * paths.length) | 0];
-    const reverse = legalDirs(path)[(Math.random() * legalDirs(path).length) | 0];
+    // Pick a free spot: never spawn a rider on top of another one (they would ride as one).
+    let path = paths[0];
+    let reverse = false;
+    let s = 0.5;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      path = paths[(Math.random() * paths.length) | 0];
+      const dirs = legalDirs(path);
+      reverse = dirs[(Math.random() * dirs.length) | 0];
+      s = Math.random() * path.length * 0.9 + 0.5;
+      samplePath(path, s, THREE, _pos, _tan);
+      if (!vehicles.some((o) => o.pos.distanceToSquared(_pos) < SPAWN_GAP * SPAWN_GAP)) break;
+    }
     const kind = pickKind();
     const cfg = KINDS[kind];
     const speed = cfg.speedKmh * KMH * (0.85 + Math.random() * 0.3);
-    const mesh = makeVehicle(THREE, kind);
+    const mesh = makeVehicle(THREE, kind, rideTemplates, scooterTemplates);
     root.add(mesh);
     const v = {
       kind,
       path,
       reverse,
-      s: Math.random() * path.length * 0.9 + 0.5,
+      s,
       speed,
+      cur: speed,
+      swerve: 0,
       mesh,
       pos: new THREE.Vector3(),
       tan: new THREE.Vector3(),
@@ -368,13 +487,52 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     vehicles.push(v);
   }
 
+  /**
+   * Keep riders apart: follow the one ahead in the same lane, swerve right for oncoming
+   * riders sharing the lane, and brake for the walker / other obstacles on the bike lane.
+   */
+  function targetSpeed(v, obstacles) {
+    let gap = Infinity;
+    let oncoming = false;
+    const tx = v.tan.x;
+    const tz = v.tan.z;
+    const consider = (ox, oz, otx, otz, radius) => {
+      const dx = ox - v.pos.x;
+      const dz = oz - v.pos.z;
+      const along = dx * tx + dz * tz;
+      if (along <= 0 || along > LOOK_AHEAD) return;
+      const lat = Math.abs(dx * tz - dz * tx);
+      if (lat > LANE_HALF + radius) return;
+      if (otx * tx + otz * tz < -0.3) oncoming = true;
+      gap = Math.min(gap, along - radius);
+    };
+    for (const o of vehicles) if (o !== v) consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
+    for (const ob of obstacles) consider(ob.x, ob.z, 0, 0, ob.r ?? 0.4);
+    // Held up for a while behind something that is not moving: pull out and pass on the left.
+    v.stuck = gap < STOP_GAP + 1 && v.cur < 0.5 ? (v.stuck || 0) + dtSwerve : 0;
+    if (v.stuck > 2.5) {
+      v.overtake = 3.5; // s spent out in the passing line
+      v.stuck = 0;
+    }
+    if (v.overtake > 0) v.overtake -= dtSwerve;
+    const passing = v.overtake > 0 && !oncoming;
+    const want = oncoming ? SWERVE : passing ? -OVERTAKE : 0;
+    const k = Math.min(1, dtSwerve * 2.5);
+    v.swerve += (want - v.swerve) * k;
+    if (passing) return v.speed * 0.6;
+    if (gap === Infinity) return v.speed;
+    return v.speed * Math.max(0, Math.min(1, (gap - STOP_GAP) / (LOOK_AHEAD - STOP_GAP)));
+  }
+  let dtSwerve = 0;
+
   for (let i = 0; i < COUNT; i++) spawnOne();
 
   console.info(
     `[cityview] micromobility: ${vehicles.length} riders` +
       ` (${vehicles.filter((v) => v.kind === "bicycle").length} bikes,` +
       ` ${vehicles.filter((v) => v.kind === "scooter").length} scooters,` +
-      ` ${vehicles.filter((v) => v.kind === "cargo").length} cargo)`
+      ` ${vehicles.filter((v) => v.kind === "cargo").length} cargo)` +
+      ` · Mixamo ride=${rideTemplates.length} scooter=${scooterTemplates.length}`
   );
 
   function advanceEnd(v) {
@@ -400,10 +558,14 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     }
   }
 
-  function update(dt) {
+  function update(dt, obstacles = []) {
     if (!(dt > 0)) return;
+    dtSwerve = dt;
     for (const v of vehicles) {
-      const delta = v.speed * dt;
+      const want = targetSpeed(v, obstacles);
+      const rate = want < v.cur ? 6.0 : 1.6; // brake hard, pull away gently
+      v.cur += Math.max(-rate * dt, Math.min(rate * dt, want - v.cur));
+      const delta = v.cur * dt;
       v.s += v.reverse ? -delta : delta;
       if (v.s >= v.path.length) {
         v.s = v.path.length - 0.01;
@@ -418,13 +580,31 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       v.wheelPhase += delta / 0.32;
       const wheels = v.mesh.userData.wheels || [];
       for (const w of wheels) w.rotation.x = v.wheelPhase;
+
+      const rider = v.mesh.userData.rider;
+      if (rider?.userData?.mixer) {
+        // Pedal / push cadence roughly tracks travel speed
+        const scale = Math.max(0.05, Math.min(1.6, v.cur / 4.5));
+        if (rider.userData.action) rider.userData.action.setEffectiveTimeScale(scale);
+        rider.userData.mixer.update(dt);
+      }
     }
   }
 
   function dispose() {
     scene.remove(root);
+    for (const v of vehicles) {
+      const rider = v.mesh.userData.rider;
+      if (rider?.userData?.mixer) rider.userData.mixer.stopAllAction();
+    }
     vehicles.length = 0;
   }
 
-  return { update, dispose, vehicles, count: vehicles.length };
+  return {
+    update,
+    dispose,
+    vehicles,
+    count: vehicles.length,
+    mixamo: rideTemplates.length > 0 || scooterTemplates.length > 0,
+  };
 }
