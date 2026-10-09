@@ -1835,10 +1835,43 @@ export async function createTransit(scene, THREE, opts = {}) {
     parts.tailGlowMat.opacity = 0.85 * t;
   }
 
+  // Caption lookup: dedupe OSM platform twins that share a name within a few metres.
+  const haltPois = [];
+  const haltSeen = new Set();
+  for (const st of worldStops) {
+    if (!st.name || String(st.id).startsWith("synth_")) continue;
+    const key = `${st.name}|${Math.round(st.x / 25)}|${Math.round(st.z / 25)}`;
+    if (haltSeen.has(key)) continue;
+    haltSeen.add(key);
+    haltPois.push(st);
+  }
+  const HALT_REACH2 = 14 * 14;
+  let haltCurrent = null;
+
+  /** Nearest real De Lijn halt for GTA-style captions; `{ stop, changed }`. */
+  function locateStop(x, z) {
+    let best = null;
+    let bestD = Infinity;
+    for (const st of haltPois) {
+      const dx = x - st.x;
+      const dz = z - st.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 <= HALT_REACH2 && d2 < bestD) {
+        bestD = d2;
+        best = st;
+      }
+    }
+    const id = best ? best.id : null;
+    const changed = id !== haltCurrent;
+    haltCurrent = id;
+    return { stop: best, changed };
+  }
+
   return {
     update,
     dispose,
     setNight,
+    locateStop,
     vehicles,
     count: vehicles.length,
     pathCount: allPaths.length,
@@ -1858,6 +1891,9 @@ function emptyTransit() {
     update() {},
     dispose() {},
     setNight() {},
+    locateStop() {
+      return { stop: null, changed: false };
+    },
     count: 0,
     tryInteract() {
       return { action: "none" };
