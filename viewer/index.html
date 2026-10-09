@@ -1185,7 +1185,7 @@
           hint.textContent = TOUCH
             ? "Walk: stick move · drag look · Go interact · Sprint / Jump"
             : "Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · Esc · V free · N night · M map";
-          status.textContent = "Walking — Velo Harmonie";
+          status.textContent = "Walking — Antwerpen Gounod";
           touch?.setModeLabel("walk");
         } else {
           if (walkControls.isLocked) walkControls.unlock();
@@ -1848,6 +1848,13 @@
           landmarkLocator = await createLandmarkLocator();
           if (landmarkLocator.count) {
             console.info(`[cityview] landmarks: ${landmarkLocator.count} heritage POIs`);
+          }
+          // Opening beat: you're on the Gounod platform, not a random sidewalk.
+          if (spawnJson?.label && minimap?.showStreetName) {
+            const street =
+              streetLocator.locate?.(spawnPos.x, spawnPos.z) || "Mechelsesteenweg";
+            minimap.showStreetName(spawnJson.label, `De Lijn · ${street}`, 5200);
+            if (hud.notify) hud.notify(`${spawnJson.label} · lijn 4 · 7`, 5200);
           }
           outdoors = await createOutdoorsGuard();
           props = await createPropCollider();

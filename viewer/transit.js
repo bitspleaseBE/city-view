@@ -1845,7 +1845,7 @@ export async function createTransit(scene, THREE, opts = {}) {
     haltSeen.add(key);
     haltPois.push(st);
   }
-  const HALT_REACH2 = 14 * 14;
+  const HALT_REACH2 = 20 * 20; // platform edge at Gounod is ~18 m from the OSM stop node
   let haltCurrent = null;
 
   /** Nearest real De Lijn halt for GTA-style captions; `{ stop, changed }`. */
