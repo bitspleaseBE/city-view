@@ -1833,6 +1833,7 @@
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             width: 200,
             height: 200,
+            districtName: "Harmonie",
           });
           if (minimap.setBlips) {
             const BRAND = { Dott: "#18a6e0", Bolt: "#34d186" };
@@ -2175,7 +2176,7 @@
                   const sh = shops?.locateShop?.(ppos.x, ppos.z, gameHour, gameDay);
                   if (sh?.shop) {
                     if (sh.changed) {
-                      minimap.showStreetName(sh.shop.name, sh.subtitle || "Klein Antwerpen");
+                      minimap.showStreetName(sh.shop.name, sh.subtitle || "Harmonie");
                     }
                   } else if (streetLocator) {
                     const { street, changed } = streetLocator.update(ppos.x, ppos.z);

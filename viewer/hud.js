@@ -43,7 +43,7 @@ const CSS = `
 #hud-stats.on { display: block; }
 `;
 
-const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAYS = ["zondag", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag"];
 
 export function createHud(opts = {}) {
   const style = document.createElement("style");
