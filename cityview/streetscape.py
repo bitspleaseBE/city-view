@@ -585,6 +585,46 @@ def export_roads_near_spawn(
     }
 
 
+def export_buildings_near_spawn(
+    layout: dict[str, Any],
+    spawn: dict[str, Any] | None,
+    *,
+    radius: float = 280.0,
+    max_buildings: int = 1500,
+) -> dict[str, Any]:
+    """Building footprint rings near spawn for runtime outdoors collision.
+
+    Viewer keeps the walker outside these rings (solid extruded boxes have no
+    interiors). Rings use the same Blender XY as roads.json.
+    """
+    sx = float(spawn["x"]) if spawn else 0.0
+    sy = float(spawn["y"]) if spawn else 0.0
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for bldg in layout.get("buildings") or []:
+        ring = bldg.get("ring") or []
+        if len(ring) < 3:
+            continue
+        pts = [[float(p[0]), float(p[1])] for p in ring]
+        dmin = min(_dist(sx, sy, p[0], p[1]) for p in pts)
+        if dmin > radius:
+            continue
+        scored.append(
+            (
+                dmin,
+                {
+                    "id": bldg.get("id"),
+                    "ring": pts,
+                },
+            )
+        )
+    scored.sort(key=lambda item: item[0])
+    return {
+        "spawn": {"x": sx, "y": sy},
+        "radius": radius,
+        "buildings": [item[1] for item in scored[:max_buildings]],
+    }
+
+
 def _export_signal_stop_lines(
     layout: dict[str, Any],
     sx: float,

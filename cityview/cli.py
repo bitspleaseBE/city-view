@@ -31,6 +31,7 @@ from cityview.courtyards import attach_courtyards, summarize as summarize_courty
 from cityview.clutter import attach_clutter, summarize as summarize_clutter
 from cityview.trees import attach_trees, summarize as summarize_trees
 from cityview.streetscape import (
+    export_buildings_near_spawn,
     export_roads_near_spawn,
     export_transit_near_spawn,
     spawn_from_place,
@@ -237,6 +238,13 @@ def city_command(args: argparse.Namespace) -> int:
     roads_path = VIEWER / "roads.json"
     roads_path.write_text(json.dumps(roads_payload) + "\n")
     print(f"Wrote {roads_path} ({len(roads_payload['roads'])} roads near spawn)")
+    buildings_payload = export_buildings_near_spawn(layout, spawn)
+    buildings_path = VIEWER / "buildings.json"
+    buildings_path.write_text(json.dumps(buildings_payload) + "\n")
+    print(
+        f"Wrote {buildings_path} "
+        f"({len(buildings_payload['buildings'])} building footprints near spawn)"
+    )
     transit_payload = export_transit_near_spawn(layout, spawn)
     transit_path = VIEWER / "transit.json"
     transit_path.write_text(json.dumps(transit_payload) + "\n")

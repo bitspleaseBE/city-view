@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Re-export viewer/roads.json + viewer/transit.json without Blender.
+"""Re-export viewer/roads.json + viewer/buildings.json + viewer/transit.json without Blender.
 
-``python3 -m cityview city`` writes these two files as a side effect of the (slow) Blender
-build. When only the road / transit graph changed (e.g. travel directions), this re-runs the
-exact same OSM -> layout -> GTFS -> export steps and rewrites just the two JSON files.
+``python3 -m cityview city`` writes these files as a side effect of the (slow) Blender
+build. When only the road / transit / building graph changed, this re-runs the
+exact same OSM -> layout -> GTFS -> export steps and rewrites the JSON files.
 
     python3 scripts/export_viewer_data.py [--place klein-antwerpen]
 """
@@ -22,6 +22,7 @@ from cityview.gtfs_delijn import enrich_layout_transit  # noqa: E402
 from cityview.jobs import load_scene  # noqa: E402
 from cityview.osm import fetch_osm, layout_from_osm  # noqa: E402
 from cityview.streetscape import (  # noqa: E402
+    export_buildings_near_spawn,
     export_roads_near_spawn,
     export_transit_near_spawn,
     spawn_from_place,
@@ -44,13 +45,16 @@ def main() -> int:
     spawn = spawn_from_place(place, origin, layout)
 
     roads = export_roads_near_spawn(layout, spawn)
+    buildings = export_buildings_near_spawn(layout, spawn)
     transit = export_transit_near_spawn(layout, spawn)
     (cli.VIEWER / "roads.json").write_text(json.dumps(roads) + "\n")
+    (cli.VIEWER / "buildings.json").write_text(json.dumps(buildings) + "\n")
     (cli.VIEWER / "transit.json").write_text(json.dumps(transit) + "\n")
 
     one_way = sum(1 for r in roads["roads"] if r["oneway"])
     dual = sum(1 for r in roads["roads"] if r.get("dualCarriageway"))
     print(f"roads.json: {len(roads['roads'])} roads, {one_way} one-way, {dual} dual-carriageway halves")
+    print(f"buildings.json: {len(buildings['buildings'])} footprints")
     for path in transit["paths"]:
         print(
             f"transit.json: {path['mode']:4s} {str(path['id']):32s} "

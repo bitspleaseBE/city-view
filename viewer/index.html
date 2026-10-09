@@ -346,6 +346,7 @@
       import { createMicromobility } from "./micromobility.js";
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
+      import { createOutdoorsGuard } from "./outdoors.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -658,6 +659,8 @@
       let micromobility = null;
       let minimap = null;
       let streetLocator = null;
+      let outdoors = null;
+      const _moveBefore = { x: 0, z: 0 };
       // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
       let playBounds = null;
       const _clampTmp = new THREE.Vector3();
@@ -670,6 +673,19 @@
         else if (pos.x > maxX) pos.x = maxX;
         if (pos.z < minZ) pos.z = minZ;
         else if (pos.z > maxZ) pos.z = maxZ;
+      }
+
+      /** District bounds + never inside a building footprint. */
+      function clampWalkerXZ(pos) {
+        softClampXZ(pos, playBounds);
+        if (outdoors) outdoors.ensureOutdoors(pos);
+      }
+
+      function snapWalkSavedOutdoors() {
+        if (!outdoors) return;
+        const yawHolder = { yaw: walkSaved.yaw };
+        const snapped = outdoors.ensureOutdoors(walkSaved, yawHolder);
+        if (snapped) walkSaved.yaw = yawHolder.yaw;
       }
 
       function setupDistrictBounds(root) {
@@ -693,8 +709,8 @@
           maxZ = mid + 20;
         }
         playBounds = { minX, maxX, minZ, maxZ };
-        softClampXZ(walkControls.getObject().position, playBounds);
-        softClampXZ(spawnPos, playBounds);
+        clampWalkerXZ(walkControls.getObject().position);
+        clampWalkerXZ(spawnPos);
 
         // One cheap skirt plane so looking past the GLB ground isn't a black hole.
         const skirtSpan = Math.max(size.x, size.z) * 2.8;
@@ -797,23 +813,28 @@
           avatar.visible = false;
           if (prevMode === "free") {
             // Leave top-down: restore the walker's spot and an upright camera.
+            // Minimap teleports can land walkSaved inside a footprint — snap out first.
+            snapWalkSavedOutdoors();
+            softClampXZ(walkSaved, playBounds);
             camera.up.copy(UP_WORLD);
             camera.rotation.set(0, walkSaved.yaw, 0, "YXZ");
             walkControls.getObject().position.set(walkSaved.x, eyeHeight, walkSaved.z);
+            walkControls.getObject().rotation.y = walkSaved.yaw;
           }
           walkControls.getObject().position.y = eyeHeight;
-          softClampXZ(walkControls.getObject().position, playBounds);
+          clampWalkerXZ(walkControls.getObject().position);
           hint.textContent = "Walk: click + WASD · Shift sprint · Space jump · E tram · Esc · V free · N night · M map";
           status.textContent = "Walking — Gounod tram halt";
         } else {
           if (walkControls.isLocked) walkControls.unlock();
           const p = walkControls.getObject().position;
-          softClampXZ(p, playBounds);
+          clampWalkerXZ(p);
           if (prevMode !== "free") {
             walkSaved.x = p.x;
             walkSaved.z = p.z;
             walkSaved.yaw = walkControls.getObject().rotation.y;
           }
+          snapWalkSavedOutdoors();
           avatar.position.set(walkSaved.x, 0, walkSaved.z);
           avatar.rotation.y = walkSaved.yaw;
           avatar.visible = true;
@@ -829,7 +850,7 @@
       function applyAlightDrop(drop) {
         if (!drop) return;
         walkControls.getObject().position.set(drop.x, eyeHeight, drop.z);
-        softClampXZ(walkControls.getObject().position, playBounds);
+        clampWalkerXZ(walkControls.getObject().position);
         rideEl.style.display = "none";
         promptEl.style.display = "none";
         hint.textContent = "Walk: click + WASD · E tram · Esc · V free · N night";
@@ -942,6 +963,7 @@
         node.getWorldPosition(p);
         spawnPos.copy(p);
         if (Math.abs(p.y - eyeHeight) > 3) spawnPos.y = eyeHeight;
+        clampWalkerXZ(spawnPos);
         walkControls.getObject().position.copy(spawnPos);
         const e = new THREE.Euler().setFromQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
         walkControls.getObject().rotation.y = e.y;
@@ -949,6 +971,7 @@
 
       function applySpawnJson(spawn) {
         spawnPos.set(spawn.x, spawn.z, -spawn.y);
+        clampWalkerXZ(spawnPos);
         walkControls.getObject().position.copy(spawnPos);
         walkControls.getObject().rotation.y = spawn.yaw ?? 0;
       }
@@ -1141,6 +1164,14 @@
             height: 200,
           });
           streetLocator = await createStreetLocator();
+          outdoors = await createOutdoorsGuard();
+          if (outdoors.ready) {
+            clampWalkerXZ(walkControls.getObject().position);
+            clampWalkerXZ(spawnPos);
+            console.info(`[cityview] outdoors guard: ${outdoors.count} building footprints`);
+          } else {
+            console.warn("[cityview] outdoors guard: no buildings.json — indoor walk possible");
+          }
           // Cars give way to trams/buses instead of driving through them.
           if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
           const nCars = traffic.count ?? 0;
@@ -1267,12 +1298,16 @@
 
         if (!riding && mode === "walk" && walkControls.isLocked) {
           const step = walkSpeed * (keys.shift ? 1.85 : 1.0) * dt;
+          const walkerObj = walkControls.getObject();
+          _moveBefore.x = walkerObj.position.x;
+          _moveBefore.z = walkerObj.position.z;
           if (keys.w) walkControls.moveForward(step);
           if (keys.s) walkControls.moveForward(-step);
           if (keys.a) walkControls.moveRight(-step);
           if (keys.d) walkControls.moveRight(step);
-          if (!JUMP.active) walkControls.getObject().position.y = eyeHeight;
-          softClampXZ(walkControls.getObject().position, playBounds);
+          if (!JUMP.active) walkerObj.position.y = eyeHeight;
+          softClampXZ(walkerObj.position, playBounds);
+          if (outdoors) outdoors.rejectIfIndoors(walkerObj.position, _moveBefore);
         }
         if (!riding && mode === "free") {
           const panStep = freeCam.height * 0.9 * (keys.shift ? 2.2 : 1.0) * dt;
