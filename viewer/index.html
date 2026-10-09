@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="nl">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>City View — Klein Antwerpen · Velo Harmonie</title>
+    <title>City View — Klein Antwerpen · Halte Gounod</title>
     <style>
       :root {
         --ink: #1a2430;
@@ -366,10 +366,10 @@
         <rect x="0" y="152" width="1200" height="8" fill="#c4b59a" />
       </svg>
       <div class="ld-card">
-        <p class="ld-kicker">Klein Antwerpen · Velo Harmonie</p>
-        <h2>Antwerp is loading<span class="ld-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></h2>
+        <p class="ld-kicker">Harmonie · De Lijn halte Gounod</p>
+        <h2>Antwerpen laadt<span class="ld-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></h2>
         <div class="ld-track"><div class="ld-fill" id="ld-fill"></div></div>
-        <p class="ld-sub"><span id="ld-stage">Fetching the streets</span><span id="ld-pct"></span></p>
+        <p class="ld-sub"><span id="ld-stage">Straten ophalen</span><span id="ld-pct"></span></p>
       </div>
     </div>
     <script>
@@ -390,7 +390,7 @@
             if (label) stage.textContent = label;
           },
           done() {
-            this.set(1, "Ready");
+            this.set(1, "Klaar");
             root.classList.add("done");
             setTimeout(() => root.remove(), 1000);
           },
@@ -418,7 +418,7 @@
             got += value.length;
             // ~36 MB Meshopt city; asymptotic fallback when Content-Length is missing/wrong.
             const f = total && got <= total ? got / total : 1 - Math.exp(-got / 36e6);
-            window.__loading.set(f * 0.8, "Fetching the streets");
+            window.__loading.set(f * 0.8, "Straten ophalen");
           }
           const buf = new Uint8Array(got);
           let off = 0;
@@ -445,7 +445,7 @@
     <div id="prompt"></div>
     <div id="hud">
       <h1>Klein Antwerpen</h1>
-      <p>Velo Harmonie · grab a Velo or a scooter, hop on a tram, or just walk</p>
+      <p>Mechelsesteenweg · tram lijn 4 en 7 · Velo · te voet</p>
     </div>
     <div id="click-cue">Click to play</div>
     <div id="crosshair"></div>
@@ -1777,7 +1777,7 @@
           paintParkedCars(cityRoot);
           parkedCars = wireParkedCarLamps(cityRoot, THREE);
           cityRoot.updateMatrixWorld(true);
-          setLoad(0.9, "Building the streets");
+          setLoad(0.9, "Straten opbouwen");
           await nextFrame();
           if (new URLSearchParams(location.search).get("merge") !== "0") {
             const m = mergeStaticMeshes(cityRoot);
@@ -1792,8 +1792,8 @@
           if (spawnNode) applySpawnFromNode(spawnNode);
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
-          setLoad(0.94, "Starting traffic and trams");
-          const stopCharProgress = onCharacterProgress((f) => setLoad(0.94 + 0.03 * f, "Bringing people outside"));
+          setLoad(0.94, "Verkeer en trams starten");
+          const stopCharProgress = onCharacterProgress((f) => setLoad(0.94 + 0.03 * f, "Mensen buiten brengen"));
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
@@ -1890,7 +1890,7 @@
                 : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
-          setLoad(0.97, "Warming up the lights");
+          setLoad(0.97, "Lichten opwarmen");
           await nextFrame();
           await warmUpRenderer();
           if (touch) {
@@ -1916,18 +1916,18 @@
 
       (async () => {
         try {
-          setLoad(0, "Fetching the streets");
+          setLoad(0, "Straten ophalen");
           const buf = await window.__glbPromise;
           // Not earlier: during the city download the characters would only steal its bandwidth.
           preloadCharacters();
-          setLoad(0.82, "Unpacking the streets");
+          setLoad(0.82, "Straten uitpakken");
           await nextFrame();
           await MeshoptDecoder.ready;
           const gltf = await loader.parseAsync(buf, "./");
           await onCityLoaded(gltf);
         } catch (err) {
           status.textContent = "Missing GLB — CI/build pending";
-          window.__loading && window.__loading.fail("Couldn’t load Antwerp — check your connection and reload");
+          window.__loading && window.__loading.fail("Antwerpen laden mislukt — controleer je verbinding en herlaad");
           console.error(err);
         }
       })();
