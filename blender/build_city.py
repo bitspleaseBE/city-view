@@ -27,6 +27,7 @@ _BLENDER_DIR = str(Path(__file__).resolve().parent)
 if _BLENDER_DIR not in sys.path:
     sys.path.insert(0, _BLENDER_DIR)
 import benches_blender  # noqa: E402
+import barriers_blender  # noqa: E402
 import clutter_blender  # noqa: E402
 import roadware_blender  # noqa: E402
 import trees_blender  # noqa: E402
@@ -3311,6 +3312,17 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Park amenities: {park_am}")
     bench_stats = benches_blender.add_benches(layout, RAILS, wood_mat, pole_mat)
     print(f"Benches (surveyed positions + facing): {bench_stats}")
+    barrier_mats = {
+        "render": principled("wall_render", (0.46, 0.42, 0.35, 1.0), 0.92),
+        "brick": principled("wall_brick", (0.36, 0.17, 0.12, 1.0), 0.92),
+        "concrete": principled("wall_concrete", (0.38, 0.38, 0.36, 1.0), 0.95),
+        "stone": principled("wall_stone", (0.42, 0.39, 0.33, 1.0), 0.9),
+        "coping": principled("wall_coping", (0.50, 0.49, 0.46, 1.0), 0.85),
+        "hedge": hedge_mat,
+        "metal": pole_mat,
+    }
+    barrier_stats = barriers_blender.add_barriers(layout, RAILS, barrier_mats)
+    print(f"Courtyard barriers (OSM walls, hedges, fences): {barrier_stats}")
     clutter_stats = clutter_blender.add_clutter(layout, RAILS, clutter_mats)
     print(f"Street clutter (OSM-mapped bins, hoops, bollards, hydrants, ...): {clutter_stats}")
 
