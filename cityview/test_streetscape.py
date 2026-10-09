@@ -224,6 +224,49 @@ class WalkExportTests(unittest.TestCase):
         y0, y1 = crosses[0]["points"][0][1], crosses[0]["points"][1][1]
         self.assertGreater(abs(y0 - y1), 6.0)
 
+    def test_skips_building_passage_footways(self):
+        layout = {
+            "roads": [
+                {"id": 1, "kind": "residential", "width": 6.0, "points": [[0.0, 0.0], [40.0, 0.0]]},
+                {
+                    "id": 2,
+                    "kind": "footway",
+                    "width": 2.0,
+                    "passage": True,
+                    "points": [[10.0, 0.0], [10.0, 20.0]],
+                },
+            ]
+        }
+        walks = export_walks_near_spawn(layout, {"x": 20.0, "y": 0.0}, radius=50.0)
+        self.assertFalse(any(w["id"].startswith("w2") for w in walks))
+
+    def test_skips_courtyard_paths_far_from_streets(self):
+        layout = {
+            "roads": [
+                {"id": 1, "kind": "residential", "width": 6.0, "points": [[0.0, 0.0], [40.0, 0.0]]},
+                # Deep yard path, well clear of the street.
+                {"id": 3, "kind": "footway", "width": 2.0, "points": [[10.0, 40.0], [30.0, 40.0]]},
+            ]
+        }
+        walks = export_walks_near_spawn(layout, {"x": 20.0, "y": 0.0}, radius=80.0)
+        self.assertFalse(any(w["id"].startswith("w3") for w in walks))
+        self.assertTrue(any(w["kind"] == "sidewalk" for w in walks))
+
+    def test_skips_sidewalk_ribbons_through_buildings(self):
+        # Street along y=0; building covers the north kerb so the L ribbon is indoors.
+        layout = {
+            "roads": [
+                {"id": 1, "kind": "residential", "width": 6.0, "points": [[0.0, 0.0], [40.0, 0.0]]},
+            ],
+            "buildings": [
+                {"id": 9, "ring": [[0.0, 2.0], [40.0, 2.0], [40.0, 12.0], [0.0, 12.0]]},
+            ],
+        }
+        walks = export_walks_near_spawn(layout, {"x": 20.0, "y": 0.0}, radius=50.0)
+        sides = {w.get("side") for w in walks if w["kind"] == "sidewalk"}
+        self.assertIn("R", sides)
+        self.assertNotIn("L", sides)
+
 
 if __name__ == "__main__":
     unittest.main()

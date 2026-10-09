@@ -537,6 +537,11 @@ SIDEWALK_HOST_KINDS = frozenset(
 SIDEWALK_W = 2.0
 # Half-width of the asphalt strip we refuse to walk on (host road excluded).
 _WALK_CARRIAGE_MARGIN = 0.45
+# Drop OSM footways / sidewalk ribbons that spend this much of their length
+# inside building footprints (courtyards, porte-cochères, sealed yards).
+_WALK_INDOOR_REJECT = 0.12
+# OSM walk ways farther than this from a street carriageway are yard/plaza paths.
+_WALK_STREET_MAX_M = 14.0
 
 
 def _offset_polyline(points: list[list[float]], offset: float) -> list[list[float]]:
@@ -559,6 +564,127 @@ def _offset_polyline(points: list[list[float]], offset: float) -> list[list[floa
 
 def _polyline_length(pts: list[list[float]]) -> float:
     return sum(_dist(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) for i in range(len(pts) - 1))
+
+
+def _point_in_ring(x: float, y: float, ring: list[list[float]]) -> bool:
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        x1, y1 = ring[i][0], ring[i][1]
+        x2, y2 = ring[(i + 1) % n][0], ring[(i + 1) % n][1]
+        if (y1 > y) != (y2 > y) and x < ((x2 - x1) * (y - y1)) / ((y2 - y1) or 1e-12) + x1:
+            inside = not inside
+    return inside
+
+
+def _building_rings(layout: dict[str, Any]) -> list[list[list[float]]]:
+    rings: list[list[list[float]]] = []
+    for bldg in layout.get("buildings") or []:
+        ring = bldg.get("ring") or []
+        if len(ring) < 3:
+            continue
+        rings.append([[float(p[0]), float(p[1])] for p in ring])
+    return rings
+
+
+def _walk_indoor_fraction(pts: list[list[float]], buildings: list[list[list[float]]], step: float = 3.0) -> float:
+    """Fraction of samples along ``pts`` that fall inside a building footprint."""
+    if not buildings or len(pts) < 2:
+        return 0.0
+    length = _polyline_length(pts)
+    if length <= 0:
+        return 0.0
+    hit = 0
+    n = 0
+    s = 0.0
+    while s <= length + 1e-9:
+        cum = 0.0
+        x, y = float(pts[0][0]), float(pts[0][1])
+        for i in range(len(pts) - 1):
+            dx = float(pts[i + 1][0]) - float(pts[i][0])
+            dy = float(pts[i + 1][1]) - float(pts[i][1])
+            seg = math.hypot(dx, dy)
+            if s <= cum + seg + 1e-6:
+                t = 0.0 if seg <= 0 else (s - cum) / seg
+                x = float(pts[i][0]) + dx * t
+                y = float(pts[i][1]) + dy * t
+                break
+            cum += seg
+        n += 1
+        if any(_point_in_ring(x, y, ring) for ring in buildings):
+            hit += 1
+        s += step
+    return hit / n if n else 0.0
+
+
+def _dist_to_street_hosts(x: float, y: float, roads: list[dict[str, Any]]) -> float:
+    """Metres to the nearest sidewalk-host carriageway centreline."""
+    best = float("inf")
+    for road in roads:
+        kind = str(road.get("kind") or "").lower()
+        if kind not in SIDEWALK_HOST_KINDS:
+            continue
+        pts = road.get("points") or []
+        for i in range(len(pts) - 1):
+            ax, ay = float(pts[i][0]), float(pts[i][1])
+            bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+            dx, dy = bx - ax, by - ay
+            len2 = dx * dx + dy * dy
+            if len2 < 1e-8:
+                d = _dist(x, y, ax, ay)
+            else:
+                t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / len2))
+                d = _dist(x, y, ax + t * dx, ay + t * dy)
+            if d < best:
+                best = d
+    return best
+
+
+def _street_adjacent_walk(pts: list[list[float]], roads: list[dict[str, Any]], max_m: float = _WALK_STREET_MAX_M) -> bool:
+    """True when most of the walk stays near a public street (not a yard path)."""
+    if len(pts) < 2:
+        return False
+    length = _polyline_length(pts)
+    if length <= 0:
+        return False
+    step = max(3.0, length / 8.0)
+    far = 0
+    n = 0
+    s = 0.0
+    while s <= length + 1e-9:
+        cum = 0.0
+        x, y = float(pts[0][0]), float(pts[0][1])
+        for i in range(len(pts) - 1):
+            dx = float(pts[i + 1][0]) - float(pts[i][0])
+            dy = float(pts[i + 1][1]) - float(pts[i][1])
+            seg = math.hypot(dx, dy)
+            if s <= cum + seg + 1e-6:
+                t = 0.0 if seg <= 0 else (s - cum) / seg
+                x = float(pts[i][0]) + dx * t
+                y = float(pts[i][1]) + dy * t
+                break
+            cum += seg
+        n += 1
+        if _dist_to_street_hosts(x, y, roads) > max_m:
+            far += 1
+        s += step
+    return n > 0 and (far / n) <= 0.35
+
+
+def _accept_walk_run(
+    run: list[list[float]],
+    roads: list[dict[str, Any]],
+    buildings: list[list[list[float]]],
+    *,
+    require_street: bool,
+) -> bool:
+    if len(run) < 2 or _polyline_length(run) < 4.0:
+        return False
+    if _walk_indoor_fraction(run, buildings) > _WALK_INDOOR_REJECT:
+        return False
+    if require_street and not _street_adjacent_walk(run, roads):
+        return False
+    return True
 
 
 def _safe_sidewalk_runs(
@@ -653,19 +779,25 @@ def export_walks_near_spawn(
 ) -> list[dict[str, Any]]:
     """Pedestrian-safe polylines near spawn for the walker crowd.
 
-    Uses OSM footways / paths / plazas, plus kerb-side sidewalk ribbons along
-    ordinary streets (same offset as the Blender pavement). Carriageway
-    centrelines are never walked; short ``crossing`` links at OSM zebra /
-    signal nodes are the only intentional road crossings.
+    Uses street-adjacent OSM footways / paths / plazas, plus kerb-side sidewalk
+    ribbons along ordinary streets (same offset as the Blender pavement).
+    Building passages (``tunnel=building_passage``), indoor corridors, and yard
+    paths through courtyards are dropped. Carriageway centrelines are never
+    walked; short ``crossing`` links at OSM zebra / signal nodes are the only
+    intentional road crossings.
     """
     sx = float(spawn["x"]) if spawn else 0.0
     sy = float(spawn["y"]) if spawn else 0.0
     roads = layout.get("roads") or []
+    buildings = _building_rings(layout)
     scored: list[tuple[float, dict[str, Any]]] = []
     for ri, road in enumerate(roads):
         kind = str(road.get("kind") or "").lower()
         pts = [[float(p[0]), float(p[1])] for p in (road.get("points") or [])]
         if len(pts) < 2:
+            continue
+        # Porte-cochères / covered building cuts are not sidewalk routes.
+        if road.get("passage"):
             continue
         dmin = min(_dist(sx, sy, p[0], p[1]) for p in pts)
         if dmin > radius:
@@ -674,9 +806,12 @@ def export_walks_near_spawn(
         if length < 4.0:
             continue
         if kind in WALK_WAY_KINDS:
-            # Plazas are shared space; footways/paths get clipped where they cross asphalt.
+            # Street-front plazas ok when near a carriageway; footways/paths also
+            # get clipped where they cross asphalt.
             runs = [pts] if kind == "pedestrian" else _safe_sidewalk_runs(pts, roads, ri)
             for run_i, run in enumerate(runs):
+                if not _accept_walk_run(run, roads, buildings, require_street=True):
+                    continue
                 scored.append(
                     (
                         dmin,
@@ -684,7 +819,7 @@ def export_walks_near_spawn(
                             "id": f"w{road.get('id')}" + (f"_{run_i}" if run_i else ""),
                             "kind": kind,
                             "safe": True,
-                            "points": run if kind == "pedestrian" else [[round(p[0], 2), round(p[1], 2)] for p in run],
+                            "points": [[round(p[0], 2), round(p[1], 2)] for p in run],
                         },
                     )
                 )
@@ -695,6 +830,9 @@ def export_walks_near_spawn(
         for side, sign in (("L", 1.0), ("R", -1.0)):
             walk = _offset_polyline(pts, sign * (half + SIDEWALK_W * 0.5))
             for run_i, run in enumerate(_safe_sidewalk_runs(walk, roads, ri)):
+                # Ribbons are already street-offset; only reject building cuts.
+                if not _accept_walk_run(run, roads, buildings, require_street=False):
+                    continue
                 scored.append(
                     (
                         dmin,
