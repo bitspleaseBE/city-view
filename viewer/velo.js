@@ -393,8 +393,17 @@ export async function createVelo(scene, THREE) {
       ` ${stations.reduce((n, s) => n + s.bikesAvailable, 0)} bikes available`
   );
 
+  // Rails with their docked bikes as solid boxes, same shape as the vehicle solids.
+  const solids = stations.map((st) => ({
+    pos: { x: st.x, z: st.z },
+    tan: { x: Math.cos(st.yaw), z: -Math.sin(st.yaw) },
+    hl: (st.railLength || 8) * 0.5 + 0.3,
+    hw: 1.0,
+  }));
+
   return {
     stations,
+    solids,
     isRiding,
     bikeSpeed,
     tryInteract,
