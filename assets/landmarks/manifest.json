@@ -15,7 +15,7 @@
       "name": "Heilige Geestkerk",
       "kind": "church",
       "photo": "heilige_geestkerk.jpg",
-      "crop": [0.08, 0.02, 0.92, 0.98],
+      "crop": [0.10, 0.02, 0.72, 0.995],
       "massing": "neo_romanesque_twin",
       "source_url": "https://commons.wikimedia.org/wiki/File:Heilige_Geestkerk_buiten.jpg",
       "attribution": "Wikimedia Commons"
@@ -67,7 +67,7 @@
       "name": "Heilige Geestkerk",
       "kind": "church",
       "photo": "heilige_geestkerk.jpg",
-      "crop": [0.08, 0.02, 0.92, 0.98],
+      "crop": [0.10, 0.02, 0.72, 0.995],
       "massing": "neo_romanesque_twin",
       "source_url": "https://commons.wikimedia.org/wiki/File:Heilige_Geestkerk_buiten.jpg",
       "attribution": "Wikimedia Commons"

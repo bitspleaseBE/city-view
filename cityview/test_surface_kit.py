@@ -29,6 +29,11 @@ class SurfaceKitTests(unittest.TestCase):
         for key in kit.SURFACES:
             self.assertTrue((ASSETS / kit.TEXTURES_DIRNAME / kit.surface_file(key)).exists(), key)
 
+    def test_courtyard_materials_in_kit(self):
+        for key in ("sett", "rubber", "turf", "dirt", "forest"):
+            self.assertIn(key, kit.SURFACES)
+            self.assertGreater(kit.surface_tile_m(key), 0.0)
+
     def test_tile_sizes_positive(self):
         for key in kit.SURFACES:
             self.assertGreater(kit.surface_tile_m(key), 0.0)

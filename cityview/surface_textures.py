@@ -2,7 +2,8 @@
 
 Writes seamless 256 px tiles (roof slate / clay pantiles / zinc / flat bitumen - the four
 roof maps are bright neutral detail maps, coloured by the aerial-measured tints,
-pavement slabs, asphalt, park grass, granite kerb, courtyard gravel) to
+pavement slabs, asphalt, park grass, granite kerb, courtyard gravel, yard setts,
+playground rubber, pitch turf, site dirt, forest floor) to
 assets/surfaces/. Outputs are committed; CI (Blender only) never re-renders them.
 All patterns are periodic, so they tile without seams.
 """
@@ -229,6 +230,96 @@ def courtyard_gravel():
     return arr
 
 
+def yard_sett():
+    """10 cm granite setts in staggered courses (16 px = 10 cm at tile_m 1.6): rounded, grey, mortar-dark joints."""
+    np = _np()
+    y, x = np.mgrid[0:SIZE, 0:SIZE]
+    cell = 16
+    n = SIZE // cell
+    row = y // cell
+    xo = (x + (row % 2) * (cell // 2)) % SIZE
+    col = xo // cell
+    rng = np.random.default_rng(111)
+    tone = rng.uniform(0.80, 1.14, (n, n))[row, col]
+    warm = rng.uniform(-0.03, 0.03, (n, n))[row, col]
+    fx = ((xo % cell) + 0.5) / cell * 2 - 1
+    fy = ((y % cell) + 0.5) / cell * 2 - 1
+    # Rounded dome: bright crown, dark rim -> each stone catches light on its own.
+    dome = 1.0 - 0.38 * np.clip(np.maximum(np.abs(fx), np.abs(fy)) - 0.45, 0, 1) ** 1.2 * 1.8
+    joint = ((xo % cell) < 2) | ((y % cell) < 2)
+    field = tone * dome * (0.92 + 0.16 * fbm(113, 6, 3))
+    arr = _rgb((0.46, 0.45, 0.43), field)
+    arr[..., 0] += warm
+    arr[..., 2] -= warm
+    arr = arr + (speckle(115, 0.22)[..., None] * 0.12) - (speckle(117, 0.16)[..., None] * 0.10)
+    arr = _tint(arr, (0.17, 0.16, 0.15), joint.astype(float), 0.85)
+    arr = _tint(arr, (0.30, 0.34, 0.22), joint * np.clip(fbm(119, 6, 3) - 0.58, 0, 1) * 2.4, 0.45)  # moss in joints
+    return arr
+
+
+def play_rubber():
+    """EPDM safety surfacing: red-brown granules, 1 m mats (128 px) with hairline seams, a few worn pale patches."""
+    np = _np()
+    y, x = np.mgrid[0:SIZE, 0:SIZE]
+    mat = 128
+    mid = (y // mat) * 2 + (x // mat)
+    rng = np.random.default_rng(121)
+    mat_tone = rng.uniform(0.93, 1.07, 4)[mid]
+    field = mat_tone * (0.90 + 0.20 * fbm(123, 5, 4))
+    arr = _rgb((0.46, 0.20, 0.14), field)
+    granule = grain(125)
+    arr = arr * (0.80 + 0.40 * granule)[..., None]  # coarse granule mottle
+    arr = arr + (speckle(127, 0.08)[..., None] * np.array((0.10, 0.05, 0.03))[None, None, :])  # pale granules
+    arr = arr - (speckle(129, 0.10)[..., None] * 0.07)
+    arr = _tint(arr, (0.52, 0.34, 0.26), np.clip(fbm(131, 3, 3) - 0.60, 0, 1) * 2.4, 0.45)  # sun-faded wear
+    seam = ((x % mat) < 2) | ((y % mat) < 2)
+    arr = _tint(arr, (0.14, 0.07, 0.05), seam.astype(float), 0.7)
+    return arr
+
+
+def pitch_turf():
+    """Artificial turf: dense green fibre, 2 m rolls (128 px stripes) alternating in pile direction, faint infill wear."""
+    np = _np()
+    y, x = np.mgrid[0:SIZE, 0:SIZE]
+    roll = ((y // 128) + (x // 128)) % 2  # pile direction flips between rolls -> subtle two-tone
+    fibre = grain(141)
+    field = (0.90 + 0.20 * fbm(143, 4, 4)) * (1.0 + 0.07 * (roll * 2 - 1))
+    arr = _rgb((0.10, 0.34, 0.12), field)
+    arr = arr * (0.82 + 0.36 * fibre)[..., None]
+    arr = arr + speckle(145, 0.10)[..., None] * np.array((0.04, 0.10, 0.03))[None, None, :]
+    arr = _tint(arr, (0.30, 0.27, 0.16), np.clip(fbm(147, 4, 3) - 0.62, 0, 1) * 2.2, 0.35)  # rubber infill showing
+    seam = ((x % 128) < 1) | ((y % 128) < 1)
+    arr = _tint(arr, (0.05, 0.16, 0.06), seam.astype(float), 0.6)
+    return arr
+
+
+def site_dirt():
+    """Compacted building-site earth: brown fines, embedded stones, damp darker patches, dried cracks."""
+    np = _np()
+    field = 0.84 + 0.32 * fbm(151, 5, 5)
+    arr = _rgb((0.30, 0.24, 0.16), field)
+    arr = arr + (speckle(153, 0.14)[..., None] * 0.13) - (speckle(155, 0.16)[..., None] * 0.09)  # stones / pits
+    arr = _tint(arr, (0.17, 0.13, 0.09), np.clip(fbm(157, 3, 3) - 0.56, 0, 1) * 2.2, 0.55)  # damp
+    arr = _tint(arr, (0.46, 0.40, 0.30), np.clip(fbm(159, 4, 3) - 0.64, 0, 1) * 2.4, 0.4)  # dry dust
+    crack = (np.abs(fbm(161, 7, 3) - 0.5) < 0.008).astype(float)
+    arr = _tint(arr, (0.10, 0.08, 0.05), crack, 0.7)
+    return arr
+
+
+def forest_floor():
+    """Woodland ground: dark humus under scattered ochre / brown leaf litter and pale twig flecks."""
+    np = _np()
+    field = 0.80 + 0.40 * fbm(171, 5, 5)
+    arr = _rgb((0.15, 0.17, 0.09), field)
+    leaves = np.clip(fbm(173, 8, 3) - 0.50, 0, 1) * 2.0
+    arr = _tint(arr, (0.40, 0.27, 0.12), leaves, 0.55)  # ochre litter
+    arr = _tint(arr, (0.24, 0.14, 0.08), np.clip(fbm(175, 10, 2) - 0.58, 0, 1) * 2.4, 0.5)  # brown leaves
+    arr = _tint(arr, (0.12, 0.26, 0.10), np.clip(fbm(177, 4, 3) - 0.64, 0, 1) * 2.4, 0.5)  # moss / ground ivy
+    arr = arr + speckle(179, 0.06)[..., None] * np.array((0.20, 0.17, 0.10))[None, None, :]  # twigs / needles
+    arr = arr - speckle(181, 0.18)[..., None] * 0.07
+    return arr
+
+
 ROOF_KEYS = ("roof_slate", "roof_clay", "roof_zinc", "roof_flat")
 ROOF_NEUTRAL_MEAN = 0.80  # sRGB mean of the neutral roof detail maps (linear ~0.60)
 
@@ -252,10 +343,15 @@ GENERATORS = {
     "grass": park_grass,
     "curb": curb_granite,
     "gravel": courtyard_gravel,
+    "sett": yard_sett,
+    "rubber": play_rubber,
+    "turf": pitch_turf,
+    "dirt": site_dirt,
+    "forest": forest_floor,
 }
 
 
-def render_all(out_dir: Path = TEXTURES_DIR) -> list[Path]:
+def render_all(out_dir: Path = TEXTURES_DIR, only: set[str] | None = None) -> list[Path]:
     np = _np()
     try:
         from PIL import Image
@@ -264,6 +360,8 @@ def render_all(out_dir: Path = TEXTURES_DIR) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written = []
     for key, fn in GENERATORS.items():
+        if only and key not in only:
+            continue
         arr = fn()
         if key in ROOF_KEYS:
             arr = neutral_detail(arr)
@@ -278,8 +376,9 @@ def render_all(out_dir: Path = TEXTURES_DIR) -> list[Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", default=str(TEXTURES_DIR))
+    parser.add_argument("--only", nargs="*", default=None, help="render just these surface keys (e.g. sett rubber)")
     args = parser.parse_args(argv)
-    written = render_all(Path(args.out))
+    written = render_all(Path(args.out), set(args.only) if args.only else None)
     print(f"Wrote {len(written)} surface textures to {args.out}")
     return 0
 

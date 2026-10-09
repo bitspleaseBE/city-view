@@ -125,3 +125,30 @@ class FacadeKitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShopAwningTests(unittest.TestCase):
+    def test_awning_over_known_shopfront(self):
+        quads = kit.plan_facade_quads(6.4, 12.0, 4, "eclectic", 0)
+        quads[0]["cell"] = "facade_01"
+        u0, v0, u1, v1 = kit.cell_uv_rect("facade_01")
+        quads[0]["uv"] = (u0, v0, u1, v1)
+        awnings = kit.shop_awnings(quads, rightwards=True)
+        self.assertEqual(len(awnings), 1)
+        a = awnings[0]
+        self.assertGreater(a["w"], 1.4)
+        self.assertAlmostEqual(a["z"], 0.32 * 12.0, places=3)
+        self.assertTrue(0.0 < a["a"] < 6.4)
+
+    def test_no_awning_without_shop(self):
+        quads = kit.plan_facade_quads(6.4, 12.0, 4, "eclectic", 0)
+        quads[0]["cell"] = "facade_05"
+        self.assertEqual(kit.shop_awnings(quads), [])
+
+    def test_awning_mirrors_with_edge_orientation(self):
+        quads = kit.plan_facade_quads(6.4, 12.0, 4, "eclectic", 0)
+        quads[0]["cell"] = "facade_01"
+        quads[0]["uv"] = kit.cell_uv_rect("facade_01")
+        r = kit.shop_awnings(quads, rightwards=True)[0]["a"]
+        l = kit.shop_awnings(quads, rightwards=False)[0]["a"]
+        self.assertAlmostEqual(r + l, 6.4, places=3)

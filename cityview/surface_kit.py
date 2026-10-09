@@ -28,6 +28,12 @@ SURFACES: dict[str, dict] = {
     "grass": {"file": "park_grass.jpg", "tile_m": 8.0},
     "curb": {"file": "curb_granite.jpg", "tile_m": 1.6},
     "gravel": {"file": "courtyard_gravel.jpg", "tile_m": 3.0},
+    # Courtyard materials (baked colour, no tint): the OSM yard areas that used to be flat colours.
+    "sett": {"file": "yard_sett.jpg", "tile_m": 1.6},  # 10 cm granite setts in staggered courses
+    "rubber": {"file": "play_rubber.jpg", "tile_m": 2.0},  # EPDM safety surfacing, 1 m mats
+    "turf": {"file": "pitch_turf.jpg", "tile_m": 4.0},  # artificial turf, 2 m rolls
+    "dirt": {"file": "site_dirt.jpg", "tile_m": 3.0},  # compacted building-site earth
+    "forest": {"file": "forest_floor.jpg", "tile_m": 4.0},  # leaf litter + needles under woodland
 }
 
 # Roof family mix per roof shape (cumulative weights out of 100). Measured from the
