@@ -18,6 +18,8 @@ const ICON = 128;
 const FASCIA_Y = 3.22; // centre height above the pavement (between shop window and 1st floor)
 const FASCIA_H = 0.5;
 const FASCIA_OUT = 0.24; // in front of the façade, clear of the window reveals
+const FRONT_OUT = 0.14; // ground-floor shopfront panel, just proud of the wall
+const FRONT_H = 2.85; // kerb to fascia underside
 const BLADE = 0.62;
 const POOL_DEPTH = 3.2;
 const REACH = 7; // m: "what's this shop" prompt range
@@ -25,12 +27,19 @@ const DAY = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 const STYLE = {
   food: { bg: ["#1f4d36", "#5a2e1a", "#24323f"], fg: "#f3e6c4", serif: true },
-  horeca: { bg: ["#5b1a26", "#1d2a24", "#3a2414"], fg: "#f0c66b", serif: true },
+  // Hipster Antwerp: oxblood, forest, charcoal, teal — cream / brass lettering
+  horeca: { bg: ["#5b1a26", "#1d2a24", "#2a221c", "#1a3a3e"], fg: "#f0c66b", serif: true },
   retail: { bg: ["#1b2844", "#2c2c30", "#41213b"], fg: "#ffffff", serif: false },
   service: { bg: ["#24292e", "#13443f", "#3a3f46"], fg: "#7fe0d3", serif: false },
   pharmacy: { bg: ["#f6f7f5"], fg: "#0c8a3e", serif: false },
   care: { bg: ["#f4f6f9"], fg: "#1d5fae", serif: false },
 };
+
+function rgbCss(rgb, fallback = "#222") {
+  if (!rgb || rgb.length < 3) return fallback;
+  const h = (c) => Math.max(0, Math.min(255, Math.round(c * 255))).toString(16).padStart(2, "0");
+  return `#${h(rgb[0])}${h(rgb[1])}${h(rgb[2])}`;
+}
 const ICONS = ["food", "horeca", "retail", "service", "pharmacy", "care"];
 
 function hash(n) {
@@ -119,22 +128,25 @@ function drawIcon(ctx, cat, x, y, s, st) {
 
 function drawFascia(ctx, shop, sx, sy, aspect) {
   const st = STYLE[shop.cat] || STYLE.retail;
-  const bg = st.bg[Math.floor(hash(shop.id) * st.bg.length)];
+  const branded = shop.fascia && shop.fascia.length >= 3;
+  const bg = branded ? rgbCss(shop.fascia) : st.bg[Math.floor(hash(shop.id) * st.bg.length)];
+  const fg = branded ? rgbCss(shop.accent, st.fg) : st.fg;
   ctx.fillStyle = bg;
   ctx.fillRect(sx, sy, SLOT_W, SLOT_H);
-  ctx.strokeStyle = st.fg;
-  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = fg;
+  ctx.globalAlpha = shop.mood === "bank" ? 0.35 : 0.55;
   ctx.lineWidth = 2;
   ctx.strokeRect(sx + 3, sy + 3, SLOT_W - 6, SLOT_H - 6);
   ctx.globalAlpha = 1;
   // The slot is stretched to the board's real aspect; pre-squash so letters stay upright.
   const squash = (SLOT_W / SLOT_H) / aspect;
   const label = (shop.name || prettyKind(shop.kind)).toUpperCase();
-  const font = st.serif ? "Georgia, 'Times New Roman', serif" : "'Avenir Next', 'Helvetica Neue', Arial, sans-serif";
+  const serif = st.serif || shop.mood === "cafe";
+  const font = serif ? "Georgia, 'Times New Roman', serif" : "'Avenir Next', 'Helvetica Neue', Arial, sans-serif";
   ctx.save();
   ctx.translate(sx + SLOT_W / 2, sy + SLOT_H / 2 + 1);
   ctx.scale(squash, 1);
-  let size = 38;
+  let size = shop.mood === "bank" ? 34 : 38;
   ctx.font = `700 ${size}px ${font}`;
   const maxW = (SLOT_W - 26) / squash;
   const w = ctx.measureText(label).width;
@@ -142,7 +154,7 @@ function drawFascia(ctx, shop, sx, sy, aspect) {
     size = Math.max(18, Math.floor(size * (maxW / w)));
     ctx.font = `700 ${size}px ${font}`;
   }
-  ctx.fillStyle = st.fg;
+  ctx.fillStyle = fg;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(label, 0, 0, maxW);
@@ -228,6 +240,9 @@ export async function createShops(scene, THREE, opts = {}) {
   const fasciaUv = [];
   const fasciaLit = [];
   const fasciaIdx = [];
+  const frontPos = [];
+  const frontCol = [];
+  const frontIdx = [];
   const poolPos = [];
   const poolUv = [];
   const poolCol = [];
@@ -259,7 +274,9 @@ export async function createShops(scene, THREE, opts = {}) {
     const tz = -nx;
     const g = groundAt(fx + nx * 1.2, fz + nz * 1.2);
     const gy = Number.isFinite(g) ? g : 0;
-    const half = shop.w / 2;
+    // One house bay wide — never spill onto the neighbour's elevation.
+    const boardW = shop.houseW ? Math.min(shop.w, shop.houseW * 0.9) : shop.w;
+    const half = boardW / 2;
     const cx = fx + nx * FASCIA_OUT;
     const cz = fz + nz * FASCIA_OUT;
     const y0 = gy + FASCIA_Y - FASCIA_H / 2;
@@ -270,6 +287,53 @@ export async function createShops(scene, THREE, opts = {}) {
       [V(cx - tx * half, y0, cz - tz * half), V(cx + tx * half, y0, cz + tz * half), V(cx + tx * half, y1, cz + tz * half), V(cx - tx * half, y1, cz - tz * half)],
       uvOf(sx, sy, SLOT_W, SLOT_H), 0,
     );
+    // Ground-floor shopfront (banks / cafés): coloured surround + glazing under the fascia.
+    if (shop.shopfront) {
+      const fw = (shop.houseW || boardW) * 0.92;
+      const fh = fw / 2;
+      const px = fx + nx * FRONT_OUT;
+      const pz = fz + nz * FRONT_OUT;
+      const [fr, fg, fb] = shop.fascia || [0.2, 0.18, 0.16];
+      const [gr, gg, gb] = shop.glass || [0.5, 0.48, 0.44];
+      const bank = shop.mood === "bank";
+      // Pillars / plinth in fascia colour
+      const addColoured = (corners, r, gch, b) => {
+        const base = frontPos.length / 3;
+        for (const p of corners) {
+          frontPos.push(p.x, p.y, p.z);
+          frontCol.push(r, gch, b);
+        }
+        frontIdx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      };
+      const sill = gy + (bank ? 0.35 : 0.45);
+      const head = gy + FRONT_H;
+      const glassTop = head - 0.18;
+      const glassBot = sill + 0.08;
+      const inset = bank ? 0.22 : 0.18;
+      addColoured(
+        [V(px - tx * fh, gy, pz - tz * fh), V(px + tx * fh, gy, pz + tz * fh), V(px + tx * fh, sill, pz + tz * fh), V(px - tx * fh, sill, pz - tz * fh)],
+        fr, fg, fb,
+      );
+      addColoured(
+        [V(px - tx * fh, glassTop, pz - tz * fh), V(px + tx * fh, glassTop, pz + tz * fh), V(px + tx * fh, head, pz + tz * fh), V(px - tx * fh, head, pz - tz * fh)],
+        fr, fg, fb,
+      );
+      for (const side of [-1, 1]) {
+        const i0 = side < 0 ? -fh : fh - inset;
+        const i1 = side < 0 ? -fh + inset : fh;
+        addColoured(
+          [V(px + tx * i0, sill, pz + tz * i0), V(px + tx * i1, sill, pz + tz * i1), V(px + tx * i1, glassTop, pz + tz * i1), V(px + tx * i0, glassTop, pz + tz * i0)],
+          fr * 0.85, fg * 0.85, fb * 0.85,
+        );
+      }
+      // Window glass (slightly proud so it reads at night)
+      const gx = px + nx * 0.03;
+      const gz = pz + nz * 0.03;
+      addColoured(
+        [V(gx - tx * (fh - inset), glassBot, gz - tz * (fh - inset)), V(gx + tx * (fh - inset), glassBot, gz + tz * (fh - inset)), V(gx + tx * (fh - inset), glassTop, gz + tz * (fh - inset)), V(gx - tx * (fh - inset), glassTop, gz - tz * (fh - inset))],
+        gr, gg, gb,
+      );
+    }
     // Blade sign at the right end of the fascia, sticking out over the pavement (both faces).
     const bx = fx + tx * (half - 0.15) + nx * (0.3 + BLADE / 2);
     const bz = fz + tz * (half - 0.15) + nz * (0.3 + BLADE / 2);
@@ -348,6 +412,25 @@ export async function createShops(scene, THREE, opts = {}) {
   const fascias = new THREE.Mesh(fGeo, fMat);
   fascias.name = "shop_fascias";
   scene.add(fascias);
+
+  if (frontPos.length) {
+    const frGeo = new THREE.BufferGeometry();
+    frGeo.setAttribute("position", new THREE.Float32BufferAttribute(frontPos, 3));
+    frGeo.setAttribute("color", new THREE.Float32BufferAttribute(frontCol, 3));
+    frGeo.setIndex(frontIdx);
+    frGeo.computeVertexNormals();
+    const frMat = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.55,
+      metalness: 0.08,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+    });
+    const fronts = new THREE.Mesh(frGeo, frMat);
+    fronts.name = "shop_fronts";
+    scene.add(fronts);
+  }
 
   const pGeo = new THREE.BufferGeometry();
   pGeo.setAttribute("position", new THREE.Float32BufferAttribute(poolPos, 3));

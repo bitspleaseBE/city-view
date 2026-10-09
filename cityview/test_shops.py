@@ -1,7 +1,8 @@
 import unittest
 
 from cityview.geo import project
-from cityview.shops import category_for, has_terrace, parse_opening_hours, plan_shops
+from cityview.shop_brands import normalize_shop_brand, shopfront_style
+from cityview.shops import category_for, has_terrace, house_bays, parse_opening_hours, plan_shops
 
 ORIGIN = (51.2017, 4.4114)
 
@@ -98,6 +99,28 @@ class ShopPlanTests(unittest.TestCase):
         self.assertEqual(cafe["hours"][0], [[8.0, 22.0]])
         self.assertFalse(by_id[10]["hoursKnown"])
         self.assertEqual(len(by_id[10]["hours"]), 7)
+
+    def test_signs_align_to_one_house_bay(self):
+        # 20 m edge → three ~6.67 m houses; a node near a party wall snaps to one bay.
+        osm = {"elements": [_node(1, 6.6, 1.0, amenity="cafe", name="Cafenation")]}
+        shops = plan_shops(osm, _layout(), ORIGIN)
+        self.assertEqual(len(shops), 1)
+        s = shops[0]
+        bays = house_bays(20.0, 4)
+        self.assertEqual(len(bays), 3)
+        centres = [(a0 + a1) * 0.5 for a0, a1 in bays]
+        self.assertTrue(any(abs(s["x"] - c) < 0.05 for c in centres))
+        self.assertLessEqual(s["w"], s["houseW"] * 0.9 + 0.01)
+        self.assertTrue(s.get("shopfront"))
+        self.assertEqual(s["mood"], "cafe")
+
+    def test_bank_brands(self):
+        self.assertEqual(normalize_shop_brand({"name": "Belfius", "amenity": "bank"}), "belfius")
+        self.assertEqual(normalize_shop_brand({"brand": "KBC"}), "kbc")
+        self.assertEqual(normalize_shop_brand({"name": "Crelan Antwerpen"}), "crelan")
+        style = shopfront_style({"name": "Belfius", "amenity": "bank"}, "bank", "service", 1)
+        self.assertEqual(style["mood"], "bank")
+        self.assertEqual(style["brand"] if "brand" in style else normalize_shop_brand({"name": "Belfius"}), "belfius")
 
 
 if __name__ == "__main__":
