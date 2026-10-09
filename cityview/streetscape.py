@@ -7,6 +7,7 @@ from typing import Any
 
 from cityview.building_heights import FLOOR_H, MAX_EAVES_M, MAX_LEVELS
 from cityview.directions import infer_parallel_track_directions, mark_dual_carriageways
+from cityview.passages import apply_building_passages
 
 
 def _dist(ax: float, ay: float, bx: float, by: float) -> float:
@@ -292,7 +293,8 @@ def street_facing_edges(
 
 
 def annotate_layout(layout: dict[str, Any]) -> dict[str, Any]:
-    """Attach street_edges to buildings using road proximity."""
+    """Cut building passages, then attach street_edges from road proximity."""
+    apply_building_passages(layout)
     segments = _road_segments(layout.get("roads") or [])
     for bldg in layout.get("buildings") or []:
         ring = bldg.get("ring") or []
