@@ -858,7 +858,7 @@
           playerMotion.bump(0.6);
         };
         if (micromobility) for (const v of micromobility.vehicles) push(v.pos.x, v.pos.z, 0.85);
-        if (scooters && !scooters.isRiding()) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
+        if (scooters) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
         if (outdoors) outdoors.ensureOutdoors(pos);
       }
       const _vehicleSolids = [];
@@ -874,6 +874,7 @@
           const tram = v.mode === "tram";
           _vehicleSolids.push({ pos: v.pos, tan: v.tan, hl: tram ? 15.5 : 6.6, hw: tram ? 1.2 : 1.25 });
         }
+        if (velo && velo.solids) for (const s of velo.solids) _vehicleSolids.push(s);
         hit = props.resolveVehicles(pos, r, _vehicleSolids) || hit;
         if (terraces) hit = props.resolveCircles(pos, r, terraces.solids) || hit;
         if (hit) playerMotion.bump(onWheels ? 0.35 : 0.6);
