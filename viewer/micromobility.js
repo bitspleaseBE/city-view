@@ -8,6 +8,12 @@ const ROADS_URL = "./roads.json";
 const KMH = 1 / 3.6;
 const SNAP_M = 14;
 const BIKE_LANE_EXTRA = 1.45; // m outside car lane, toward the kerb
+const SPAWN_GAP = 7; // m between riders at spawn
+const LOOK_AHEAD = 9; // m: riders react to anything this far ahead in their lane
+const LANE_HALF = 0.55; // m: half a bike's swept width
+const STOP_GAP = 1.6; // m nose-to-tail when queued
+const SWERVE = 0.75; // m to the right when an oncoming rider shares the lane
+const OVERTAKE = 1.3; // m to the left when passing something that blocks the lane
 
 const DRIVEABLE = new Set([
   "motorway",
@@ -301,11 +307,9 @@ function buildHandoffs(paths, THREE) {
 
 export async function createMicromobility(scene, THREE, opts = {}) {
   const COUNT = opts.count ?? 28;
-  const url = opts.roadsUrl || ROADS_URL;
-
   let roads = [];
   try {
-    const res = await fetch(url);
+    const res = await fetch(ROADS_URL);
     if (res.ok) {
       const data = await res.json();
       roads = data.roads || [];
@@ -333,6 +337,10 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     samplePath(v.path, v.s, THREE, _pos, _tan);
     if (v.reverse) _tan.negate();
     applyBikeLane(v.path, _tan, _pos);
+    if (v.swerve) {
+      _pos.x += -_tan.z * v.swerve;
+      _pos.z += _tan.x * v.swerve;
+    }
     v.mesh.position.copy(_pos);
     v.mesh.rotation.y = Math.atan2(_tan.x, _tan.z);
     v.pos.set(_pos.x, 0, _pos.z);
@@ -346,8 +354,18 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   }
 
   function spawnOne() {
-    const path = paths[(Math.random() * paths.length) | 0];
-    const reverse = legalDirs(path)[(Math.random() * legalDirs(path).length) | 0];
+    // Pick a free spot: never spawn a rider on top of another one (they would ride as one).
+    let path = paths[0];
+    let reverse = false;
+    let s = 0.5;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      path = paths[(Math.random() * paths.length) | 0];
+      const dirs = legalDirs(path);
+      reverse = dirs[(Math.random() * dirs.length) | 0];
+      s = Math.random() * path.length * 0.9 + 0.5;
+      samplePath(path, s, THREE, _pos, _tan);
+      if (!vehicles.some((o) => o.pos.distanceToSquared(_pos) < SPAWN_GAP * SPAWN_GAP)) break;
+    }
     const kind = pickKind();
     const cfg = KINDS[kind];
     const speed = cfg.speedKmh * KMH * (0.85 + Math.random() * 0.3);
@@ -357,8 +375,10 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       kind,
       path,
       reverse,
-      s: Math.random() * path.length * 0.9 + 0.5,
+      s,
       speed,
+      cur: speed,
+      swerve: 0,
       mesh,
       pos: new THREE.Vector3(),
       tan: new THREE.Vector3(),
@@ -400,10 +420,51 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     }
   }
 
-  function update(dt) {
+  let dtSwerve = 0;
+  /**
+   * Keep riders apart: follow the one ahead in the same lane, swerve right for oncoming
+   * riders sharing the lane, brake for the walker / obstacles, and pass anything that
+   * stays put in the bike lane.
+   */
+  function targetSpeed(v, obstacles) {
+    let gap = Infinity;
+    let oncoming = false;
+    const tx = v.tan.x;
+    const tz = v.tan.z;
+    const consider = (ox, oz, otx, otz, radius) => {
+      const dx = ox - v.pos.x;
+      const dz = oz - v.pos.z;
+      const along = dx * tx + dz * tz;
+      if (along <= 0 || along > LOOK_AHEAD) return;
+      const lat = Math.abs(dx * tz - dz * tx);
+      if (lat > LANE_HALF + radius) return;
+      if (otx * tx + otz * tz < -0.3) oncoming = true;
+      gap = Math.min(gap, along - radius);
+    };
+    for (const o of vehicles) if (o !== v) consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
+    for (const ob of obstacles) consider(ob.x, ob.z, 0, 0, ob.r ?? 0.4);
+    v.stuck = gap < STOP_GAP + 1 && v.cur < 0.5 ? (v.stuck || 0) + dtSwerve : 0;
+    if (v.stuck > 2.5) {
+      v.overtake = 3.5; // s spent out in the passing line
+      v.stuck = 0;
+    }
+    if (v.overtake > 0) v.overtake -= dtSwerve;
+    const passing = v.overtake > 0 && !oncoming;
+    const want = oncoming ? SWERVE : passing ? -OVERTAKE : 0;
+    v.swerve += (want - v.swerve) * Math.min(1, dtSwerve * 2.5);
+    if (passing) return v.speed * 0.6;
+    if (gap === Infinity) return v.speed;
+    return v.speed * Math.max(0, Math.min(1, (gap - STOP_GAP) / (LOOK_AHEAD - STOP_GAP)));
+  }
+
+  function update(dt, obstacles = []) {
     if (!(dt > 0)) return;
+    dtSwerve = dt;
     for (const v of vehicles) {
-      const delta = v.speed * dt;
+      const want = targetSpeed(v, obstacles);
+      const rate = want < v.cur ? 6.0 : 1.6; // brake hard, pull away gently
+      v.cur += Math.max(-rate * dt, Math.min(rate * dt, want - v.cur));
+      const delta = v.cur * dt;
       v.s += v.reverse ? -delta : delta;
       if (v.s >= v.path.length) {
         v.s = v.path.length - 0.01;

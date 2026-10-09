@@ -344,6 +344,8 @@
       import { createTransit } from "./transit.js";
       import { createPedestrians } from "./pedestrians.js";
       import { createMicromobility } from "./micromobility.js";
+      import { createScooters } from "./scooters.js";
+      import { createPlayerMotion } from "./player-motion.js";
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
 
@@ -531,6 +533,10 @@
         get tod() { return tod; },
         get walk() { return walkControls; },
         get transit() { return transit; },
+        scene,
+        get micromobility() { return micromobility; },
+        get scooters() { return scooters; },
+        get motion() { return playerMotion; },
         get pixelRatio() { return pixelRatio; },
       };
 
@@ -572,6 +578,7 @@
         lampGlow = glow;
         for (const l of lampLights) l.intensity = LAMP_INTENSITY * glow * l.userData.on;
         traffic.setNight && traffic.setNight(glow);
+        scooters && scooters.setNight(glow);
         transit.setNight && transit.setNight(glow);
 
         starMat.opacity = smooth(0.55, 1.0, t) * 0.9;
@@ -645,7 +652,6 @@
 
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;
-      const walkSpeed = 7.5;
       const keys = { w: false, a: false, s: false, d: false, shift: false, space: false };
       // Jump physics
       const JUMP = { v: 0, g: -12, strength: 5.0, active: false, cooldown: 0 };
@@ -656,6 +662,32 @@
       let transit = { update() {}, dispose() {} };
       let pedestrians = null;
       let micromobility = null;
+      let scooters = null;
+      const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
+      /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
+      function groundAt(x, z) {
+        if (!cityRoot) return 0;
+        _groundRay.ray.origin.set(x, 1.2, z);
+        const hit = _groundRay.intersectObject(cityRoot, true)[0];
+        return hit && hit.point.y < 0.6 ? hit.point.y : 0;
+      }
+      const _riderObstacles = [{ x: 0, z: 0, r: 0.45 }];
+      const _beforeStep = { x: 0, z: 0 };
+      /** Riders and parked scooters are solid: slide the walker out instead of through them. */
+      function pushOutOfSolids(pos) {
+        const push = (cx, cz, R) => {
+          const dx = pos.x - cx;
+          const dz = pos.z - cz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= R * R || d2 < 1e-6) return;
+          const d = Math.sqrt(d2);
+          pos.x = cx + (dx / d) * R;
+          pos.z = cz + (dz / d) * R;
+          playerMotion.bump(0.6);
+        };
+        if (micromobility) for (const v of micromobility.vehicles) push(v.pos.x, v.pos.z, 0.85);
+        if (scooters && !scooters.isRiding()) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
+      }
       let minimap = null;
       let streetLocator = null;
       // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
@@ -725,6 +757,7 @@
 
       const walkControls = new PointerLockControls(camera, document.body);
       scene.add(walkControls.getObject());
+      const playerMotion = createPlayerMotion(THREE, camera, walkControls);
       // Simple humanoid capsule so Free view can frame the walker.
       const avatar = new THREE.Group();
       const bodyMat = new THREE.MeshLambertMaterial({ color: 0x3a4658 });
@@ -839,9 +872,29 @@
         }
       }
 
+      function handleScooterE(p) {
+        if (!scooters || (transit.isRiding && transit.isRiding())) return false;
+        if (!scooters.isRiding() && !scooters.getPrompt({ x: p.x, z: p.z })) return false;
+        const result = scooters.tryInteract({ x: p.x, z: p.z, yaw: playerMotion.yaw() });
+        if (result.action === "take") {
+          rideEl.style.display = "block";
+          rideLine.textContent = `${result.brand} e-scooter`;
+          rideNext.textContent = `${result.battery}% battery`;
+          promptEl.style.display = "none";
+          status.textContent = `Unlocked a ${result.brand} scooter`;
+        } else if (result.action === "park") {
+          rideEl.style.display = "none";
+          status.textContent = `Parked · ride €${result.cost.toFixed(2)}`;
+        } else if (result.action === "empty") {
+          status.textContent = "That scooter's battery is empty";
+        }
+        return result.action !== "none";
+      }
+
       function handleTransitE() {
         if (mode !== "walk") return;
         const p = walkControls.getObject().position;
+        if (handleScooterE(p)) return;
         const result = transit.tryInteract({ x: p.x, z: p.z });
         if (result.action === "board") {
           if (walkControls.isLocked) walkControls.unlock();
@@ -863,6 +916,22 @@
 
       function refreshTransitHud() {
         const hud = transit.getRideHud ? transit.getRideHud() : { riding: false };
+        const sHud = scooters ? scooters.getRideHud() : { riding: false };
+        if (sHud.toast) status.textContent = sHud.toast;
+        if (sHud.riding) {
+          rideEl.style.display = "block";
+          rideLine.textContent = `${sHud.brand} e-scooter · ${Math.round(Math.abs(playerMotion.speed) * 3.6)} km/h`;
+          rideNext.textContent = `${sHud.battery}% · ${sHud.time} · €${sHud.cost.toFixed(2)} · E to park`;
+          promptEl.style.display = "none";
+          return;
+        }
+        const p = walkControls.getObject().position;
+        const scooterPrompt = !hud.riding && mode === "walk" && scooters ? scooters.getPrompt({ x: p.x, z: p.z }) : null;
+        if (scooterPrompt) {
+          promptEl.style.display = "block";
+          promptEl.textContent = scooterPrompt;
+          return;
+        }
         if (hud.riding) {
           rideEl.style.display = "block";
           rideLine.textContent = `${hud.mode === "bus" ? "Bus" : "Tram"} ${hud.line}`;
@@ -918,6 +987,7 @@
         }
         if (e.code === "KeyV") {
           if (transit.isRiding && transit.isRiding()) return;
+          if (scooters && scooters.isRiding()) return;
           setMode(mode === "walk" ? "free" : "walk");
           return;
         }
@@ -1133,6 +1203,10 @@
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
           });
           micromobility = await createMicromobility(scene, THREE, { count: 28 });
+          scooters = await createScooters(scene, THREE, {
+            spawnCenter: { x: spawnPos.x, z: spawnPos.z },
+            groundAt,
+          });
           // ---- Mini map + street name locator ----
           minimap = createMinimap(THREE, {
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
@@ -1248,7 +1322,7 @@
         const riding = transit.isRiding && transit.isRiding();
 
         // ---- Jump physics (spacebar) ----
-        if (keys.space && JUMP.cooldown <= 0 && !JUMP.active && mode === "walk" && !riding) {
+        if (keys.space && JUMP.cooldown <= 0 && !JUMP.active && mode === "walk" && !riding && !(scooters && scooters.isRiding())) {
           JUMP.v = JUMP.strength;
           JUMP.active = true;
           JUMP.cooldown = 0.3; // prevent re-trigger
@@ -1265,14 +1339,28 @@
           }
         }
 
+        const onScooter = scooters && scooters.isRiding();
         if (!riding && mode === "walk" && walkControls.isLocked) {
-          const step = walkSpeed * (keys.shift ? 1.85 : 1.0) * dt;
-          if (keys.w) walkControls.moveForward(step);
-          if (keys.s) walkControls.moveForward(-step);
-          if (keys.a) walkControls.moveRight(-step);
-          if (keys.d) walkControls.moveRight(step);
-          if (!JUMP.active) walkControls.getObject().position.y = eyeHeight;
-          softClampXZ(walkControls.getObject().position, playBounds);
+          const kind = onScooter ? "scooter" : "walk";
+          const w = walkControls.getObject();
+          _beforeStep.x = w.position.x;
+          _beforeStep.z = w.position.z;
+          playerMotion.step(dt, keys, kind);
+          if (!JUMP.active) w.position.y = playerMotion.eye(kind);
+          softClampXZ(w.position, playBounds);
+          if (!onScooter) pushOutOfSolids(w.position);
+        } else {
+          playerMotion.stop();
+        }
+        if (scooters) {
+          const w = walkControls.getObject().position;
+          scooters.update(dt, {
+            x: w.x,
+            z: w.z,
+            yaw: playerMotion.yaw(),
+            speed: playerMotion.speed,
+            turn: (keys.d ? 1 : 0) - (keys.a ? 1 : 0),
+          });
         }
         if (!riding && mode === "free") {
           const panStep = freeCam.height * 0.9 * (keys.shift ? 2.2 : 1.0) * dt;
@@ -1293,7 +1381,11 @@
         traffic.update(simDt, walker);
         transit.update(simDt, walker);
         if (pedestrians) pedestrians.update(simDt);
-        if (micromobility) micromobility.update(simDt);
+        if (micromobility) {
+          _riderObstacles[0].x = walker.position.x;
+          _riderObstacles[0].z = walker.position.z;
+          micromobility.update(simDt, _riderObstacles);
+        }
 
         // ---- Mini map (free mode teleport via click) ----
         if (minimap) {
