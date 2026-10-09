@@ -1741,6 +1741,180 @@ def add_landmark_photo_quad(
     link(bpy.data.objects.new(name, mesh))
 
 
+def _append_street_gable(
+    bm,
+    mx: float,
+    my: float,
+    nx: float,
+    ny: float,
+    ux: float,
+    uy: float,
+    z0: float,
+    width: float,
+    depth: float,
+    height: float,
+    mat_i: int,
+) -> None:
+    """Triangular shoulder gable prism facing the street (true peak, not a box)."""
+    half = width * 0.5
+    d0, d1 = 0.02, max(0.25, depth)
+    bl = bm.verts.new((mx - ux * half - nx * d0, my - uy * half - ny * d0, z0))
+    br = bm.verts.new((mx + ux * half - nx * d0, my + uy * half - ny * d0, z0))
+    fl = bm.verts.new((mx - ux * half + nx * d1, my - uy * half + ny * d1, z0))
+    fr = bm.verts.new((mx + ux * half + nx * d1, my + uy * half + ny * d1, z0))
+    bp = bm.verts.new((mx - nx * d0, my - ny * d0, z0 + height))
+    fp = bm.verts.new((mx + nx * d1, my + ny * d1, z0 + height))
+    bm.verts.ensure_lookup_table()
+    for idxs in (
+        (bl, br, bp),
+        (fl, fr, fp),
+        (bl, fl, fp, bp),
+        (br, fr, fp, bp),
+        (bl, br, fr, fl),
+    ):
+        try:
+            face = bm.faces.new(list(idxs))
+            face.material_index = mat_i
+        except ValueError:
+            pass
+
+
+def _append_arch_window(
+    bm,
+    cx: float,
+    cy: float,
+    cz: float,
+    w: float,
+    h: float,
+    yaw: float,
+    nx: float,
+    ny: float,
+    stone_i: int,
+    glass_i: int,
+    deep: float = 0.55,
+) -> None:
+    """Open stone frame + dark glass (no solid slab covering the opening)."""
+    # Dark recess / glass visible from street (proud of the brick)
+    _append_box(bm, cx + nx * 0.02, cy + ny * 0.02, cz, w, 0.2, h, yaw, glass_i)
+    # Deeper dark void behind
+    _append_box(bm, cx - nx * (deep * 0.4), cy - ny * (deep * 0.4), cz, w * 0.95, 0.35, h * 0.95, yaw, glass_i)
+    # Stone frame: jambs + sill + lintel + arch crown (edges only)
+    jamb_t = max(0.18, w * 0.18)
+    ux, uy = -ny, nx  # along facade
+    for side in (-1.0, 1.0):
+        _append_box(
+            bm,
+            cx + ux * side * (w * 0.5 + jamb_t * 0.35) + nx * 0.06,
+            cy + uy * side * (w * 0.5 + jamb_t * 0.35) + ny * 0.06,
+            cz,
+            jamb_t,
+            0.4,
+            h * 1.15,
+            yaw,
+            stone_i,
+        )
+    _append_box(bm, cx + nx * 0.08, cy + ny * 0.08, cz - h * 0.52, w + jamb_t * 1.6, 0.42, 0.18, yaw, stone_i)
+    _append_box(bm, cx + nx * 0.08, cy + ny * 0.08, cz + h * 0.52, w + jamb_t * 1.4, 0.4, 0.2, yaw, stone_i)
+    _append_box(bm, cx + nx * 0.1, cy + ny * 0.1, cz + h * 0.62, w * 0.85, 0.35, 0.28, yaw, stone_i)
+
+
+def _append_archivolt_portal(
+    bm,
+    mx: float,
+    my: float,
+    nx: float,
+    ny: float,
+    yaw: float,
+    portal_w: float,
+    portal_h: float,
+    brick_i: int,
+    portal_i: int,
+    stone_i: int,
+    glass_i: int,
+    door_i: int,
+    face_d: float = 1.5,
+) -> None:
+    """Deep portal: open frames (not solid slabs) so the dark doors read from street."""
+    ux, uy = -ny, nx
+    # Outer brick reveal frame
+    for dw, dh, proud, thick, mat_i in (
+        (1.25, 1.1, 0.1, 0.35, brick_i),
+        (1.1, 1.02, 0.25, 0.32, portal_i),
+        (0.95, 0.94, 0.42, 0.3, stone_i),
+    ):
+        # Left/right jambs
+        for side in (-1.0, 1.0):
+            _append_box(
+                bm,
+                mx + ux * side * (portal_w * dw * 0.5) + nx * (face_d + proud),
+                my + uy * side * (portal_w * dw * 0.5) + ny * (face_d + proud),
+                portal_h * 0.48 * dh,
+                thick,
+                0.45,
+                portal_h * dh,
+                yaw,
+                mat_i,
+            )
+        # Arch crown / lintel
+        _append_box(
+            bm,
+            mx + nx * (face_d + proud),
+            my + ny * (face_d + proud),
+            portal_h * dh * 0.92,
+            portal_w * dw,
+            0.45,
+            thick * 1.2,
+            yaw,
+            mat_i,
+        )
+    # Dark tympanum recess + door leaves (visible through the open frames)
+    _append_box(
+        bm,
+        mx + nx * (face_d - 0.15),
+        my + ny * (face_d - 0.15),
+        portal_h * 0.72,
+        portal_w * 0.72,
+        0.25,
+        portal_h * 0.24,
+        yaw,
+        portal_i,
+    )
+    _append_box(
+        bm,
+        mx + nx * (face_d - 0.35),
+        my + ny * (face_d - 0.35),
+        portal_h * 0.32,
+        portal_w * 0.55,
+        0.2,
+        portal_h * 0.58,
+        yaw,
+        door_i,
+    )
+    _append_box(
+        bm,
+        mx + nx * (face_d - 0.3),
+        my + ny * (face_d - 0.3),
+        portal_h * 0.32,
+        0.12,
+        0.22,
+        portal_h * 0.58,
+        yaw,
+        stone_i,
+    )
+    # Threshold
+    _append_box(
+        bm,
+        mx + nx * (face_d + 0.15),
+        my + ny * (face_d + 0.15),
+        0.12,
+        portal_w * 1.05,
+        0.55,
+        0.24,
+        yaw,
+        stone_i,
+    )
+
+
 def add_church_west_front(
     name: str,
     p0: list[float],
@@ -1748,9 +1922,9 @@ def add_church_west_front(
     outward: list[float],
     facade_h: float,
     church_mats: dict,
-    thickness: float = 1.15,
+    thickness: float = 1.4,
 ) -> None:
-    """Mesh-only street elevation (Heilige Geest west front) — brick/stone/glass, no photo."""
+    """Heilige Geest west front: nave bay, deep portal, lancets, gable — no photo."""
     x0, y0 = p0
     x1, y1 = p1
     length = math.hypot(x1 - x0, y1 - y0)
@@ -1762,104 +1936,180 @@ def add_church_west_front(
     yaw = math.atan2(y1 - y0, x1 - x0)
     ux, uy = math.cos(yaw), math.sin(yaw)
     mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
-    cx = mx + nx * (thickness * 0.5 + 0.06)
-    cy = my + ny * (thickness * 0.5 + 0.06)
+    tower_bay = min(6.0, length * 0.30)
+    turret_bay = min(3.4, length * 0.17)
+    centre_w = max(4.8, length - tower_bay - turret_bay)
+    cmx = p0[0] + ux * (tower_bay + centre_w * 0.5)
+    cmy = p0[1] + uy * (tower_bay + centre_w * 0.5)
+    cx = cmx + nx * (thickness * 0.5 + 0.05)
+    cy = cmy + ny * (thickness * 0.5 + 0.05)
     mesh = bpy.data.meshes.new(name)
-    mesh.materials.append(church_mats["brick"])   # 0
-    mesh.materials.append(church_mats["stone"])   # 1
-    mesh.materials.append(church_mats["glass"])   # 2
-    mesh.materials.append(church_mats["portal"])  # 3
+    mesh.materials.append(church_mats["brick"])
+    mesh.materials.append(church_mats["stone"])
+    mesh.materials.append(church_mats["glass"])
+    mesh.materials.append(church_mats["portal"])
+    mesh.materials.append(church_mats["brick_dark"])
+    mesh.materials.append(church_mats["door"])
+    mesh.materials.append(church_mats["metal"])
     bm = bmesh.new()
-    # Main brick wall mass (proud of the extruded ring).
-    _append_box(bm, cx, cy, facade_h * 0.5, length * 0.985, thickness, facade_h, yaw, 0)
-    # Stone plinth
+    _append_box(bm, cx, cy, facade_h * 0.5, centre_w * 0.98, thickness, facade_h, yaw, 0)
+    face_d = thickness + 0.12
     _append_box(
         bm,
-        mx + nx * (thickness * 0.55 + 0.06),
-        my + ny * (thickness * 0.55 + 0.06),
-        0.7,
-        length * 0.99,
-        thickness * 0.75,
-        1.4,
+        cmx + nx * (face_d - 0.2),
+        cmy + ny * (face_d - 0.2),
+        facade_h * 0.55,
+        centre_w * 0.7,
+        0.22,
+        facade_h * 0.5,
+        yaw,
+        4,
+    )
+    _append_box(
+        bm,
+        mx + nx * (face_d + 0.05),
+        my + ny * (face_d + 0.05),
+        0.78,
+        length * 0.995,
+        0.55,
+        1.55,
         yaw,
         1,
     )
-    # Horizontal stone string courses
-    for zf in (0.32, 0.58, 0.82):
+    for zf in (0.28, 0.5, 0.76):
         _append_box(
             bm,
-            mx + nx * (thickness * 0.55 + 0.08),
-            my + ny * (thickness * 0.55 + 0.08),
+            mx + nx * (face_d + 0.06),
+            my + ny * (face_d + 0.06),
             facade_h * zf,
-            length * 0.98,
-            0.22,
-            0.2,
+            length * 0.99,
+            0.35,
+            0.28,
             yaw,
             1,
         )
-    # Shoulder gable over the central bay
-    gable_w = min(length * 0.52, max(5.5, length * 0.4))
-    gable_h = min(5.8, max(3.4, facade_h * 0.26))
-    gx = mx + nx * (thickness * 0.48 + 0.05)
-    gy = my + ny * (thickness * 0.48 + 0.05)
-    _append_box(bm, gx, gy, facade_h + gable_h * 0.42, gable_w, thickness * 0.9, gable_h, yaw, 0)
-    # Stone coping + peak cross stub
+    gable_w = centre_w * 0.94
+    gable_h = min(7.2, max(4.4, facade_h * 0.38))
+    _append_street_gable(
+        bm,
+        cmx + nx * 0.12,
+        cmy + ny * 0.12,
+        nx,
+        ny,
+        ux,
+        uy,
+        facade_h - 0.2,
+        gable_w,
+        face_d,
+        gable_h,
+        0,
+    )
     _append_box(
         bm,
-        mx + nx * (thickness * 0.55 + 0.08),
-        my + ny * (thickness * 0.55 + 0.08),
-        facade_h + gable_h + 0.12,
-        gable_w * 1.06,
-        0.32,
-        0.26,
+        cmx + nx * (face_d + 0.05),
+        cmy + ny * (face_d + 0.05),
+        facade_h + gable_h * 0.58,
+        gable_w * 0.42,
+        0.35,
+        0.24,
         yaw,
         1,
     )
     _append_box(
         bm,
-        mx + nx * (thickness * 0.5),
-        my + ny * (thickness * 0.5),
-        facade_h + gable_h + 0.85,
-        0.22,
-        0.22,
-        1.1,
+        cmx + nx * (face_d + 0.02),
+        cmy + ny * (face_d + 0.02),
+        facade_h + gable_h + 0.75,
+        0.12,
+        0.12,
+        1.45,
         yaw,
-        1,
+        6,
     )
-    # Corbel-table frieze under the gable (row of small stone arches)
-    fringe_z = facade_h - 0.35
-    n_corbels = max(5, int(gable_w / 0.85))
+    _append_box(
+        bm,
+        cmx + nx * (face_d + 0.02),
+        cmy + ny * (face_d + 0.02),
+        facade_h + gable_h + 1.25,
+        0.75,
+        0.1,
+        0.1,
+        yaw,
+        6,
+    )
+    fringe_z = facade_h - 0.15
+    n_corbels = max(8, int(gable_w / 0.65))
     for i in range(n_corbels):
         t = (i + 0.5) / n_corbels - 0.5
         _append_box(
             bm,
-            mx + ux * t * gable_w + nx * (thickness * 0.62),
-            my + uy * t * gable_w + ny * (thickness * 0.62),
+            cmx + ux * t * gable_w + nx * (face_d + 0.08),
+            cmy + uy * t * gable_w + ny * (face_d + 0.08),
             fringe_z,
-            0.55,
-            0.28,
-            0.45,
+            0.42,
+            0.32,
+            0.48,
             yaw,
             1,
         )
-    # Triple arched window bank (central taller) — neo-Romanesque west front
-    win_z = facade_h * 0.55
-    for side, scale in ((-1.0, 0.85), (0.0, 1.0), (1.0, 0.85)):
-        ww = length * 0.09 * scale
-        wh = facade_h * 0.28 * scale
-        wx = mx + ux * side * length * 0.14 + nx * (thickness * 0.55 + 0.12)
-        wy = my + uy * side * length * 0.14 + ny * (thickness * 0.55 + 0.12)
-        # Stone surround
-        _append_box(bm, wx - nx * 0.08, wy - ny * 0.08, win_z, ww * 1.35, 0.35, wh * 1.2, yaw, 1)
-        # Glass recess
-        _append_box(bm, wx + nx * 0.05, wy + ny * 0.05, win_z, ww, 0.22, wh, yaw, 2)
-        # Mullion
-        _append_box(bm, wx + nx * 0.08, wy + ny * 0.08, win_z, 0.1, 0.12, wh * 0.92, yaw, 3)
-    # Small oculi in the gable
+    win_z = facade_h * 0.54
+    for side, scale in ((-1.0, 0.95), (0.0, 1.18), (1.0, 0.95)):
+        ww = centre_w * 0.12 * scale
+        wh = facade_h * 0.3 * scale
+        wx = cmx + ux * side * centre_w * 0.2 + nx * (face_d + 0.15)
+        wy = cmy + uy * side * centre_w * 0.2 + ny * (face_d + 0.15)
+        _append_arch_window(bm, wx, wy, win_z, ww, wh, yaw, nx, ny, 1, 2, deep=0.75)
+        _append_box(bm, wx - nx * 0.15, wy - ny * 0.15, win_z, 0.1, 0.14, wh * 0.85, yaw, 3)
+    gface = face_d + 0.1
+    _append_arch_window(
+        bm,
+        cmx + nx * gface,
+        cmy + ny * gface,
+        facade_h + gable_h * 0.42,
+        centre_w * 0.12,
+        gable_h * 0.32,
+        yaw,
+        nx,
+        ny,
+        1,
+        2,
+        deep=0.5,
+    )
     for side in (-1.0, 1.0):
-        ox = mx + ux * side * gable_w * 0.22 + nx * (thickness * 0.55)
-        oy = my + uy * side * gable_w * 0.22 + ny * (thickness * 0.55)
-        _append_box(bm, ox, oy, facade_h + gable_h * 0.45, 0.7, 0.25, 0.7, yaw, 2)
+        ox = cmx + ux * side * gable_w * 0.22 + nx * gface
+        oy = cmy + uy * side * gable_w * 0.22 + ny * gface
+        _append_box(bm, ox, oy, facade_h + gable_h * 0.38, 1.0, 0.35, 1.0, yaw, 1)
+        _append_box(bm, ox - nx * 0.2, oy - ny * 0.2, facade_h + gable_h * 0.38, 0.6, 0.2, 0.6, yaw, 2)
+    portal_w = min(5.4, centre_w * 0.44)
+    portal_h = min(8.2, facade_h * 0.5)
+    _append_archivolt_portal(
+        bm, cmx, cmy, nx, ny, yaw, portal_w, portal_h, 0, 3, 1, 2, 5, face_d=face_d + 0.2
+    )
+    tmx = p0[0] + ux * (tower_bay * 0.55)
+    tmy = p0[1] + uy * (tower_bay * 0.55)
+    _append_archivolt_portal(
+        bm,
+        tmx,
+        tmy,
+        nx,
+        ny,
+        yaw,
+        min(3.2, tower_bay * 0.55),
+        min(5.4, facade_h * 0.36),
+        0,
+        3,
+        1,
+        2,
+        5,
+        face_d=face_d + 0.2,
+    )
+    for side in (-1.0, 1.0):
+        bx = cmx + ux * side * (centre_w * 0.47) + nx * (face_d + 0.35)
+        by = cmy + uy * side * (centre_w * 0.47) + ny * (face_d + 0.35)
+        _append_box(bm, bx, by, facade_h * 0.48, 1.2, 1.35, facade_h * 0.96, yaw, 0)
+        _append_box(bm, bx + nx * 0.1, by + ny * 0.1, facade_h * 0.78, 1.0, 1.1, facade_h * 0.3, yaw, 1)
+        _append_box(bm, bx + nx * 0.15, by + ny * 0.15, facade_h * 0.96, 0.9, 0.95, 0.32, yaw, 1)
+        _append_box(bm, bx, by, facade_h * 0.35, 0.3, 1.45, facade_h * 0.55, yaw, 1)
     bm.to_mesh(mesh)
     bm.free()
     _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
@@ -1910,46 +2160,58 @@ def _uv_mesh_faces(mesh, tile_m: float = 1.6) -> None:
 
 
 def make_church_materials(surface_mat_fn) -> dict:
-    """Dedicated textured mats for nave / tower / spire / portal (not one muddy colour)."""
+    """Tiling brick/stone/slate for churches — same brick scale as townhouses, with weathering."""
     brick_img = load_texture(TEXTURES_DIR / facade_kit.wall_tile_file("brick_red"))
     stone_img = load_texture(TEXTURES_DIR / facade_kit.wall_tile_file("stone_buff"))
+    brick_tile = float(facade_kit.WALL_TILES["brick_red"]["tile_m"])
     return {
         "brick": textured(
             "church_brick_red",
             brick_img,
-            (0.52, 0.28, 0.22, 1.0),
-            rough=0.88,
+            (0.48, 0.26, 0.20, 1.0),
+            rough=0.9,
+            tint=(0.92, 0.78, 0.68),
+        ),
+        "brick_dark": textured(
+            "church_brick_weathered",
+            brick_img,
+            (0.34, 0.18, 0.14, 1.0),
+            rough=0.94,
+            tint=(0.72, 0.58, 0.5),
         ),
         "stone": textured(
             "church_stone_buff",
             stone_img,
-            (0.62, 0.58, 0.52, 1.0),
-            rough=0.78,
+            (0.58, 0.56, 0.52, 1.0),
+            rough=0.8,
+            tint=(0.98, 0.96, 0.9),
         ),
         "slate": surface_mat_fn(
             "roof_slate",
             "church_slate",
-            (0.16, 0.16, 0.17, 1.0),
-            0.72,
-            tint=(0.55, 0.55, 0.56),
+            (0.14, 0.14, 0.15, 1.0),
+            0.7,
+            tint=(0.48, 0.48, 0.5),
         ),
         "portal": surface_mat_fn(
             "curb",
             "church_portal_stone",
-            (0.42, 0.40, 0.36, 1.0),
+            (0.4, 0.38, 0.34, 1.0),
             0.82,
-            tint=(0.92, 0.88, 0.78),
+            tint=(0.95, 0.9, 0.8),
         ),
         "plinth": surface_mat_fn(
             "curb",
             "church_plinth",
-            (0.36, 0.34, 0.32, 1.0),
+            (0.34, 0.32, 0.3, 1.0),
             0.9,
-            tint=(0.75, 0.74, 0.70),
+            tint=(0.78, 0.76, 0.72),
         ),
-        "glass": principled("church_glass", (0.10, 0.16, 0.20, 1.0), 0.16, metallic=0.35),
-        "door": principled("church_door", (0.20, 0.11, 0.07, 1.0), 0.78),
-        "brick_tile_m": float(facade_kit.WALL_TILES["brick_red"]["tile_m"]),
+        "louvre": principled("church_louvre", (0.05, 0.04, 0.035, 1.0), 0.92),
+        "glass": principled("church_glass", (0.03, 0.04, 0.05, 1.0), 0.35, metallic=0.15),
+        "door": principled("church_door", (0.08, 0.04, 0.02, 1.0), 0.88),
+        "metal": principled("church_metal", (0.35, 0.35, 0.36, 1.0), 0.45, metallic=0.75),
+        "brick_tile_m": brick_tile,
         "stone_tile_m": float(facade_kit.WALL_TILES["stone_buff"]["tile_m"]),
         "slate_tile_m": float(surface_kit.surface_tile_m("roof_slate")),
     }
@@ -2050,62 +2312,95 @@ def _place_church_tower_volume(
     church_mats: dict,
     gothic: bool = False,
 ) -> None:
-    """Square shaft + cornice + belfry arches + smooth pyramidal slate spire + finial."""
+    """Heilige Geest: 4-stage square tower, triple louvred belfry, steep slate pyramid."""
     mesh = bpy.data.meshes.new(name)
-    mesh.materials.append(church_mats["brick"])   # 0
-    mesh.materials.append(church_mats["slate"])   # 1
-    mesh.materials.append(church_mats["stone"])   # 2
-    mesh.materials.append(church_mats["glass"])   # 3
+    mesh.materials.append(church_mats["brick"])
+    mesh.materials.append(church_mats["slate"])
+    mesh.materials.append(church_mats["stone"])
+    mesh.materials.append(church_mats.get("louvre") or church_mats["glass"])
+    mesh.materials.append(church_mats.get("brick_dark") or church_mats["brick"])
+    mesh.materials.append(church_mats.get("metal") or church_mats["stone"])
+    mesh.materials.append(church_mats["glass"])
     bm = bmesh.new()
-    # Main shaft
-    _append_box(bm, tx, ty, tower_h * 0.5, tw, tw, tower_h, yaw, 0)
-    # Stone plinth
-    _append_box(bm, tx, ty, 0.7, tw * 1.08, tw * 1.08, 1.4, yaw, 2)
-    # String-course bands (speklagen)
-    for zf in (0.28, 0.52, 0.78):
-        _append_box(bm, tx, ty, tower_h * zf, tw * 1.06, tw * 1.06, 0.22, yaw, 2)
-    # Cornice under the belfry
-    _append_box(bm, tx, ty, tower_h + 0.15, tw * 1.12, tw * 1.12, 0.45, yaw, 2)
-    # Belfry stage
-    bh = 2.4 if gothic else 2.0
-    _append_box(bm, tx, ty, tower_h + 0.35 + bh * 0.5, tw * 0.9, tw * 0.9, bh, yaw, 0)
-    # Recessed belfry openings on four faces (dark glass).
-    for ang in (0.0, math.pi * 0.5, math.pi, math.pi * 1.5):
-        ox = math.cos(yaw + ang) * (tw * 0.42)
-        oy = math.sin(yaw + ang) * (tw * 0.42)
-        _append_box(
-            bm,
-            tx + ox,
-            ty + oy,
-            tower_h + 0.35 + bh * 0.55,
-            tw * 0.28,
-            0.35,
-            bh * 0.7,
-            yaw + ang,
-            3,
-        )
-    # Smooth pyramidal spire (Heilige Geest: steep four-sided slate needle)
-    _append_pyramid(bm, tx, ty, tower_h + 0.35 + bh + 0.1, tw * 1.02, spire_h, yaw, 1)
-    # Finial / cross stub
-    _append_box(
-        bm,
-        tx,
-        ty,
-        tower_h + 0.35 + bh + spire_h + 0.55,
-        0.18,
-        0.18,
-        1.1,
-        yaw,
-        2,
+    stages = (
+        (0.00, 0.30, 1.00, 0),
+        (0.30, 0.55, 0.96, 0),
+        (0.55, 0.78, 0.92, 0),
+        (0.78, 1.00, 0.88, 0),
     )
+    for z0f, z1f, scale, mat_i in stages:
+        zh = tower_h * (z1f - z0f)
+        zc = tower_h * (z0f + z1f) * 0.5
+        w = tw * scale
+        _append_box(bm, tx, ty, zc, w, w, zh, yaw, mat_i)
+        _append_box(bm, tx, ty, tower_h * z1f, w * 1.08, w * 1.08, 0.28, yaw, 2)
+    _append_box(bm, tx, ty, 0.75, tw * 1.1, tw * 1.1, 1.5, yaw, 2)
+    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+        c, s = math.cos(yaw), math.sin(yaw)
+        lx, ly = sx * tw * 0.48, sy * tw * 0.48
+        qx, qy = tx + lx * c - ly * s, ty + lx * s + ly * c
+        _append_box(bm, qx, qy, tower_h * 0.2, 0.45, 0.45, tower_h * 0.38, yaw, 2)
+    for ang in (0.0, math.pi * 0.5):
+        for side in (-0.18, 0.18):
+            ox = math.cos(yaw + ang) * (tw * 0.42) + math.cos(yaw + ang + math.pi * 0.5) * (tw * side)
+            oy = math.sin(yaw + ang) * (tw * 0.42) + math.sin(yaw + ang + math.pi * 0.5) * (tw * side)
+            _append_box(bm, tx + ox, ty + oy, tower_h * 0.42, tw * 0.14, 0.32, tower_h * 0.16, yaw + ang, 2)
+            _append_box(bm, tx + ox * 1.05, ty + oy * 1.05, tower_h * 0.42, tw * 0.1, 0.18, tower_h * 0.13, yaw + ang, 6)
+    bh_z = tower_h * 0.89
+    bw = tw * 0.88
+    for ang in (0.0, math.pi * 0.5, math.pi, math.pi * 1.5):
+        for side in (-0.26, 0.0, 0.26):
+            ox = math.cos(yaw + ang) * (bw * 0.52) + math.cos(yaw + ang + math.pi * 0.5) * (bw * side)
+            oy = math.sin(yaw + ang) * (bw * 0.52) + math.sin(yaw + ang + math.pi * 0.5) * (bw * side)
+            _append_box(
+                bm,
+                tx + ox * 0.92,
+                ty + oy * 0.92,
+                bh_z,
+                bw * 0.18,
+                0.28,
+                tower_h * 0.15,
+                yaw + ang,
+                3,
+            )
+            _append_box(bm, tx + ox, ty + oy, bh_z, bw * 0.22, 0.22, tower_h * 0.17, yaw + ang, 2)
+            for k in range(5):
+                lz = bh_z - tower_h * 0.055 + k * (tower_h * 0.024)
+                _append_box(
+                    bm,
+                    tx + ox * 0.96,
+                    ty + oy * 0.96,
+                    lz,
+                    bw * 0.16,
+                    0.14,
+                    0.045,
+                    yaw + ang,
+                    3,
+                )
+    _append_box(bm, tx, ty, tower_h + 0.2, tw * 0.98, tw * 0.98, 0.4, yaw, 2)
+    n_cor = 10
+    for i in range(n_cor):
+        ang = yaw + (i / n_cor) * math.tau
+        ox = math.cos(ang) * (tw * 0.48)
+        oy = math.sin(ang) * (tw * 0.48)
+        _append_box(bm, tx + ox, ty + oy, tower_h + 0.05, 0.35, 0.28, 0.4, ang, 2)
+    _append_pyramid(bm, tx, ty, tower_h + 0.35, tw * 1.05, spire_h, yaw, 1)
+    luc_z = tower_h + 0.35 + spire_h * 0.12
+    for ang in (0.0, math.pi * 0.5, math.pi, math.pi * 1.5):
+        ox = math.cos(yaw + ang) * (tw * 0.28)
+        oy = math.sin(yaw + ang) * (tw * 0.28)
+        _append_box(bm, tx + ox, ty + oy, luc_z, tw * 0.18, 0.45, spire_h * 0.1, yaw + ang, 1)
+        _append_box(bm, tx + ox * 1.1, ty + oy * 1.1, luc_z, tw * 0.1, 0.2, spire_h * 0.06, yaw + ang, 6)
+    tip = tower_h + 0.35 + spire_h
+    _append_box(bm, tx, ty, tip + 0.7, 0.14, 0.14, 1.4, yaw, 5)
+    _append_box(bm, tx, ty, tip + 1.25, 0.7, 0.1, 0.1, yaw, 5)
     if gothic:
-        # Corner pinnacles (Boniface-style)
         for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
             c, s = math.cos(yaw), math.sin(yaw)
             lx, ly = sx * tw * 0.42, sy * tw * 0.42
             px, py = tx + lx * c - ly * s, ty + lx * s + ly * c
-            _append_box(bm, px, py, tower_h + bh + 1.2, 0.55, 0.55, 2.2, yaw, 2)
-            _append_pyramid(bm, px, py, tower_h + bh + 2.3, 0.65, 1.4, yaw, 1)
+            _append_box(bm, px, py, tower_h + 1.2, 0.55, 0.55, 2.2, yaw, 2)
+            _append_pyramid(bm, px, py, tower_h + 2.3, 0.65, 1.4, yaw, 1)
     bm.to_mesh(mesh)
     bm.free()
     _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
@@ -2126,10 +2421,25 @@ def _place_round_turret(
     mesh.materials.append(church_mats["brick"])
     mesh.materials.append(church_mats["slate"])
     mesh.materials.append(church_mats["stone"])
+    mesh.materials.append(church_mats.get("glass") or church_mats["stone"])
     bm = bmesh.new()
-    _append_prism_n(bm, tx, ty, 0.0, height, radius, yaw, 0, sides=10)
-    _append_box(bm, tx, ty, 0.55, radius * 2.15, radius * 2.15, 1.1, yaw, 2)
-    _append_cone(bm, tx, ty, height, radius * 1.08, radius * 1.85, yaw, 1, sides=10)
+    _append_prism_n(bm, tx, ty, 0.0, height, radius, yaw, 0, sides=12)
+    _append_box(bm, tx, ty, 0.55, radius * 2.2, radius * 2.2, 1.1, yaw, 2)
+    _append_box(bm, tx, ty, height * 0.55, radius * 2.15, radius * 2.15, 0.2, yaw, 2)
+    _append_box(bm, tx, ty, height - 0.35, radius * 2.2, radius * 2.2, 0.35, yaw, 2)
+    for i in range(8):
+        ang = yaw + (i / 8) * math.tau
+        ox = math.cos(ang) * (radius * 0.92)
+        oy = math.sin(ang) * (radius * 0.92)
+        _append_box(bm, tx + ox, ty + oy, height - 0.85, 0.28, 0.22, 0.7, ang, 2)
+        _append_box(bm, tx + ox * 1.05, ty + oy * 1.05, height - 0.85, 0.14, 0.12, 0.45, ang, 3)
+    for i in range(3):
+        ang = yaw + (0.15 + i * 0.35) * math.tau
+        ox = math.cos(ang) * (radius * 0.95)
+        oy = math.sin(ang) * (radius * 0.95)
+        z = height * (0.25 + i * 0.2)
+        _append_box(bm, tx + ox, ty + oy, z, 0.22, 0.2, 0.9, ang, 3)
+    _append_cone(bm, tx, ty, height, radius * 1.12, radius * 2.1, yaw, 1, sides=12)
     bm.to_mesh(mesh)
     bm.free()
     _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
@@ -2167,9 +2477,9 @@ def add_church_tower(
     romanesque = "romanesque" in massing
     tower_left = "tower_left" in massing or romanesque or gothic
     if romanesque:
-        tower_h = max(28.0, nave_h * 1.75)
-        spire_h = 13.5
-        tw = min(6.0, max(4.8, elen * 0.26))
+        tower_h = max(32.0, nave_h * 2.05)
+        spire_h = 16.5
+        tw = min(5.8, max(5.0, elen * 0.27))
     elif gothic:
         tower_h = max(32.0, nave_h * 1.9)
         spire_h = tower_h * 0.22
@@ -2181,7 +2491,6 @@ def add_church_tower(
     cy = sum(p[1] for p in ring) / len(ring)
     along = 0.14 if tower_left else 0.5
     if p0 is not None:
-        # Sit the shaft just inside the extruded footprint / west-front mass.
         tx = p0[0] + ux * (elen * along) - nx * (tw * 0.42)
         ty = p0[1] + uy * (elen * along) - ny * (tw * 0.42)
     else:
@@ -2199,16 +2508,15 @@ def add_church_tower(
         gothic=gothic,
     )
 
-    # Heilige Geest: round stair turret on street-right (not a second twin spire).
     if romanesque and p0 is not None:
-        rw = tw * 0.34
-        rtx = p0[0] + ux * (elen * 0.88) - nx * (rw * 0.9)
-        rty = p0[1] + uy * (elen * 0.88) - ny * (rw * 0.9)
+        rw = tw * 0.36
+        rtx = p0[0] + ux * (elen * 0.88) - nx * (rw * 0.85)
+        rty = p0[1] + uy * (elen * 0.88) - ny * (rw * 0.85)
         _place_round_turret(
             f"{name}_turret",
             rtx,
             rty,
-            nave_h * 1.08,
+            nave_h * 1.15,
             rw,
             yaw,
             church_mats,
@@ -2222,109 +2530,8 @@ def add_church_entrance(
     church_mats: dict,
     street_edge: dict | None,
 ) -> None:
-    """Deep arched portal, rose recess, buttress piers — textured stone/brick/glass."""
-    if street_edge is None:
-        return
-    i0, i1 = int(street_edge["i0"]), int(street_edge["i1"])
-    if i0 >= len(ring) or i1 >= len(ring):
-        return
-    p0, p1 = ring[i0], ring[i1]
-    elen = math.hypot(p1[0] - p0[0], p1[1] - p0[1]) or 1.0
-    if elen < 4.0:
-        return
-    ux, uy = (p1[0] - p0[0]) / elen, (p1[1] - p0[1]) / elen
-    nx, ny = street_edge.get("outward") or [0.0, 1.0]
-    nl = math.hypot(nx, ny) or 1.0
-    nx, ny = nx / nl, ny / nl
-    yaw = math.atan2(uy, ux)
-    mx, my = (p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5
-    portal_w = min(6.2, max(3.6, elen * 0.26))
-    portal_h = min(9.0, max(5.6, nave_h * 0.52))
-    mesh = bpy.data.meshes.new(f"{name}_portal")
-    mesh.materials.append(church_mats["brick"])    # 0
-    mesh.materials.append(church_mats["portal"])   # 1 stone portal
-    mesh.materials.append(church_mats["glass"])    # 2
-    mesh.materials.append(church_mats["door"])     # 3
-    mesh.materials.append(church_mats["stone"])    # 4
-    bm = bmesh.new()
-    # Stepped arch recess (outer brick → stone → glass) so the portal has real depth.
-    for dw, dh, depth, mat_i in (
-        (1.0, 1.0, 0.55, 0),
-        (0.78, 0.88, 0.95, 1),
-        (0.52, 0.72, 1.35, 2),
-    ):
-        _append_box(
-            bm,
-            mx + nx * (0.55 + depth),
-            my + ny * (0.55 + depth),
-            portal_h * 0.48 * dh,
-            portal_w * dw,
-            0.55,
-            portal_h * dh,
-            yaw,
-            mat_i,
-        )
-    # Door leaf plane
-    _append_box(
-        bm,
-        mx + nx * 2.05,
-        my + ny * 2.05,
-        portal_h * 0.32,
-        portal_w * 0.42,
-        0.18,
-        portal_h * 0.58,
-        yaw,
-        3,
-    )
-    # Triple lancet / round-arch window bank above the portal
-    rose_z = min(nave_h * 0.68, portal_h + 2.8)
-    for side in (-1.0, 0.0, 1.0):
-        ww = portal_w * (0.22 if side == 0.0 else 0.16)
-        wh = portal_w * (0.55 if side == 0.0 else 0.42)
-        _append_box(
-            bm,
-            mx + ux * side * portal_w * 0.28 + nx * 0.55,
-            my + uy * side * portal_w * 0.28 + ny * 0.55,
-            rose_z,
-            ww,
-            0.45,
-            wh,
-            yaw,
-            2,
-        )
-        # Stone surround
-        _append_box(
-            bm,
-            mx + ux * side * portal_w * 0.28 + nx * 0.4,
-            my + uy * side * portal_w * 0.28 + ny * 0.4,
-            rose_z,
-            ww * 1.25,
-            0.28,
-            wh * 1.15,
-            yaw,
-            4,
-        )
-    # Flanking buttress piers with stone setbacks
-    for side in (-1.0, 1.0):
-        bx = mx + ux * side * (portal_w * 0.68) + nx * 0.55
-        by = my + uy * side * (portal_w * 0.68) + ny * 0.55
-        _append_box(bm, bx, by, nave_h * 0.45, 1.05, 1.45, nave_h * 0.9, yaw, 0)
-        _append_box(
-            bm,
-            bx + nx * 0.2,
-            by + ny * 0.2,
-            nave_h * 0.72,
-            0.85,
-            1.1,
-            nave_h * 0.35,
-            yaw,
-            4,
-        )
-    bm.to_mesh(mesh)
-    bm.free()
-    _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
-    link(bpy.data.objects.new(f"{name}_portal", mesh))
-
+    """Legacy portal helper — west front now owns the deep archivolt portals."""
+    return
 
 def add_hospital_extras(
     name: str,
@@ -2456,7 +2663,8 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     if type_id == "church":
         body_h = min(18.0, max(13.0, eaves * 0.65))
         shape = "hip"
-        roof_h = max(3.2, roof_h if roof_h > 0.5 else 4.0)
+        # Steeper slate nave pitch (Heilige Geest saddle reads ~40–45°).
+        roof_h = max(5.5, body_h * 0.42)
         if church_mats.get("brick") is not None:
             wall = church_mats["brick"]
         if church_mats.get("slate") is not None:
@@ -2521,20 +2729,21 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         if type_id == "church":
             cm = church_mats or {
                 "brick": wall,
+                "brick_dark": wall,
                 "stone": trim,
                 "slate": roof,
                 "portal": trim,
                 "plinth": trim,
+                "louvre": trim,
                 "glass": mats["glass"].get(style_name) or mats["glass"]["eclectic"],
                 "door": trim,
+                "metal": trim,
                 "brick_tile_m": wall_tile_m,
                 "stone_tile_m": 2.4,
                 "slate_tile_m": 1.8,
             }
             add_church_tower(name, ring, body_h, massing, cm, primary)
-            # Portal + west front always — churches are landmarks, not LOD1 boxes.
-            add_church_entrance(name, ring, body_h, cm, primary)
-            # Mesh-only west front (brick / stone / glass) — NEVER a facade photograph.
+            # Mesh-only west front owns portals + lancets — NEVER a facade photograph.
             if primary is not None:
                 i0, i1 = int(primary["i0"]), int(primary["i1"])
                 p0, p1 = ring[i0], ring[i1]
@@ -2546,7 +2755,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
                     [nx, ny],
                     body_h,
                     cm,
-                    thickness=1.15,
+                    thickness=1.4,
                 )
                 skip_primary_facade = True
         else:
