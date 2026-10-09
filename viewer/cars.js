@@ -1,12 +1,46 @@
 /**
- * Antwerp-weighted car fleet: Kenney Car Kit GLBs (CC0) from ./cars/.
+ * Belgian 2025-26 car fleet: procedural real-model GLBs from ./cars/ (built by
+ * blender/build_car_models.py). Each GLB has a plain `car_paint` material that is
+ * recoloured per car, `car_headlight` / `car_taillight` lenses that are swapped for the
+ * shared night-glow lamp materials, and four `wheel-*` nodes spun about their axles.
  * Falls back to [] when GLTFLoader is unavailable (headless Node sims).
  */
 
 const FLEET_URL = new URL("./cars/fleet.json", import.meta.url);
 
+/** Weighted paint mix seen on Belgian streets (sRGB): greyscale dominates, a few colours. */
+export const CAR_PAINTS = [
+  [0xe8e9e6, 20], // white
+  [0x0c0d0f, 19], // black
+  [0x3b3e42, 17], // dark grey
+  [0x9fa3a7, 11], // silver
+  [0x6f7275, 8], // mid grey
+  [0x1c2a47, 8], // dark blue
+  [0x2e5c98, 3], // bright blue
+  [0x8c1518, 4], // red
+  [0x2b3a30, 3], // dark green
+  [0xb1a487, 3], // sand
+  [0x6d2a1c, 2], // copper / brown
+  [0xc9b23c, 1], // yellow (Renault 5 & co.)
+];
+const PAINT_TOTAL = CAR_PAINTS.reduce((s, [, w]) => s + w, 0);
+
+/** Paint colour for a unit random number in [0, 1). */
+export function pickCarPaint(r) {
+  let t = r * PAINT_TOTAL;
+  for (const [hex, w] of CAR_PAINTS) {
+    t -= w;
+    if (t < 0) return hex;
+  }
+  return CAR_PAINTS[0][0];
+}
+
+const PAINT_RE = /^car_paint/;
+const HEAD_RE = /^car_headlight/;
+const TAIL_RE = /^car_taillight/;
+
 /**
- * @typedef {{ id: string, file: string, weight: number, length: number, width: number, height: number, scene: import('three').Object3D, wheels: import('three').Object3D[], halfL: number, halfW: number }} CarTemplate
+ * @typedef {{ id: string, file: string, weight: number, length: number, width: number, height: number, scene: import('three').Object3D, wheels: import('three').Object3D[], wheelRadius: number, hasLamps: boolean, halfL: number, halfW: number }} CarTemplate
  */
 
 /** @returns {Promise<{ models: object[] } | null>} */
@@ -19,6 +53,26 @@ async function loadFleetDoc() {
     console.warn("[cityview] Car fleet manifest missing:", err);
     return null;
   }
+}
+
+function forEachMaterial(root, fn) {
+  root.traverse((o) => {
+    if (!o.isMesh || !o.material) return;
+    if (Array.isArray(o.material)) o.material = o.material.map((m) => fn(m) || m);
+    else o.material = fn(o.material) || o.material;
+  });
+}
+
+/** One clone of `base` per paint colour, shared by every car using it. */
+function paintMaterial(cache, base, hex) {
+  const key = `${base.uuid}|${hex}`;
+  let m = cache.get(key);
+  if (!m) {
+    m = base.clone();
+    m.color.setHex(hex);
+    cache.set(key, m);
+  }
+  return m;
 }
 
 /**
@@ -48,17 +102,14 @@ export async function loadCarTemplates(THREE) {
         const url = new URL(spec.file, base).href;
         const gltf = await loader.loadAsync(url);
         const root = gltf.scene;
-        // Kenney GLBs are Y-up, length on Z, front toward +Z — matches traffic.js travel.
+        // Y-up, length on Z, nose toward +Z — matches traffic.js travel.
         const box = new THREE.Box3().setFromObject(root);
         const size = new THREE.Vector3();
         box.getSize(size);
         if (size.x < 1e-3 || size.y < 1e-3 || size.z < 1e-3) {
           throw new Error("empty bounds");
         }
-        const sx = spec.width / size.x;
-        const sy = spec.height / size.y;
-        const sz = spec.length / size.z;
-        root.scale.set(sx, sy, sz);
+        root.scale.set(spec.width / size.x, spec.height / size.y, spec.length / size.z);
         root.updateMatrixWorld(true);
         box.setFromObject(root);
         const center = new THREE.Vector3();
@@ -69,15 +120,23 @@ export async function loadCarTemplates(THREE) {
         root.updateMatrixWorld(true);
 
         const wheels = [];
+        let hasLamps = false;
         root.traverse((o) => {
           if (o.isMesh) {
             o.castShadow = true;
             o.receiveShadow = true;
             o.frustumCulled = true;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            if (mats.some((m) => m && (HEAD_RE.test(m.name) || TAIL_RE.test(m.name)))) hasLamps = true;
           }
           const n = String(o.name || "").toLowerCase();
-          if (n.includes("wheel")) wheels.push(o);
+          if (n.startsWith("wheel")) wheels.push(o);
         });
+        let wheelRadius = Math.max(0.28, spec.height * 0.22);
+        if (wheels.length) {
+          const wb = new THREE.Box3().setFromObject(wheels[0]);
+          wheelRadius = Math.max(0.2, (wb.max.y - wb.min.y) * 0.5);
+        }
 
         out.push({
           id: spec.id,
@@ -90,6 +149,8 @@ export async function loadCarTemplates(THREE) {
           halfW: spec.width * 0.5,
           scene: root,
           wheels,
+          wheelRadius,
+          hasLamps,
         });
       } catch (err) {
         console.warn(`[cityview] Car model load failed: ${spec.file}`, err);
@@ -114,7 +175,8 @@ export function pickCarTemplate(templates) {
 }
 
 /**
- * Clone a normalised Kenney car and bolt on shared head/tail lamps for night glow.
+ * Clone a fleet car with its own paint colour and the shared head/tail lamp materials
+ * (so setNight lights every car). Templates without lamp lenses get bolt-on lamp boxes.
  * @param {typeof import('three')} THREE
  * @param {ReturnType<typeof makeLampParts>} parts
  * @param {CarTemplate} template
@@ -124,28 +186,71 @@ export function cloneCarMesh(THREE, parts, template) {
   const body = template.scene.clone(true);
   group.add(body);
 
+  const paint = pickCarPaint(Math.random());
+  forEachMaterial(body, (m) => {
+    if (PAINT_RE.test(m.name)) return paintMaterial(parts.paintMats, m, paint);
+    if (HEAD_RE.test(m.name)) return parts.headMat;
+    if (TAIL_RE.test(m.name)) return parts.tailMat;
+    return null;
+  });
+
   const wheels = [];
   body.traverse((o) => {
     const n = String(o.name || "").toLowerCase();
-    if (n.includes("wheel")) wheels.push(o);
+    if (n.startsWith("wheel")) wheels.push(o);
   });
   group.userData.wheels = wheels;
-  group.userData.wheelRadius = Math.max(0.28, template.height * 0.22);
+  group.userData.wheelRadius = template.wheelRadius;
   group.userData.halfL = template.halfL;
   group.userData.halfW = template.halfW;
   group.userData.carId = template.id;
 
-  const zNose = template.halfL - 0.06;
-  const yLamp = Math.max(0.35, template.height * 0.32);
-  const xLamp = template.width * 0.28;
-  for (const sx of [-xLamp, xLamp]) {
-    const head = new THREE.Mesh(parts.lampGeo, parts.headMat);
-    head.position.set(sx, yLamp, zNose);
-    const tail = new THREE.Mesh(parts.lampGeo, parts.tailMat);
-    tail.position.set(sx, yLamp + 0.08, -zNose);
-    group.add(head, tail);
+  if (!template.hasLamps) {
+    const zNose = template.halfL - 0.06;
+    const yLamp = Math.max(0.35, template.height * 0.32);
+    const xLamp = template.width * 0.28;
+    for (const sx of [-xLamp, xLamp]) {
+      const head = new THREE.Mesh(parts.lampGeo, parts.headMat);
+      head.position.set(sx, yLamp, zNose);
+      const tail = new THREE.Mesh(parts.lampGeo, parts.tailMat);
+      tail.position.set(sx, yLamp + 0.08, -zNose);
+      group.add(head, tail);
+    }
   }
   return group;
+}
+
+/** FNV-1a: stable per-name paint for parked cars across reloads. */
+function hashUnit(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
+const parkedPaints = new Map();
+
+/**
+ * Give each parked car baked into the district GLB (nodes `car_<n>_<model>`) its own
+ * paint colour. Run before mergeStaticMeshes so cars sharing a colour still batch.
+ * @returns {number} cars repainted
+ */
+export function paintParkedCars(root) {
+  let n = 0;
+  root.traverse((o) => {
+    if (!/^car_\d+_/.test(o.name || "")) return;
+    const hex = pickCarPaint(hashUnit(o.name));
+    let hit = false;
+    forEachMaterial(o, (m) => {
+      if (!PAINT_RE.test(m.name)) return null;
+      hit = true;
+      return paintMaterial(parkedPaints, m, hex);
+    });
+    if (hit) n++;
+  });
+  return n;
 }
 
 /** Shared lamp geometry/materials used by both GLB clones and box fallbacks. */
@@ -155,6 +260,8 @@ export function makeLampParts(THREE, bodyColors) {
     headMat: new THREE.MeshBasicMaterial({ color: 0xcfd2cc, toneMapped: false }),
     tailMat: new THREE.MeshBasicMaterial({ color: 0x5a1212, toneMapped: false }),
     bodyMats: bodyColors.map((c) => new THREE.MeshLambertMaterial({ color: c })),
+    /** @type {Map<string, import('three').Material>} per-colour clones of GLB car_paint */
+    paintMats: new Map(),
     glassMat: new THREE.MeshLambertMaterial({ color: 0x88a0b8, transparent: true, opacity: 0.75 }),
     tireMat: new THREE.MeshLambertMaterial({ color: 0x1a1a1a }),
     bodyGeo: new THREE.BoxGeometry(1.75, 1.35, 4.2),
@@ -169,9 +276,10 @@ const TAIL_DAY = [0.12, 0.02, 0.02];
 const TAIL_NIGHT = [1.0, 0.1, 0.08];
 
 /**
- * Bolt shared head/tail lamps onto baked kerbside cars (`car_<n>_<model>`) so they
- * glow at night like the runtime fleet. Wraps each mesh in a Group (before
- * mergeStaticMeshes) so the car is not absorbed into a tile batch.
+ * Night lamps for baked kerbside cars (`car_<n>_<model>`). Models with real
+ * headlight / taillight lenses share those materials so they glow at night;
+ * anything else gets bolt-on lamp boxes. Each car is wrapped in a Group before
+ * mergeStaticMeshes so it is not absorbed into a tile batch.
  * @returns {{ count: number, setNight: (t: number) => void }}
  */
 export function wireParkedCarLamps(root, THREE) {
@@ -199,6 +307,21 @@ export function wireParkedCarLamps(root, THREE) {
     g.add(mesh);
     mesh.updateMatrix();
     g.updateMatrixWorld(true);
+
+    let hasLamps = false;
+    forEachMaterial(mesh, (m) => {
+      if (HEAD_RE.test(m.name)) {
+        hasLamps = true;
+        return parts.headMat;
+      }
+      if (TAIL_RE.test(m.name)) {
+        hasLamps = true;
+        return parts.tailMat;
+      }
+      return null;
+    });
+    if (hasLamps) continue;
+
     _box.setFromObject(mesh);
     _inv.copy(g.matrixWorld).invert();
     _box.applyMatrix4(_inv);
