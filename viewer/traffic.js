@@ -58,13 +58,14 @@ const NEXT_LOOKAHEAD = 34; // m before a junction: pick the next road early and 
 const FUTURE_T = [0, 0.5, 1.0, 1.5]; // s: horizons for predicted footprint overlap
 const CROSS_REACH = 34; // m: ignore other vehicles beyond this
 const SIGNAL_CLUSTER_M = 32; // signal heads this close belong to one intersection controller
-const RED_QUEUE_PATIENCE_SEC = 22; // queue longer than a light cycle half = gridlock
+const RED_QUEUE_PATIENCE_SEC = 12; // queue longer than 12s = gridlock
 const RED_PATIENCE_SEC = 40; // a light that never turns green is ignored after this
 const FOLLOW_DIST = 9;
 const PLAYER_STOP_DIST = 4;
 const SNAP_M = 11;
 const LANE_OFFSET = 1.15;
-const STUCK_SEC = 6;
+const STUCK_SEC = 5; // respawn after 5s of unexplained stop - never leave a car dead
+const QUEUE_STUCK_SEC = 10; // even queueing cars should move eventually
 const MAX_STEP = 0.05; // s: largest integration step (kinematics tuned and soaked at <= 20 Hz)
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame
 const CYCLE_SEC = 30;
@@ -665,7 +666,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       for (const v of src) {
         if (!v || !v.pos || !v.tan || v.phase === "gone") continue;
         const tram = v.mode === "tram";
-        obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: v.velocity || 0, hl: tram ? 5.4 : 4.6, hw: tram ? 1.2 : 1.25 });
+        obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: v.velocity || 0, hl: tram ? 16.0 : 6.8, hw: tram ? 1.2 : 1.25 });
       }
     }
     return obstacleCache;

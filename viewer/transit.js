@@ -23,7 +23,7 @@ const DECEL_DIST = 22;
 const ARRIVE_DIST = 2.2;
 const BOARD_DIST = 9;
 const STOP_PROJECT_M = 28;
-const BODY_LEN = { tram: 10.5, bus: 9 };
+const BODY_LEN = { tram: 31.0, bus: 13.5 };
 const STANDSTILL_GAP = 2.5; // bumper gap kept behind a leader
 const COMFORT_BRAKE = 1.6; // m/s^2 used to plan halt / leader stops
 const HALT_CREEP = 0.9; // m/s floor while rolling into a halt (never asymptote to 0)
@@ -230,8 +230,8 @@ function lineLabel(lines, mode) {
 // glow, pantograph and mirrors are real geometry on top.
 // ---------------------------------------------------------------------------
 const LIVERY_VERSION = "1"; // bump when viewer/livery/*.jpg change (Pages caches aggressively)
-const TRAM_DIM = { w: 2.3, h: 2.8, l: 10.5, lift: 0.3 }; // lift keeps the floor at y = 0.2
-const BUS_DIM = { w: 2.4, h: 2.7, l: 9.0, lift: 0.05 };
+const TRAM_DIM = { w: 2.1, h: 2.85, l: 31.0, lift: 0.3 }; // longer & narrower like a real tram
+const BUS_DIM = { w: 2.4, h: 2.7, l: 13.5, lift: 0.05 };
 // Destination LED boxes as fractions of the end-face texture: [u0, v0, u1, v1] (v from top).
 const LED_BOX = {
   tramFront: [0.187, 0.133, 0.813, 0.22],
@@ -369,16 +369,28 @@ function addLamps(THREE, parts, group, dim, front, vFrac, uL, uR) {
 function makeTramMesh(THREE, parts) {
   const group = new THREE.Group();
   const d = TRAM_DIM;
-  const body = new THREE.Mesh(parts.tramBody, parts.tramMats);
-  body.position.y = d.lift;
-  group.add(body);
+  // Articulated tram: 3 segments (motor-trailer-motor)
+  const segLen = d.l / 3; // ~10.3 m each
+  for (let i = -1; i <= 1; i++) {
+    const seg = new THREE.Mesh(parts.tramBody, parts.tramMats);
+    seg.position.set(0, d.lift, i * segLen * 0.93);
+    group.add(seg);
+  }
+  // Articulation joints (accordion bellows between segments)
+  const jointMat = new THREE.MeshLambertMaterial({ color: 0x2a2e33 });
+  for (const x of [-0.5, 0.5]) {
+    const joint = new THREE.Mesh(new THREE.BoxGeometry(d.w * 0.85, d.h * 0.88, 0.35), jointMat);
+    joint.position.set(0, d.lift + d.h * 0.5, x * segLen * 0.93);
+    group.add(joint);
+  }
   const roofY = d.lift + d.h / 2;
-  for (const z of [-2.9, 2.9]) {
+  // Roof pods (AC units) across segments
+  for (const z of [-4.5, 0, 4.5]) {
     const pod = new THREE.Mesh(parts.tramPod, parts.podMat);
     pod.position.set(0, roofY + 0.12, z);
     group.add(pod);
   }
-  // Single-arm pantograph: base, lower arm, upper arm, collector bar.
+  // Single-arm pantograph on center segment
   const base = new THREE.Mesh(parts.pantoBase, parts.metalMat);
   base.position.set(0, roofY + 0.06, 0.4);
   const lower = new THREE.Mesh(parts.pantoArm, parts.metalMat);
@@ -391,11 +403,13 @@ function makeTramMesh(THREE, parts) {
   bar.position.set(0, roofY + 1.4, 0.4);
   group.add(base, lower, upper, bar);
 
+  // LED destination displays at both ends
   const displays = [
     addDisplay(THREE, parts, group, d, "front", LED_BOX.tramFront, true),
     addDisplay(THREE, parts, group, d, "front", LED_BOX.tramFront, false),
   ];
   group.userData.displays = displays;
+  // Headlights (2 per end) + tail lights
   addLamps(THREE, parts, group, d, true, 0.76, 0.13, 0.87);
   addLamps(THREE, parts, group, d, false, 0.76, 0.13, 0.87);
   return group;
@@ -471,7 +485,7 @@ function makeSharedParts(THREE, liveryBase) {
     wrap("bus_rear"),
   ];
   const geos = {
-    tramBody: new THREE.BoxGeometry(TRAM_DIM.w, TRAM_DIM.h, TRAM_DIM.l),
+    tramBody: new THREE.BoxGeometry(TRAM_DIM.w, TRAM_DIM.h, TRAM_DIM.l / 3 - 0.3),
     busBody: new THREE.BoxGeometry(BUS_DIM.w, BUS_DIM.h, BUS_DIM.l),
     tramPod: new THREE.BoxGeometry(1.5, 0.26, 2.4),
     busPod: new THREE.BoxGeometry(1.5, 0.3, 2.8),

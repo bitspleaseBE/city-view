@@ -308,7 +308,7 @@
         window.__glbPromise.catch(() => {}); // surfaced by the viewer module
       })();
     </script>
-    <div id="hint">Walk: click + WASD · Shift sprint · E tram · V free · N day/night</div>
+    <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E tram · V free · N day/night</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Walk</button>
       <button type="button" id="btn-free">Free view</button>
@@ -342,6 +342,8 @@
       import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
       import { createTraffic } from "./traffic.js";
       import { createTransit } from "./transit.js";
+      import { createPedestrians } from "./pedestrians.js";
+      import { createMinimap } from "./minimap.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -417,7 +419,7 @@
       renderer.setClearColor(SKY, 1);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.18;
+      renderer.toneMappingExposure = 1.28; // brighter, more dynamic range
       document.body.appendChild(renderer.domElement);
 
       // Cheap IBL so glass/metal catch sky instead of looking like flat stickers.
@@ -642,12 +644,16 @@
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;
       const walkSpeed = 7.5;
-      const keys = { w: false, a: false, s: false, d: false, shift: false };
+      const keys = { w: false, a: false, s: false, d: false, shift: false, space: false };
+      // Jump physics
+      const JUMP = { v: 0, g: -12, strength: 5.0, active: false, cooldown: 0 };
       let prevTime = performance.now();
       let cityRoot = null;
       let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
       let traffic = { update() {}, dispose() {} };
       let transit = { update() {}, dispose() {} };
+      let pedestrians = null;
+      let minimap = null;
       // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
       let playBounds = null;
       const _clampTmp = new THREE.Vector3();
@@ -793,7 +799,7 @@
           }
           walkControls.getObject().position.y = eyeHeight;
           softClampXZ(walkControls.getObject().position, playBounds);
-          hint.textContent = "Walk: click + WASD · E tram · Esc · V free · N night";
+          hint.textContent = "Walk: click + WASD · Shift sprint · Space jump · E tram · Esc · V free · N night · M map";
           status.textContent = "Walking — Gounod tram halt";
         } else {
           if (walkControls.isLocked) walkControls.unlock();
@@ -811,7 +817,7 @@
           freeCam.z = walkSaved.z;
           softClampXZ(freeCam, playBounds);
           applyFreeCamera();
-          hint.textContent = "Free view (top-down): WASD pan · Shift fast · scroll zoom · V walk · N night";
+          hint.textContent = "Free view (top-down): WASD pan · Shift fast · scroll zoom · click map teleport · V walk · N night";
           status.textContent = "Free view";
         }
       }
@@ -883,10 +889,10 @@
         if (!walkControls.isLocked) walkControls.lock();
       });
       walkControls.addEventListener("lock", () => {
-        hint.textContent = "WASD · mouse look · Esc · V free view · N night";
+        hint.textContent = "WASD · mouse look · Space jump · Esc · V free view · N night · M map";
       });
       walkControls.addEventListener("unlock", () => {
-        if (mode === "walk") hint.textContent = "Walk: click + WASD · V free view · N night";
+        if (mode === "walk") hint.textContent = "Walk: click + WASD · Space jump · V free view · N night · M map";
       });
 
       window.addEventListener("keydown", (e) => {
@@ -899,6 +905,13 @@
           toggleTimeOfDay();
           return;
         }
+        if (e.code === "KeyM") {
+          if (minimap) {
+            minimap._visible = !(minimap._visible ?? true);
+            minimap.setVisible(minimap._visible);
+          }
+          return;
+        }
         if (e.code === "KeyV") {
           if (transit.isRiding && transit.isRiding()) return;
           setMode(mode === "walk" ? "free" : "walk");
@@ -909,6 +922,7 @@
         if (e.code === "KeyS") keys.s = true;
         if (e.code === "KeyD") keys.d = true;
         if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = true;
+        if (e.code === "Space") { e.preventDefault(); keys.space = true; }
       });
       window.addEventListener("keyup", (e) => {
         if (e.code === "KeyW") keys.w = false;
@@ -916,6 +930,7 @@
         if (e.code === "KeyS") keys.s = false;
         if (e.code === "KeyD") keys.d = false;
         if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = false;
+        if (e.code === "Space") { keys.space = false; }
       });
 
       function applySpawnFromNode(node) {
@@ -1107,6 +1122,20 @@
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
+          // ---- Pedestrians (humanoids walking on sidewalks) ----
+          pedestrians = await createPedestrians(scene, THREE, {
+            count: 40,
+            spawnCenter: { x: spawnPos.x, z: spawnPos.z },
+            playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
+          });
+          // ---- Mini map ----
+          // Mini map loads its own roads data, but we pass what we have
+          minimap = createMinimap(THREE, {
+            playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
+            spawnCenter: { x: spawnPos.x, z: spawnPos.z },
+            width: 200,
+            height: 200,
+          });
           // Cars give way to trams/buses instead of driving through them.
           if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
           const nCars = traffic.count ?? 0;
@@ -1209,13 +1238,31 @@
 
         const riding = transit.isRiding && transit.isRiding();
 
+        // ---- Jump physics (spacebar) ----
+        if (keys.space && JUMP.cooldown <= 0 && !JUMP.active && mode === "walk" && !riding) {
+          JUMP.v = JUMP.strength;
+          JUMP.active = true;
+          JUMP.cooldown = 0.3; // prevent re-trigger
+        }
+        JUMP.cooldown -= dt;
+        if (JUMP.active) {
+          JUMP.v += JUMP.g * dt;
+          const walker = walkControls.getObject();
+          walker.position.y += JUMP.v * dt;
+          if (walker.position.y <= eyeHeight) {
+            walker.position.y = eyeHeight;
+            JUMP.v = 0;
+            JUMP.active = false;
+          }
+        }
+
         if (!riding && mode === "walk" && walkControls.isLocked) {
           const step = walkSpeed * (keys.shift ? 1.85 : 1.0) * dt;
           if (keys.w) walkControls.moveForward(step);
           if (keys.s) walkControls.moveForward(-step);
           if (keys.a) walkControls.moveRight(-step);
           if (keys.d) walkControls.moveRight(step);
-          walkControls.getObject().position.y = eyeHeight;
+          if (!JUMP.active) walkControls.getObject().position.y = eyeHeight;
           softClampXZ(walkControls.getObject().position, playBounds);
         }
         if (!riding && mode === "free") {
@@ -1236,6 +1283,25 @@
         if (stars.visible) stars.position.copy(camera.position);
         traffic.update(simDt, walker);
         transit.update(simDt, walker);
+        if (pedestrians) pedestrians.update(simDt);
+
+        // ---- Mini map (free mode teleport via click) ----
+        if (minimap) {
+          if (minimap._visible === undefined) minimap._visible = true;
+          if (mode === "free") {
+            // Check for teleport click
+            const tp = minimap.consumeTeleport();
+            if (tp) {
+              freeCam.x = tp.x;
+              freeCam.z = tp.z;
+              walkSaved.x = tp.x;
+              walkSaved.z = tp.z;
+              softClampXZ(freeCam, playBounds);
+            }
+          }
+          const ppos = mode === "walk" ? walkControls.getObject().position : avatar.position;
+          minimap.draw(ppos, traffic, transit, pedestrians, mode);
+        }
 
         // Auto-alight when the requested stop dwell begins.
         const pending = transit.consumePendingDrop && transit.consumePendingDrop();
