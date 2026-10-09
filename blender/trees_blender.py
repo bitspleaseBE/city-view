@@ -141,7 +141,7 @@ def add_vegetation(
         tone = float(tree.get("tone") or 0.5)
         yaw = tone * math.tau
         shape = tree.get("shape") or "broadleaf"
-        trunk_r = max(0.09, min(0.38, 0.07 + 0.017 * h))
+        trunk_r = max(0.09, min(0.36, 0.07 + 0.016 * h, 0.06 + 0.07 * r))
         if shape == "conifer":
             wood.cone(trunk_mat, (x, y, 0.0), trunk_r, trunk_r * 0.7, h * 0.25, 6)
             leaves.cone(conifer_mat, (x, y, h * 0.16), r, 0.05, h * 0.84, 7)
@@ -157,7 +157,7 @@ def add_vegetation(
         else:
             leaf = _canopy_mat(tree, canopy_mats)
             # Round-ish crown: height follows the radius, trunk runs up into it.
-            vert = max(1.1, min(r * 1.3, h * 0.42))
+            vert = max(1.1, min(r * 1.45, h * 0.44))
             cz = h - vert
             wood.cone(trunk_mat, (x, y, 0.0), trunk_r, trunk_r * 0.6, max(1.6, cz * 0.95), 6)
             leaves.blob(leaf, (x, y, cz), (r, r, vert), yaw, subdiv=2)

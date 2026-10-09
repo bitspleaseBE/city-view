@@ -100,6 +100,23 @@ class RealTreeTests(unittest.TestCase):
         payload["antwerp"][0]["girth_cm"] = 250.0  # big old tree, wide crown
         tree = plan_trees(layout, payload, ORIGIN)["trees"][0]
         self.assertLessEqual(tree["radius"], 2.6 - 1.4 + 1e-6)
+        # Pruned as a whole: no tall bare pole under a shrunken crown.
+        self.assertLessEqual(tree["height"], 2.4 + 3.4 * tree["radius"] + 1e-6)
+
+    def test_heights_stay_in_street_scale(self):
+        huge = tree_traits({"species": "Platanus hispanica", "girth_cm": 420.0}, 0, 0)
+        self.assertLessEqual(huge["height"], 22.0)
+        self.assertGreater(huge["height"], 17.0)
+        cherry = tree_traits({"species": "Prunus serrulata", "girth_cm": 300.0}, 0, 0)
+        self.assertLessEqual(cherry["height"], 8.5 * 1.07 + 1e-6)
+        for girth in (20.0, 80.0, 160.0, 260.0):
+            t = tree_traits({"species": "Tilia cordata", "girth_cm": girth}, 3.0, 4.0)
+            # Crown spread stays plausible for the height (≥ ~45 % of it).
+            self.assertGreaterEqual(2 * t["radius"], 0.45 * t["height"] - 0.3)
+
+    def test_small_surveyed_crown_caps_height(self):
+        t = tree_traits({"species": "Tilia cordata", "girth_cm": 220.0, "crown": "2"}, 0, 0)
+        self.assertLessEqual(t["height"], 2.4 + 3.4 * t["radius"] + 1e-6)
 
     def test_trees_off_carriageway(self):
         layout = _layout(roads=[{"id": 1, "kind": "residential", "width": 8.0, "points": [[-50.0, 0.0], [50.0, 0.0]]}])
