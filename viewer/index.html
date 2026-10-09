@@ -135,6 +135,27 @@
           opacity: 1;
         }
       }
+      #hud {
+        position: fixed;
+        left: 20px;
+        bottom: 20px;
+        max-width: 28rem;
+        padding: 14px 16px;
+        background: var(--panel);
+        border: 1px solid rgba(20, 40, 60, 0.12);
+        pointer-events: none;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 1.05rem;
+        font-weight: 600;
+      }
+      p {
+        margin: 0;
+        font-size: 0.88rem;
+        line-height: 1.4;
+        color: var(--muted);
+      }
       #status {
         position: fixed;
         top: 18px;
@@ -287,7 +308,7 @@
         window.__glbPromise.catch(() => {}); // surfaced by the viewer module
       })();
     </script>
-    <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · V free · N day/night</div>
+    <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E Velo / scooter / tram · V free · N day/night</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Walk</button>
       <button type="button" id="btn-free">Free view</button>
@@ -299,6 +320,12 @@
       <p class="next" id="ride-next">Next: —</p>
     </div>
     <div id="prompt"></div>
+    <div id="hud">
+        <h1>Velo Harmonie · Klein Antwerpen · 2018</h1>
+        <p>
+          Spawn at Velo Harmonie (042). Press E for a Velo, shared scooter, or stopped tram.
+        </p>
+    </div>
     <script type="importmap">
       {
         "imports": {
@@ -318,6 +345,8 @@
       import { createPedestrians } from "./pedestrians.js";
       import { createMicromobility } from "./micromobility.js";
       import { createVelo } from "./velo.js";
+      import { createScooters } from "./scooters.js";
+      import { createPlayerMotion } from "./player-motion.js";
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
       import { createOutdoorsGuard } from "./outdoors.js";
@@ -506,9 +535,11 @@
         get tod() { return tod; },
         get walk() { return walkControls; },
         get transit() { return transit; },
+        scene,
         get micromobility() { return micromobility; },
         get velo() { return velo; },
-        get motion() { return motion; },
+        get scooters() { return scooters; },
+        get motion() { return playerMotion; },
         get pixelRatio() { return pixelRatio; },
       };
 
@@ -550,6 +581,7 @@
         lampGlow = glow;
         for (const l of lampLights) l.intensity = LAMP_INTENSITY * glow * l.userData.on;
         traffic.setNight && traffic.setNight(glow);
+        scooters && scooters.setNight(glow);
         transit.setNight && transit.setNight(glow);
 
         starMat.opacity = smooth(0.55, 1.0, t) * 0.9;
@@ -623,25 +655,6 @@
 
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;
-      // m/s. Walking is a brisk game walk, Shift jogs; every ride beats a jog so it is worth taking.
-      const MOVE = {
-        walk: { speed: 4.2, boost: 1.65, accel: 14, brake: 18, eye: eyeHeight },
-        velo: { speed: 7.6, boost: 1.3, accel: 3.2, brake: 7, eye: 1.45, turn: 1.5 },
-        scooter: { speed: 6.9, boost: 1.0, accel: 3.8, brake: 7.5, eye: 1.62, turn: 1.8 },
-      };
-      const motion = { fwd: 0, side: 0 };
-      const _yawEuler = new THREE.Euler(0, 0, 0, "YXZ");
-      const _camDir = new THREE.Vector3();
-      function walkerYaw() {
-        camera.getWorldDirection(_camDir);
-        return Math.atan2(-_camDir.x, -_camDir.z);
-      }
-      function approach(v, target, up, down, dt) {
-        const speedingUp = Math.abs(target) > Math.abs(v) && target * v >= 0;
-        const d = target - v;
-        const s = (speedingUp ? up : down) * dt;
-        return Math.abs(d) <= s ? target : v + Math.sign(d) * s;
-      }
       const keys = { w: false, a: false, s: false, d: false, shift: false, space: false };
       // Jump physics
       const JUMP = { v: 0, g: -12, strength: 5.0, active: false, cooldown: 0 };
@@ -653,26 +666,36 @@
       let pedestrians = null;
       let micromobility = null;
       let velo = null;
-      let minimap = null;
-      let streetLocator = null;
+      let scooters = null;
       let outdoors = null;
-      const _moveBefore = { x: 0, z: 0 };
-      const _microObstacles = [{ x: 0, z: 0, r: 0.45 }];
-      /** Riders are solid: never stand inside a bike or scooter (they also brake for you). */
-      function pushOutOfRiders(pos) {
-        const R = 0.85;
-        for (const v of micromobility.vehicles) {
-          const dx = pos.x - v.pos.x;
-          const dz = pos.z - v.pos.z;
+      const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
+      /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
+      function groundAt(x, z) {
+        if (!cityRoot) return 0;
+        _groundRay.ray.origin.set(x, 1.2, z);
+        const hit = _groundRay.intersectObject(cityRoot, true)[0];
+        return hit && hit.point.y < 0.6 ? hit.point.y : 0;
+      }
+      const _riderObstacles = [{ x: 0, z: 0, r: 0.45 }];
+      const _beforeStep = { x: 0, z: 0 };
+      /** Riders and parked scooters are solid: slide the walker out instead of through them. */
+      function pushOutOfSolids(pos) {
+        const push = (cx, cz, R) => {
+          const dx = pos.x - cx;
+          const dz = pos.z - cz;
           const d2 = dx * dx + dz * dz;
-          if (d2 >= R * R || d2 < 1e-6) continue;
+          if (d2 >= R * R || d2 < 1e-6) return;
           const d = Math.sqrt(d2);
-          pos.x = v.pos.x + (dx / d) * R;
-          pos.z = v.pos.z + (dz / d) * R;
-          motion.fwd *= 0.6;
-        }
+          pos.x = cx + (dx / d) * R;
+          pos.z = cz + (dz / d) * R;
+          playerMotion.bump(0.6);
+        };
+        if (micromobility) for (const v of micromobility.vehicles) push(v.pos.x, v.pos.z, 0.85);
+        if (scooters && !scooters.isRiding()) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
         if (outdoors) outdoors.ensureOutdoors(pos);
       }
+      let minimap = null;
+      let streetLocator = null;
       // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
       let playBounds = null;
       const _clampTmp = new THREE.Vector3();
@@ -753,6 +776,7 @@
 
       const walkControls = new PointerLockControls(camera, document.body);
       scene.add(walkControls.getObject());
+      const playerMotion = createPlayerMotion(THREE, camera, walkControls);
       // Simple humanoid capsule so Free view can frame the walker.
       const avatar = new THREE.Group();
       const bodyMat = new THREE.MeshLambertMaterial({ color: 0x3a4658 });
@@ -817,6 +841,8 @@
 
       function setMode(next) {
         if (transit.isRiding && transit.isRiding()) return;
+        if (velo && velo.isRiding && velo.isRiding()) return;
+        if (scooters && scooters.isRiding()) return;
         const prevMode = mode;
         mode = next;
         btnWalk.classList.toggle("active", mode === "walk");
@@ -872,17 +898,36 @@
         }
       }
 
+      function handleScooterE(p) {
+        if (!scooters || (transit.isRiding && transit.isRiding())) return false;
+        if (!scooters.isRiding() && !scooters.getPrompt({ x: p.x, z: p.z })) return false;
+        const result = scooters.tryInteract({ x: p.x, z: p.z, yaw: playerMotion.yaw() });
+        if (result.action === "take") {
+          rideEl.style.display = "block";
+          rideLine.textContent = `${result.brand} e-scooter`;
+          rideNext.textContent = `${result.battery}% battery`;
+          promptEl.style.display = "none";
+          status.textContent = `Unlocked a ${result.brand} scooter`;
+        } else if (result.action === "park") {
+          rideEl.style.display = "none";
+          status.textContent = `Parked · ride €${result.cost.toFixed(2)}`;
+        } else if (result.action === "empty") {
+          status.textContent = "That scooter's battery is empty";
+        }
+        return result.action !== "none";
+      }
+
       function handleInteractE() {
         if (mode !== "walk") return;
         const p = walkControls.getObject().position;
         const onTram = transit.isRiding && transit.isRiding();
         const onVelo = velo && velo.isRiding && velo.isRiding();
-        // Prefer Velo when riding a bike or standing at a station; otherwise tram/bus.
+        // Prefer Velo when riding a bike or standing at a station; otherwise rentable scooter / tram.
         if (velo && (onVelo || (!onTram && velo.getPrompt && velo.getPrompt({ x: p.x, z: p.z })))) {
           const result = velo.tryInteract({
             x: p.x,
             z: p.z,
-            yaw: walkerYaw(),
+            yaw: playerMotion.yaw(),
           });
           if (result.action === "take") {
             avatar.visible = false;
@@ -920,6 +965,7 @@
           if (onVelo) return;
         }
         if (onVelo) return;
+        if (handleScooterE(p)) return;
         const result = transit.tryInteract({ x: p.x, z: p.z });
         if (result.action === "board") {
           if (walkControls.isLocked) walkControls.unlock();
@@ -958,6 +1004,21 @@
           return;
         }
         const hud = transit.getRideHud ? transit.getRideHud() : { riding: false };
+        const sHud = scooters ? scooters.getRideHud() : { riding: false };
+        if (sHud.toast) status.textContent = sHud.toast;
+        if (sHud.riding) {
+          rideEl.style.display = "block";
+          rideLine.textContent = `${sHud.brand} e-scooter · ${Math.round(Math.abs(playerMotion.speed) * 3.6)} km/h`;
+          rideNext.textContent = `${sHud.battery}% · ${sHud.time} · €${sHud.cost.toFixed(2)} · E to park`;
+          promptEl.style.display = "none";
+          return;
+        }
+        const scooterPrompt = !hud.riding && mode === "walk" && scooters ? scooters.getPrompt({ x: p.x, z: p.z }) : null;
+        if (scooterPrompt) {
+          promptEl.style.display = "block";
+          promptEl.textContent = scooterPrompt;
+          return;
+        }
         if (hud.riding) {
           rideEl.style.display = "block";
           rideLine.textContent = `${hud.mode === "bus" ? "Bus" : "Tram"} ${hud.line}`;
@@ -1021,6 +1082,7 @@
         if (e.code === "KeyV") {
           if (transit.isRiding && transit.isRiding()) return;
           if (velo && velo.isRiding && velo.isRiding()) return;
+          if (scooters && scooters.isRiding()) return;
           setMode(mode === "walk" ? "free" : "walk");
           return;
         }
@@ -1085,8 +1147,6 @@
         root.traverse((obj) => {
           if (!obj.isMesh || obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return;
           if (obj.children.length) return; // would orphan child nodes
-          // Keep traffic-signal meshes out of merge batches so runtime traffic can hide them.
-          if (/^signal_/i.test(obj.name || "")) return;
           const g = obj.geometry;
           const pos = g && g.attributes.position;
           if (!pos || !(pos.array instanceof Float32Array) || pos.isInterleavedBufferAttribute) return;
@@ -1241,6 +1301,10 @@
           });
           micromobility = await createMicromobility(scene, THREE, { count: 28 });
           velo = await createVelo(scene, THREE);
+          scooters = await createScooters(scene, THREE, {
+            spawnCenter: { x: spawnPos.x, z: spawnPos.z },
+            groundAt,
+          });
           // ---- Mini map + street name locator ----
           minimap = createMinimap(THREE, {
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
@@ -1368,7 +1432,15 @@
         const riding = ridingTram;
 
         // ---- Jump physics (spacebar) ----
-        if (keys.space && JUMP.cooldown <= 0 && !JUMP.active && mode === "walk" && !riding && !ridingVelo) {
+        if (
+          keys.space &&
+          JUMP.cooldown <= 0 &&
+          !JUMP.active &&
+          mode === "walk" &&
+          !riding &&
+          !ridingVelo &&
+          !(scooters && scooters.isRiding())
+        ) {
           JUMP.v = JUMP.strength;
           JUMP.active = true;
           JUMP.cooldown = 0.3; // prevent re-trigger
@@ -1385,43 +1457,38 @@
           }
         }
 
+        const onScooter = scooters && scooters.isRiding();
         if (!riding && mode === "walk" && walkControls.isLocked) {
-          const cfg = ridingVelo ? MOVE.velo : MOVE.walk;
-          const onWheels = cfg !== MOVE.walk;
-          const top = cfg.speed * (keys.shift ? cfg.boost : 1);
-          const fwdIn = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
-          const sideIn = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-          // On wheels A/D steer (you can't strafe a bike) and reversing is a slow walk-back.
-          const fwdTarget = fwdIn > 0 ? top : fwdIn < 0 ? -(onWheels ? 1.2 : top * 0.8) : 0;
-          motion.fwd = approach(motion.fwd, fwdTarget, cfg.accel, cfg.brake, dt);
-          motion.side = onWheels ? 0 : approach(motion.side, sideIn * top * 0.85, cfg.accel, cfg.brake, dt);
-          if (onWheels && sideIn) {
-            const grip = Math.min(1, 0.35 + Math.abs(motion.fwd) / cfg.speed);
-            _yawEuler.setFromQuaternion(camera.quaternion);
-            _yawEuler.y -= sideIn * cfg.turn * grip * dt;
-            camera.quaternion.setFromEuler(_yawEuler);
-          }
-          const moving = Math.abs(motion.fwd) > 0.05 || Math.abs(motion.side) > 0.05;
-          const walkerObj = walkControls.getObject();
-          _moveBefore.x = walkerObj.position.x;
-          _moveBefore.z = walkerObj.position.z;
-          if (motion.fwd) walkControls.moveForward(motion.fwd * dt);
-          if (motion.side) walkControls.moveRight(motion.side * dt);
-          if (!JUMP.active) walkerObj.position.y = cfg.eye;
-          softClampXZ(walkerObj.position, playBounds);
-          if (outdoors && outdoors.rejectIfIndoors(walkerObj.position, _moveBefore)) motion.fwd *= 0.5;
+          const kind = ridingVelo ? "velo" : onScooter ? "scooter" : "walk";
+          const w = walkControls.getObject();
+          _beforeStep.x = w.position.x;
+          _beforeStep.z = w.position.z;
+          playerMotion.step(dt, keys, kind);
+          if (!JUMP.active) w.position.y = playerMotion.eye(kind);
+          clampWalkerXZ(w.position);
+          if (outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep)) playerMotion.bump(0.5);
+          if (!onScooter && !ridingVelo) pushOutOfSolids(w.position);
           if (ridingVelo && velo.update) {
             velo.update(dt, {
-              x: walkerObj.position.x,
-              z: walkerObj.position.z,
-              yaw: walkerYaw(),
-              moving,
-              speed: motion.fwd,
+              x: w.position.x,
+              z: w.position.z,
+              yaw: playerMotion.yaw(),
+              moving: Math.abs(playerMotion.speed) > 0.05,
+              speed: playerMotion.speed,
             });
           }
         } else {
-          motion.fwd = 0;
-          motion.side = 0;
+          playerMotion.stop();
+        }
+        if (scooters) {
+          const w = walkControls.getObject().position;
+          scooters.update(dt, {
+            x: w.x,
+            z: w.z,
+            yaw: playerMotion.yaw(),
+            speed: playerMotion.speed,
+            turn: (keys.d ? 1 : 0) - (keys.a ? 1 : 0),
+          });
         }
         if (!riding && mode === "free") {
           const panStep = freeCam.height * 0.9 * (keys.shift ? 2.2 : 1.0) * dt;
@@ -1443,10 +1510,9 @@
         transit.update(simDt, walker);
         if (pedestrians) pedestrians.update(simDt);
         if (micromobility) {
-          _microObstacles[0].x = walker.position.x;
-          _microObstacles[0].z = walker.position.z;
-          micromobility.update(simDt, _microObstacles);
-          if (mode === "walk" && !riding) pushOutOfRiders(walkControls.getObject().position);
+          _riderObstacles[0].x = walker.position.x;
+          _riderObstacles[0].z = walker.position.z;
+          micromobility.update(simDt, _riderObstacles);
         }
 
         // ---- Mini map (free mode teleport via click) ----
@@ -1461,7 +1527,6 @@
               walkSaved.x = tp.x;
               walkSaved.z = tp.z;
               softClampXZ(freeCam, playBounds);
-              // Roof teleports stay put in free view; setMode("walk") snaps outdoors.
             }
           }
           const ppos =
