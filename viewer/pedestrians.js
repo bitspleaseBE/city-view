@@ -1,7 +1,10 @@
 /**
- * Pedestrian simulation: Mixamo humanoids walking sidewalk routes.
- * Loads GLB characters (Remy/Amy/James/Michelle/Aj + Walking) from ./characters/.
- * Falls back to simple capsule humanoids if assets fail to load.
+ * Pedestrian simulation: Mixamo humanoids on real sidewalk / footway routes.
+ *
+ * Routes come from ``roads.json`` → ``walks`` (exported sidewalk ribbons + OSM
+ * footways). People follow a path to its end, then continue onto a connected
+ * walk when one exists; they only reverse on a dead end. Lateral offset is
+ * perpendicular to the path so they stay on the pavement, not in the road.
  */
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
@@ -13,15 +16,20 @@ const CHARACTER_FILES = [
   "Michelle_Walking.glb",
   "Aj_Walking.glb",
 ];
+const ROADS_URL = "./roads.json";
+const JOIN_M = 4.0; // endpoints this close are the same junction
+const LATERAL_M = 0.35; // stay inside a 2 m sidewalk
 
 export async function createPedestrians(scene, THREE, opts = {}) {
   const COUNT = opts.count || 40;
   const SPAWN_CENTER = opts.spawnCenter || { x: -218.5, z: -432.1 };
-  const WALK_SPEED = 1.2; // m/s
+  const WALK_SPEED = 1.25; // m/s
   const BOBBLE_AMP = 0.02;
   const BOBBLE_FREQ = 9.0;
 
-  const walkRoutes = buildWalkRoutes(SPAWN_CENTER);
+  const walks = opts.walks || (await loadWalks());
+  const walkRoutes = buildWalkRoutes(walks, SPAWN_CENTER);
+  const graph = buildGraph(walkRoutes);
   const templates = await loadCharacterTemplates(THREE);
   const useMixamo = templates.length > 0;
 
@@ -47,9 +55,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     {
       label: "single",
       spread: 0,
-      members: [
-        { bodyColor: 0x6a5a4a, legColor: 0x3a4048, topColor: 0x9a7a5a, scale: 1.0, hairColor: 0x4a3a2a },
-      ],
+      members: [{ bodyColor: 0x6a5a4a, legColor: 0x3a4048, topColor: 0x9a7a5a, scale: 1.0, hairColor: 0x4a3a2a }],
     },
     {
       label: "group",
@@ -83,7 +89,10 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     head.position.y = 1.15;
     group.add(head);
 
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 4), new THREE.MeshLambertMaterial({ color: profile.hairColor || 0x3a2a1a }));
+    const hair = new THREE.Mesh(
+      new THREE.SphereGeometry(0.13, 8, 4),
+      new THREE.MeshLambertMaterial({ color: profile.hairColor || 0x3a2a1a })
+    );
     hair.position.y = 1.28;
     group.add(hair);
 
@@ -93,7 +102,10 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       group.add(leg);
     }
     for (const sx of [-0.25, 0.25]) {
-      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.04, 0.45, 4, 6), mat(profile.armColor || profile.topColor));
+      const arm = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.04, 0.45, 4, 6),
+        mat(profile.armColor || profile.topColor)
+      );
       arm.position.set(sx, 0.74, 0);
       group.add(arm);
     }
@@ -116,7 +128,6 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       }
     });
 
-    // Normalize height to ~1.7m * profile.scale
     const box = new THREE.Box3().setFromObject(root);
     const size = new THREE.Vector3();
     box.getSize(size);
@@ -124,17 +135,13 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     const s = size.y > 0.01 ? targetH / size.y : 1;
     root.scale.setScalar(s);
 
-    // Feet on ground
     box.setFromObject(root);
     root.position.y -= box.min.y;
 
     const mixer = new THREE.AnimationMixer(root);
     let action = null;
     if (tmpl.clips.length) {
-      // Prefer a clip named like Walk / Walking; else first clip
-      const clip =
-        tmpl.clips.find((c) => /walk/i.test(c.name)) ||
-        tmpl.clips[0];
+      const clip = tmpl.clips.find((c) => /walk/i.test(c.name)) || tmpl.clips[0];
       action = mixer.clipAction(clip);
       action.enabled = true;
       action.setEffectiveTimeScale(1);
@@ -152,20 +159,6 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     return makeProceduralHumanoid(profile, groupId, memberIdx);
   }
 
-  function buildWalkRoutes(center) {
-    const cx = center.x;
-    const cz = center.z;
-    return [
-      { points: [{ x: cx - 16, z: cz }, { x: cx - 16, z: cz + 50 }, { x: cx - 16, z: cz + 100 }] },
-      { points: [{ x: cx - 16, z: cz }, { x: cx - 16, z: cz - 50 }] },
-      { points: [{ x: cx + 30, z: cz + 10 }, { x: cx + 60, z: cz + 10 }, { x: cx + 100, z: cz + 10 }] },
-      { points: [{ x: cx - 40, z: cz + 10 }, { x: cx - 70, z: cz + 10 }, { x: cx - 100, z: cz + 10 }] },
-      { points: [{ x: cx - 10, z: cz + 80 }, { x: cx, z: cz + 120 }, { x: cx + 20, z: cz + 150 }] },
-      { points: [{ x: cx, z: cz + 15 }, { x: cx + 35, z: cz + 15 }] },
-      { points: [{ x: cx - 20, z: cz - 20 }, { x: cx + 20, z: cz - 40 }, { x: cx + 40, z: cz - 60 }] },
-    ];
-  }
-
   function routePosition(route, s) {
     const pts = route.points;
     let cum = 0;
@@ -175,12 +168,18 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       const segLen = Math.hypot(dx, dz);
       if (s <= cum + segLen + 0.01) {
         const t = segLen > 0 ? (s - cum) / segLen : 0;
-        return { x: pts[i].x + dx * t, z: pts[i].z + dz * t, idx: i, t };
+        const tx = dx / (segLen || 1);
+        const tz = dz / (segLen || 1);
+        return { x: pts[i].x + dx * t, z: pts[i].z + dz * t, idx: i, t, tx, tz };
       }
       cum += segLen;
     }
     const last = pts[pts.length - 1];
-    return { x: last.x, z: last.z, idx: pts.length - 2, t: 1 };
+    const prev = pts[pts.length - 2] || last;
+    const dx = last.x - prev.x;
+    const dz = last.z - prev.z;
+    const segLen = Math.hypot(dx, dz) || 1;
+    return { x: last.x, z: last.z, idx: pts.length - 2, t: 1, tx: dx / segLen, tz: dz / segLen };
   }
 
   function routeLength(route) {
@@ -191,28 +190,68 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     return len;
   }
 
+  /** Pick the next route at an endpoint; prefer continuing forward over U-turns. */
+  function pickNext(routeIdx, atEnd, heading) {
+    const key = `${routeIdx}:${atEnd ? "e" : "s"}`;
+    const cands = graph.get(key) || [];
+    if (!cands.length) return null;
+    // Prefer links whose outbound heading matches how we arrived.
+    const scored = cands.map((c) => {
+      const r = walkRoutes[c.routeIdx];
+      const a = r.points[c.reverse ? r.points.length - 1 : 0];
+      const b = r.points[c.reverse ? r.points.length - 2 : 1] || a;
+      const hx = b.x - a.x;
+      const hz = b.z - a.z;
+      const hl = Math.hypot(hx, hz) || 1;
+      const align = (hx / hl) * heading.x + (hz / hl) * heading.z;
+      return { c, align };
+    });
+    scored.sort((a, b) => b.align - a.align);
+    // Soft choice among the better-aligned options so crowds fan out.
+    const top = scored.filter((s) => s.align > 0.15);
+    const pool = top.length ? top : scored;
+    return pool[(Math.random() * Math.min(3, pool.length)) | 0].c;
+  }
+
+  function advanceEnd(m) {
+    const route = walkRoutes[m.routeIdx];
+    const atEnd = m.dir > 0;
+    const pos = routePosition(route, atEnd ? routeLength(route) : 0);
+    const heading = { x: pos.tx * m.dir, z: pos.tz * m.dir };
+    const next = pickNext(m.routeIdx, atEnd, heading);
+    if (next) {
+      m.routeIdx = next.routeIdx;
+      m.dir = next.reverse ? -1 : 1;
+      m.s = next.reverse ? routeLength(walkRoutes[next.routeIdx]) - 0.05 : 0.05;
+      return;
+    }
+    // Dead end: turn around (natural on a cul-de-sac).
+    m.dir = -m.dir;
+    m.s = Math.max(0.05, Math.min(routeLength(route) - 0.05, m.s));
+  }
+
   function spawnGroup(profiles, routes) {
     const prof = profiles[(Math.random() * profiles.length) | 0];
     const route = routes[(Math.random() * routes.length) | 0];
     const rLen = routeLength(route);
     const startS = Math.random() * Math.max(1, rLen - 4);
     const dir = Math.random() < 0.5 ? 1 : -1;
-    const side = (Math.random() < 0.5 ? -1 : 1) * (1.2 + Math.random() * 0.8);
+    // Small lateral offset on the pavement, not a metre into the carriageway.
+    const side = (Math.random() < 0.5 ? -1 : 1) * (0.15 + Math.random() * LATERAL_M);
 
     const members = [];
     for (let mi = 0; mi < prof.members.length; mi++) {
       const mProf = prof.members[mi];
       const mesh = makeHumanoid(mProf, groups.length, mi);
-      const offset = mi * prof.spread / (prof.members.length - 1 || 1) - prof.spread * 0.5;
-      const speed = WALK_SPEED * (0.8 + Math.random() * 0.4);
-      // Sync walk-cycle playback rate to travel speed (~1.2 m/s baseline)
+      const offset = (mi * prof.spread) / (prof.members.length - 1 || 1) - prof.spread * 0.5;
+      const speed = WALK_SPEED * (0.85 + Math.random() * 0.3);
       if (mesh.userData.action) {
         mesh.userData.action.setEffectiveTimeScale(speed / WALK_SPEED);
       }
       members.push({
         mesh,
         routeIdx: routes.indexOf(route),
-        s: startS + offset * 0.15,
+        s: startS + offset * 0.12,
         dir,
         side,
         phase: Math.random() * Math.PI * 2,
@@ -228,6 +267,10 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   scene.add(root);
 
   const groups = [];
+  if (!walkRoutes.length) {
+    console.warn("[cityview] pedestrians: no walk routes — crowd disabled");
+    return { update() {}, dispose() {}, groups, mixamo: useMixamo };
+  }
   for (let i = 0; i < COUNT; i++) {
     const g = spawnGroup(PROFILES, walkRoutes);
     for (const m of g.members) root.add(m.mesh);
@@ -239,51 +282,51 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       const route = walkRoutes[m.routeIdx];
       const rLen = routeLength(route);
       m.s = ((m.s % rLen) + rLen) % rLen;
-      const pos = routePosition(route, m.s);
-      const baseY = m.mesh.userData.baseY || 0;
-      m.mesh.position.set(pos.x + m.side, baseY, pos.z);
-      const dx = route.points[Math.min(pos.idx + 1, route.points.length - 1)].x - route.points[pos.idx].x;
-      const dz = route.points[Math.min(pos.idx + 1, route.points.length - 1)].z - route.points[pos.idx].z;
-      m.mesh.rotation.y = Math.atan2(dx, dz) + (m.dir < 0 ? Math.PI : 0);
+      placeMember(m);
+    }
+  }
+
+  function placeMember(m) {
+    const route = walkRoutes[m.routeIdx];
+    const pos = routePosition(route, m.s);
+    const baseY = m.mesh.userData.baseY || 0;
+    // Perpendicular to travel: keep the offset on the pavement.
+    const nx = -pos.tz;
+    const nz = pos.tx;
+    m.mesh.position.set(pos.x + nx * m.side, baseY, pos.z + nz * m.side);
+    const aheadS = Math.min(routeLength(route), Math.max(0, m.s + m.dir * 0.6));
+    const ahead = routePosition(route, aheadS);
+    const dx = ahead.x - pos.x;
+    const dz = ahead.z - pos.z;
+    if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
+      m.mesh.rotation.y = Math.atan2(dx, dz);
     }
   }
 
   console.info(
     `[cityview] pedestrians: ${groups.reduce((n, g) => n + g.members.length, 0)} people` +
+      ` on ${walkRoutes.length} walks` +
       (useMixamo ? ` (Mixamo ×${templates.length})` : " (procedural fallback)")
   );
 
   function update(dt) {
     if (!(dt > 0)) return;
     for (const g of groups) {
-      const route = walkRoutes[g.routeIdx];
-      const rLen = routeLength(route);
       for (const m of g.members) {
+        const route = walkRoutes[m.routeIdx];
+        const rLen = routeLength(route);
         m.s += m.speed * m.dir * dt;
-        if (m.s >= rLen) {
-          m.s = Math.max(0, rLen - (m.s - rLen));
-          m.dir = -m.dir;
-          if (Math.random() < 0.003) {
-            const nr = walkRoutes[(Math.random() * walkRoutes.length) | 0];
-            m.routeIdx = walkRoutes.indexOf(nr);
-            m.s = Math.random() * routeLength(nr) * 0.8;
-          }
-        } else if (m.s < 0) {
-          m.s = Math.min(rLen, -m.s);
-          m.dir = -m.dir;
+        if (m.s >= rLen || m.s < 0) {
+          advanceEnd(m);
         }
 
-        const liveRoute = walkRoutes[m.routeIdx];
-        const liveLen = routeLength(liveRoute);
-        const pos = routePosition(liveRoute, m.s);
-        const baseY = m.mesh.userData.baseY || 0;
-        m.mesh.position.x = pos.x + m.side;
-        m.mesh.position.z = pos.z;
+        placeMember(m);
 
         if (m.mesh.userData.mixer) {
           m.mesh.userData.mixer.update(dt);
-          m.mesh.position.y = baseY;
+          m.mesh.position.y = m.mesh.userData.baseY || 0;
         } else {
+          const baseY = m.mesh.userData.baseY || 0;
           m.phase += dt * m.speed * BOBBLE_FREQ;
           m.mesh.position.y = baseY + BOBBLE_AMP * Math.abs(Math.sin(m.phase));
           const swingAmt = 0.2 * Math.sin(m.phase);
@@ -293,14 +336,6 @@ export async function createPedestrians(scene, THREE, opts = {}) {
               child.rotation.z = child.position.x > 0 ? -swingAmt : swingAmt;
             }
           }
-        }
-
-        const aheadS = Math.min(liveLen, Math.max(0, m.s + m.dir * 0.5));
-        const aheadPos = routePosition(liveRoute, aheadS);
-        const dx = aheadPos.x - pos.x;
-        const dz = aheadPos.z - pos.z;
-        if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
-          m.mesh.rotation.y = Math.atan2(dx, dz);
         }
       }
     }
@@ -315,7 +350,64 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     }
   }
 
-  return { update, dispose, groups, mixamo: useMixamo };
+  return { update, dispose, groups, mixamo: useMixamo, routes: walkRoutes };
+}
+
+async function loadWalks() {
+  try {
+    const res = await fetch(ROADS_URL);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.walks || [];
+  } catch (err) {
+    console.warn("[cityview] walks unavailable", err);
+    return [];
+  }
+}
+
+/** Blender XY walks → Three XZ routes (z = −y). */
+function buildWalkRoutes(walks, center) {
+  const routes = [];
+  for (const w of walks) {
+    const pts = (w.points || [])
+      .map((p) => ({ x: p[0], z: -p[1] }))
+      .filter((p, i, arr) => i === 0 || Math.hypot(p.x - arr[i - 1].x, p.z - arr[i - 1].z) > 0.05);
+    if (pts.length < 2) continue;
+    let len = 0;
+    for (let i = 0; i < pts.length - 1; i++) len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
+    if (len < 5) continue;
+    routes.push({ id: w.id, kind: w.kind || "sidewalk", points: pts, length: len });
+  }
+  if (routes.length) return routes;
+  // Last resort: short stubs near spawn (still sidewalk-ish offsets, not road centre).
+  const cx = center.x;
+  const cz = center.z;
+  return [
+    { id: "fallback0", kind: "sidewalk", points: [{ x: cx - 18, z: cz }, { x: cx - 18, z: cz + 80 }] },
+    { id: "fallback1", kind: "sidewalk", points: [{ x: cx + 12, z: cz - 10 }, { x: cx + 90, z: cz - 10 }] },
+  ];
+}
+
+function buildGraph(routes) {
+  const ends = [];
+  for (let i = 0; i < routes.length; i++) {
+    const pts = routes[i].points;
+    ends.push({ routeIdx: i, atEnd: false, x: pts[0].x, z: pts[0].z });
+    ends.push({ routeIdx: i, atEnd: true, x: pts[pts.length - 1].x, z: pts[pts.length - 1].z });
+  }
+  const graph = new Map();
+  for (const a of ends) {
+    const key = `${a.routeIdx}:${a.atEnd ? "e" : "s"}`;
+    const links = [];
+    for (const b of ends) {
+      if (a.routeIdx === b.routeIdx) continue;
+      if (Math.hypot(a.x - b.x, a.z - b.z) > JOIN_M) continue;
+      // Arriving at a's end → leave on b starting at b's matching end.
+      links.push({ routeIdx: b.routeIdx, reverse: b.atEnd });
+    }
+    graph.set(key, links);
+  }
+  return graph;
 }
 
 async function loadCharacterTemplates(THREE) {
@@ -327,7 +419,6 @@ async function loadCharacterTemplates(THREE) {
       try {
         const url = new URL(file, base).href;
         const gltf = await loader.loadAsync(url);
-        // Keep template off-scene; clones will be added later
         gltf.scene.traverse((o) => {
           if (o.isMesh) {
             o.castShadow = true;

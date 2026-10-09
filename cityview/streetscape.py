@@ -518,6 +518,104 @@ def _direction_code(value: Any) -> int:
     return 1 if n > 0 else (-1 if n < 0 else 0)
 
 
+WALK_WAY_KINDS = frozenset({"footway", "path", "pedestrian", "steps", "living_street"})
+SIDEWALK_HOST_KINDS = frozenset(
+    {
+        "residential",
+        "living_street",
+        "unclassified",
+        "secondary",
+        "secondary_link",
+        "tertiary",
+        "tertiary_link",
+        "primary",
+        "primary_link",
+    }
+)
+SIDEWALK_W = 2.0
+
+
+def _offset_polyline(points: list[list[float]], offset: float) -> list[list[float]]:
+    """Offset a polyline to the left of travel by ``offset`` metres (Blender XY)."""
+    if len(points) < 2:
+        return []
+    out: list[list[float]] = []
+    for i, (x, y) in enumerate(points):
+        if i == 0:
+            dx, dy = points[1][0] - x, points[1][1] - y
+        elif i == len(points) - 1:
+            dx, dy = x - points[i - 1][0], y - points[i - 1][1]
+        else:
+            dx, dy = points[i + 1][0] - points[i - 1][0], points[i + 1][1] - points[i - 1][1]
+        length = math.hypot(dx, dy) or 1.0
+        nx, ny = -dy / length, dx / length
+        out.append([x + nx * offset, y + ny * offset])
+    return out
+
+
+def export_walks_near_spawn(
+    layout: dict[str, Any],
+    spawn: dict[str, Any] | None,
+    *,
+    radius: float = 220.0,
+    max_walks: int = 120,
+) -> list[dict[str, Any]]:
+    """Pedestrian-safe polylines near spawn for the walker crowd.
+
+    Uses OSM footways / paths / plazas, plus kerb-side sidewalk ribbons along
+    ordinary streets (same offset as the Blender pavement). Carriageway
+    centreline is never used, so people stay off the asphalt unless they are
+    on a living street or pedestrianised way.
+    """
+    sx = float(spawn["x"]) if spawn else 0.0
+    sy = float(spawn["y"]) if spawn else 0.0
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for road in layout.get("roads") or []:
+        kind = str(road.get("kind") or "").lower()
+        pts = [[float(p[0]), float(p[1])] for p in (road.get("points") or [])]
+        if len(pts) < 2:
+            continue
+        dmin = min(_dist(sx, sy, p[0], p[1]) for p in pts)
+        if dmin > radius:
+            continue
+        length = sum(_dist(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) for i in range(len(pts) - 1))
+        if length < 4.0:
+            continue
+        if kind in WALK_WAY_KINDS:
+            scored.append(
+                (
+                    dmin,
+                    {
+                        "id": f"w{road.get('id')}",
+                        "kind": kind,
+                        "safe": True,
+                        "points": pts,
+                    },
+                )
+            )
+            continue
+        if kind not in SIDEWALK_HOST_KINDS:
+            continue
+        half = float(road.get("width") or 6.0) * 0.5
+        for side, sign in (("L", 1.0), ("R", -1.0)):
+            walk = _offset_polyline(pts, sign * (half + SIDEWALK_W * 0.5))
+            if len(walk) < 2:
+                continue
+            scored.append(
+                (
+                    dmin,
+                    {
+                        "id": f"sw{road.get('id')}_{side}",
+                        "kind": "sidewalk",
+                        "safe": True,
+                        "points": [[round(p[0], 2), round(p[1], 2)] for p in walk],
+                    },
+                )
+            )
+    scored.sort(key=lambda item: item[0])
+    return [item[1] for item in scored[:max_walks]]
+
+
 def export_roads_near_spawn(
     layout: dict[str, Any],
     spawn: dict[str, Any] | None,
@@ -579,10 +677,12 @@ def export_roads_near_spawn(
     chosen_roads = [item[1] for item in scored[:max_roads]]
     mark_dual_carriageways(chosen_roads)
 
+    walks = export_walks_near_spawn(layout, spawn, radius=min(radius, 220.0))
     return {
         "spawn": {"x": sx, "y": sy},
         "radius": radius,
         "roads": chosen_roads,
+        "walks": walks,
         "signals": signals,
         "cycleSeconds": 30,
     }
