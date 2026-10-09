@@ -28,6 +28,7 @@ if _BLENDER_DIR not in sys.path:
     sys.path.insert(0, _BLENDER_DIR)
 import benches_blender  # noqa: E402
 import clutter_blender  # noqa: E402
+import roadware_blender  # noqa: E402
 import trees_blender  # noqa: E402
 
 # Surface rail corridors for the current build (set in build()).
@@ -3335,6 +3336,14 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         print(f"Road dashes near spawn: {dashes}")
         wear = add_asphalt_wear(layout.get("roads") or [], spawn_xy, wear_mats)
         print(f"Asphalt wear patches near spawn: {wear}")
+        ironwork = roadware_blender.add_roadware(
+            layout,
+            spawn_xy,
+            RAILS,
+            principled("road_iron", (0.07, 0.07, 0.065, 1.0), 0.55, metallic=0.5),
+            principled("road_iron_worn", (0.20, 0.19, 0.17, 1.0), 0.45, metallic=0.6),
+        )
+        print(f"Road ironwork (manholes, gully grates): {ironwork}")
         cars = add_parked_cars(
             layout.get("roads") or [], spawn_xy, car_mats, car_glass, tire_mat, max_cars=48
         )
