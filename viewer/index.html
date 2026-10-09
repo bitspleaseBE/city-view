@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>City View — Klein Antwerpen · Velo Harmonie</title>
     <style>
       :root {
@@ -21,6 +21,7 @@
       }
       canvas {
         display: block;
+        touch-action: none;
       }
 
       /* ---- Loading screen: sunny Antwerp sky, gabled skyline, tram-yellow progress ---- */
@@ -320,6 +321,9 @@
       body:has(#loading) #click-cue {
         display: none;
       }
+      body.touch-device #click-cue {
+        letter-spacing: 0.06em;
+      }
       #crosshair {
         position: fixed;
         left: 50%;
@@ -335,6 +339,22 @@
       }
       body.locked #crosshair {
         display: block;
+      }
+      body.free-view #crosshair,
+      body.on-transit #crosshair {
+        display: none !important;
+      }
+      /* Touch HUD sits above the radar; keep prompts from covering the sticks. */
+      body.touch-ui #prompt {
+        top: auto;
+        bottom: calc(200px + env(safe-area-inset-bottom, 0px));
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: min(22rem, 86vw);
+        text-align: center;
+      }
+      body.touch-ui.help-on #prompt {
+        top: auto;
       }
     </style>
   </head>
@@ -460,6 +480,7 @@
       import { createStreetLocator } from "./street-locate.js";
       import { createOutdoorsGuard } from "./outdoors.js";
       import { wireParkedCarLamps } from "./cars.js";
+      import { createTouchControls, wantsTouchControls } from "./touch-controls.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -753,6 +774,7 @@
         btnNight.textContent = isNight ? "Day" : "Night";
         btnNight.setAttribute("aria-pressed", String(isNight));
         btnNight.classList.toggle("active", isNight);
+        touch?.setNightLabel(isNight);
         todApplied = t;
       }
       /** Fast-forward the clock to the next night (22:00) or morning (08:00). */
@@ -840,6 +862,14 @@
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;
       const keys = { w: false, a: false, s: false, d: false, shift: false, space: false };
+      const lookEuler = new THREE.Euler(0, 0, 0, "YXZ");
+      const TOUCH = wantsTouchControls();
+      if (TOUCH) {
+        document.body.classList.add("touch-device");
+        const cue = document.getElementById("click-cue");
+        if (cue) cue.textContent = "Tap to play";
+      }
+      let touch = null;
       // Jump physics
       const JUMP = { v: 0, g: -12, strength: 5.0, active: false, cooldown: 0 };
       let prevTime = performance.now();
@@ -1028,19 +1058,54 @@
         { passive: false },
       );
       let freeDrag = null;
+      let freePinch = null;
       renderer.domElement.addEventListener("pointerdown", (e) => {
-        if (mode !== "free" || e.button !== 0) return;
+        if (mode !== "free") return;
+        if (e.pointerType === "mouse" && e.button !== 0) return;
+        if (freeDrag && !freePinch && e.pointerId !== freeDrag.id) {
+          freePinch = {
+            a: freeDrag.id,
+            b: e.pointerId,
+            dist: Math.hypot(e.clientX - freeDrag.x, e.clientY - freeDrag.y) || 1,
+            ax: freeDrag.x,
+            ay: freeDrag.y,
+            bx: e.clientX,
+            by: e.clientY,
+          };
+          freeDrag = null;
+          return;
+        }
         freeDrag = { id: e.pointerId, x: e.clientX, y: e.clientY };
-        renderer.domElement.setPointerCapture(e.pointerId);
+        try {
+          renderer.domElement.setPointerCapture(e.pointerId);
+        } catch (_) {
+          /* ignore */
+        }
       });
       renderer.domElement.addEventListener("pointermove", (e) => {
-        if (!freeDrag || e.pointerId !== freeDrag.id || mode !== "free") return;
+        if (mode !== "free") return;
+        if (freePinch) {
+          if (e.pointerId === freePinch.a) {
+            freePinch.ax = e.clientX;
+            freePinch.ay = e.clientY;
+          } else if (e.pointerId === freePinch.b) {
+            freePinch.bx = e.clientX;
+            freePinch.by = e.clientY;
+          } else return;
+          const dist = Math.hypot(freePinch.bx - freePinch.ax, freePinch.by - freePinch.ay) || 1;
+          const ratio = freePinch.dist / dist;
+          freePinch.dist = dist;
+          freeCam.height = THREE.MathUtils.clamp(freeCam.height * ratio, freeCam.minH, freeCam.maxH);
+          return;
+        }
+        if (!freeDrag || e.pointerId !== freeDrag.id) return;
         const wpp = (2 * freeCam.height * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / window.innerHeight;
         panFree(-(e.clientX - freeDrag.x) * wpp, -(e.clientY - freeDrag.y) * wpp);
         freeDrag.x = e.clientX;
         freeDrag.y = e.clientY;
       });
       const endFreeDrag = (e) => {
+        if (freePinch && (e.pointerId === freePinch.a || e.pointerId === freePinch.b)) freePinch = null;
         if (freeDrag && e.pointerId === freeDrag.id) freeDrag = null;
       };
       renderer.domElement.addEventListener("pointerup", endFreeDrag);
@@ -1069,8 +1134,11 @@
           }
           walkControls.getObject().position.y = eyeHeight;
           clampWalkerXZ(walkControls.getObject().position);
-          hint.textContent = "Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · Esc · V free · N night · M map";
+          hint.textContent = TOUCH
+            ? "Walk: stick move · drag look · Go interact · Sprint / Jump"
+            : "Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · Esc · V free · N night · M map";
           status.textContent = "Walking — Velo Harmonie";
+          touch?.setModeLabel("walk");
         } else {
           if (walkControls.isLocked) walkControls.unlock();
           const p = walkControls.getObject().position;
@@ -1088,8 +1156,11 @@
           freeCam.z = walkSaved.z;
           softClampXZ(freeCam, playBounds);
           applyFreeCamera();
-          hint.textContent = "Free view (top-down): WASD pan · Shift fast · scroll zoom · click map teleport · V walk · N night";
+          hint.textContent = TOUCH
+            ? "Map view: drag pan · pinch zoom · tap radar to teleport"
+            : "Free view (top-down): WASD pan · Shift fast · scroll zoom · click map teleport · V walk · N night";
           status.textContent = "Free view";
+          touch?.setModeLabel("free");
         }
       }
 
@@ -1193,6 +1264,15 @@
         }
       }
 
+      function showPrompt(text) {
+        if (!text) {
+          promptEl.style.display = "none";
+          return;
+        }
+        promptEl.style.display = "block";
+        promptEl.textContent = touch ? touch.softenPrompt(text) : text;
+      }
+
       function refreshRideHud() {
         const onVelo = velo && velo.isRiding && velo.isRiding();
         const p = walkControls.getObject().position;
@@ -1200,12 +1280,8 @@
           const hud = velo.getRideHud();
           rideEl.style.display = "none"; // the speedometer carries the ride
           const prompt = velo.getPrompt({ x: p.x, z: p.z });
-          if (prompt) {
-            promptEl.style.display = "block";
-            promptEl.textContent = prompt;
-          } else {
-            promptEl.style.display = "none";
-          }
+          if (prompt) showPrompt(prompt);
+          else promptEl.style.display = "none";
           if (hud.toast) status.textContent = hud.toast;
           return;
         }
@@ -1215,14 +1291,12 @@
         if (sHud.riding) {
           // The speedometer carries the ride; only the park hint stays on screen.
           rideEl.style.display = "none";
-          promptEl.style.display = "block";
-          promptEl.textContent = scooters.getPrompt({ x: 0, z: 0 });
+          showPrompt(scooters.getPrompt({ x: 0, z: 0 }));
           return;
         }
         const scooterPrompt = !hud.riding && mode === "walk" && scooters ? scooters.getPrompt({ x: p.x, z: p.z }) : null;
         if (scooterPrompt) {
-          promptEl.style.display = "block";
-          promptEl.textContent = scooterPrompt;
+          showPrompt(scooterPrompt);
           return;
         }
         if (hud.riding) {
@@ -1231,7 +1305,9 @@
           if (hud.wantAlight) {
             rideNext.textContent = `Getting off at: ${hud.nextHalt}`;
           } else if (hud.dwelling && hud.currentHalt) {
-            rideNext.textContent = `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · E to leave`;
+            rideNext.textContent = touch
+              ? `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · tap Go to leave`
+              : `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · E to leave`;
           } else {
             rideNext.textContent = `Next halt: ${hud.nextHalt}`;
           }
@@ -1240,18 +1316,16 @@
           const veloPrompt = velo && velo.getPrompt ? velo.getPrompt({ x: p.x, z: p.z }) : null;
           if (veloPrompt) {
             rideEl.style.display = "none";
-            promptEl.style.display = "block";
-            promptEl.textContent = veloPrompt;
+            showPrompt(veloPrompt);
           } else if (hud.prompt) {
             rideEl.style.display = "none";
-            promptEl.style.display = "block";
-            promptEl.textContent = hud.prompt;
+            showPrompt(hud.prompt);
           } else {
             if (!transit.isRiding || !transit.isRiding()) rideEl.style.display = "none";
             const shopPrompt =
               shops && mode === "walk" ? shops.getPrompt({ x: p.x, z: p.z, yaw: playerMotion.yaw() }, gameHour, gameDay) : null;
-            promptEl.style.display = shopPrompt ? "block" : "none";
-            if (shopPrompt) promptEl.textContent = shopPrompt;
+            if (shopPrompt) showPrompt(shopPrompt);
+            else promptEl.style.display = "none";
           }
         }
       }
@@ -1259,12 +1333,65 @@
       btnWalk.addEventListener("click", () => setMode("walk"));
       btnFree.addEventListener("click", () => setMode("free"));
 
+      function walkEngaged() {
+        return walkControls.isLocked || !!(touch && touch.isEngaged());
+      }
+
+      function applyLookDelta(dx, dy) {
+        lookEuler.setFromQuaternion(camera.quaternion);
+        lookEuler.y -= dx * 0.0025;
+        lookEuler.x -= dy * 0.0025;
+        const lim = Math.PI / 2 - 0.02;
+        lookEuler.x = Math.max(-lim, Math.min(lim, lookEuler.x));
+        camera.quaternion.setFromEuler(lookEuler);
+      }
+
+      let helpShown = false;
+      if (TOUCH) {
+        touch = createTouchControls({
+          keys,
+          onInteract: () => handleInteractE(),
+          onToggleMode: () => {
+            if (transit.isRiding && transit.isRiding()) return;
+            if (velo && velo.isRiding && velo.isRiding()) return;
+            if (scooters && scooters.isRiding()) return;
+            setMode(mode === "walk" ? "free" : "walk");
+          },
+          onToggleNight: () => {
+            const toNight = todFromHour(gameHour) < 0.5;
+            toggleTimeOfDay();
+            hud.notify(toNight ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
+          },
+          onToggleHelp: () => hud.toggleHelp(),
+          onToggleMap: () => {
+            if (!minimap) return;
+            minimap._visible = !(minimap._visible ?? true);
+            minimap.setVisible(minimap._visible);
+          },
+          onLook: applyLookDelta,
+          onPinchZoom: () => {},
+          canLook: () =>
+            mode === "walk" &&
+            !(transit.isRiding && transit.isRiding()),
+          onStart: () => {
+            if (!helpShown) {
+              helpShown = true;
+              hud.showHelp(8000);
+            }
+          },
+        });
+        touch.bindCanvas(renderer.domElement);
+      }
+
       document.body.addEventListener("click", (e) => {
         if (mode !== "walk") return;
-        if (e.target.closest("#modes")) return;
+        if (e.target.closest("#modes, #touch-ui")) return;
+        if (TOUCH) {
+          touch.startSession();
+          return;
+        }
         if (!walkControls.isLocked) walkControls.lock();
       });
-      let helpShown = false;
       walkControls.addEventListener("lock", () => {
         document.body.classList.add("locked");
         document.getElementById("hud")?.classList.add("gone");
@@ -1273,12 +1400,17 @@
           hud.showHelp(8000);
         }
       });
-      walkControls.addEventListener("unlock", () => document.body.classList.remove("locked"));
+      walkControls.addEventListener("unlock", () => {
+        // Keep the touch session engaged when iOS has no pointer lock.
+        if (!(touch && touch.isActive())) document.body.classList.remove("locked");
+      });
       walkControls.addEventListener("lock", () => {
         hint.textContent = "WASD · mouse look · Space jump · E Velo / tram · Esc · V free · N night · M map";
       });
       walkControls.addEventListener("unlock", () => {
-        if (mode === "walk") hint.textContent = "Walk: click + WASD · E Velo / tram · V free · N night · M map";
+        if (mode === "walk" && !TOUCH) {
+          hint.textContent = "Walk: click + WASD · E Velo / tram · V free · N night · M map";
+        }
       });
 
       window.addEventListener("keydown", (e) => {
@@ -1616,13 +1748,30 @@
           if (nVelo > 0) bits.push(`${nVelo} Velo stations`);
           status.textContent =
             bits.length > 0
-              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · E Velo / tram`
-              : "Sunny day — click to walk";
+              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · ${TOUCH ? "tap Go for Velo / tram" : "E Velo / tram"}`
+              : TOUCH
+                ? "Sunny day — tap to walk"
+                : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
           setLoad(0.97, "Warming up the lights");
           await nextFrame();
           await warmUpRenderer();
+          if (touch) {
+            touch.setActive(true);
+            touch.setNightLabel(tod > 0.5);
+            const helpEl = document.getElementById("hud-help");
+            if (helpEl) {
+              helpEl.innerHTML = [
+                "Left stick — walk · steer when riding",
+                "Drag screen — look around",
+                "<kbd>Go</kbd>scooter · tram · bus · Velo",
+                "<kbd>Sprint</kbd>jog · <kbd>Jump</kbd>jump",
+                "<kbd>Map</kbd>top-down · <kbd>Radar</kbd>minimap",
+                "<kbd>Night</kbd>day/night · <kbd>Help</kbd>this card",
+              ].join("<br>");
+            }
+          }
           cityReady = true;
           prevTime = performance.now();
           window.__loading && window.__loading.done();
@@ -1742,7 +1891,7 @@
         }
 
         const onScooter = scooters && scooters.isRiding();
-        if (!riding && mode === "walk" && walkControls.isLocked) {
+        if (!riding && mode === "walk" && walkEngaged()) {
           const kind = ridingVelo ? "velo" : onScooter ? "scooter" : "walk";
           const w = walkControls.getObject();
           _beforeStep.x = w.position.x;

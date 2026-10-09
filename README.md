@@ -24,7 +24,7 @@ python3 -m cityview city --place klein-antwerpen
 python3 -m cityview serve
 ```
 
-Open http://127.0.0.1:8765/ — you spawn at **Velo Harmonie (042)** on Mechelsesteenweg at eye height. Click to walk (WASD + mouse look); press **E** to take a Velo or board a stopped tram. The tile uses LOD2 roofs (gable / hip / mansard / flat from OSM + style) and style-driven procedural facades on street-facing edges. Colours come from [`assets/styles/klein_antwerpen_2018.json`](assets/styles/klein_antwerpen_2018.json).
+Open http://127.0.0.1:8765/ — you spawn at **Velo Harmonie (042)** on Mechelsesteenweg at eye height. Click or tap to walk (WASD + mouse look on desktop; on-screen stick + drag look on iPad/phone); press **E** to take a Velo or board a stopped tram. The tile uses LOD2 roofs (gable / hip / mansard / flat from OSM + style) and style-driven procedural facades on street-facing edges. Colours come from [`assets/styles/klein_antwerpen_2018.json`](assets/styles/klein_antwerpen_2018.json).
 
 Alias: `--place harmonie` uses the same bbox, spawn, and historic style policy. OSM for this tile is cached at [`assets/osm/harmonie.json`](assets/osm/harmonie.json) (committed for reproducible CI).
 
