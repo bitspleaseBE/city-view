@@ -11,14 +11,14 @@ from pathlib import Path
 
 import bmesh
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 # Pure-Python rail clearance helpers live in the cityview package (no bpy).
 _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from cityview import facade_kit, surface_kit  # noqa: E402
-from cityview import climbers, kerbs, railclear  # noqa: E402
+from cityview import climbers, kerbs, railclear, rooftop  # noqa: E402
 from cityview.landmarks import LANDMARKS_DIR, resolve_landmark_photo  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 from cityview.shop_brands import fascia_for_brand  # noqa: E402
@@ -27,6 +27,7 @@ _BLENDER_DIR = str(Path(__file__).resolve().parent)
 if _BLENDER_DIR not in sys.path:
     sys.path.insert(0, _BLENDER_DIR)
 import benches_blender  # noqa: E402
+import clutter_blender  # noqa: E402
 import trees_blender  # noqa: E402
 
 # Surface rail corridors for the current build (set in build()).
@@ -51,6 +52,7 @@ SURFACES_DIR = Path(_REPO_ROOT) / "assets" / surface_kit.TEXTURES_DIRNAME  # pro
 PHOTO_MAT_SLOT = 7  # material slot of the atlas on façade meshes
 DOORSTEP_MAT = None  # shared granite doorstep material, set in build()
 DOORSTEP_MAT_SLOT = 8  # right after the atlas slot
+ROOFTOP_STATS = {"chimneys": 0, "plant": 0}
 STATS = {"photo_quads": 0, "photo_edges": 0, "door_steps": 0, "awnings": 0, "reveals": 0, "downpipes": 0}
 
 
@@ -815,35 +817,77 @@ def add_lod2_roof(
         add_mansard_roof(name, ring, eaves_z, h, mat, uv_tile_m)
 
 
-def add_chimneys(name: str, ring: list[list[float]], eaves_z: float, roof_h: float, mat, seed: int) -> int:
-    """Brick chimney stubs — GTA3 skyline grit, only a few per roof."""
-    if len(ring) < 3:
-        return 0
-    safe = inset_ring(ring, 1.15)
-    if len(safe) < 3:
-        safe = inset_ring(ring, 0.6)
-    if len(safe) < 3:
-        return 0
-    cx = sum(p[0] for p in safe) / len(safe)
-    cy = sum(p[1] for p in safe) / len(safe)
-    if not _point_in_ring(cx, cy, safe):
-        return 0
-    n = 1 + (seed % 3)
+# Chimneys and roof plant are merged into one mesh per material for the whole tile
+# (hundreds of tiny boxes as separate glTF nodes would bloat the GLB).
+ROOFTOP_BM: dict[str, tuple] = {}
+
+
+def _rooftop_box(mat, size, center, yaw: float) -> None:
+    key = mat.name
+    if key not in ROOFTOP_BM:
+        ROOFTOP_BM[key] = (bmesh.new(), mat)
+    m = (
+        Matrix.Translation(Vector(center))
+        @ Matrix.Rotation(yaw, 4, "Z")
+        @ Matrix.Diagonal(Vector((size[0], size[1], size[2], 1.0)))
+    )
+    bmesh.ops.create_cube(ROOFTOP_BM[key][0], size=1.0, matrix=m)
+
+
+def flush_rooftop() -> int:
+    """Turn the collected chimney / roof-plant boxes into merged mesh objects."""
+    made = 0
+    for key, (bm, mat) in ROOFTOP_BM.items():
+        if bm.verts:
+            mesh = bpy.data.meshes.new(f"rooftop_{key}")
+            bm.to_mesh(mesh)
+            mesh.materials.append(mat)
+            link(bpy.data.objects.new(f"rooftop_{key}", mesh))
+            made += 1
+        bm.free()
+    ROOFTOP_BM.clear()
+    return made
+
+
+def add_chimneys(
+    ring: list[list[float]], eaves_z: float, roof_h: float, shape: str, mats: dict, seed: int, pots: bool
+) -> int:
+    """Brick stacks on the ridge / party walls (``cityview.rooftop``): shaft, stone cap and,
+    near the spawn, a corbelled course plus terracotta pots (a handful of boxes per stack)."""
+    brick = mats.get("chimney") or mats["roof"]
+    cap_mat = mats.get("chimney_cap") or brick
+    pot_mat = mats.get("chimney_pot") or brick
     placed = 0
-    for i in range(n):
-        u = ((seed * 1103515245 + i * 9973) & 0x7FFFFFFF) / 0x7FFFFFFF
-        v = ((seed * 1664525 + i * 4243) & 0x7FFFFFFF) / 0x7FFFFFFF
-        x = cx + (u - 0.5) * 2.4
-        y = cy + (v - 0.5) * 2.4
-        if not _point_in_ring(x, y, safe):
-            x, y = cx, cy
-        if not _point_in_ring(x, y, safe):
+    for c in rooftop.plan_chimneys(ring, eaves_z, roof_h, shape, seed):
+        x, y, yaw = c["x"], c["y"], c["yaw"]
+        h = c["h"]
+        _rooftop_box(brick, (c["w"], c["d"], h), (x, y, c["z"] + h * 0.5), yaw)
+        top = c["z"] + h
+        if pots:  # LOD: the corbel is a near-spawn detail; far stacks are shaft + cap only
+            _rooftop_box(brick, (c["w"] + 0.1, c["d"] + 0.1, 0.1), (x, y, top - 0.22), yaw)
+        _rooftop_box(cap_mat, (c["w"] + 0.2, c["d"] + 0.2, 0.1), (x, y, top + 0.05), yaw)
+        if pots:
+            n = int(c["pots"])
+            for k in range(n):
+                off = (k - (n - 1) * 0.5) * (c["w"] * 0.62 / max(1, n - 1)) if n > 1 else 0.0
+                _rooftop_box(pot_mat, (0.17, 0.17, 0.36), (x + math.cos(yaw) * off, y + math.sin(yaw) * off, top + 0.28), yaw)
+        placed += 1
+    return placed
+
+
+def add_roof_plant(ring: list[list[float]], top_z: float, mats: dict, seed: int, detail: bool) -> int:
+    """Flat-roof stair head, plant units, vent stack and aerials (``cityview.rooftop``)."""
+    box_mat = mats.get("roof_box") or mats["roof"]
+    metal = mats.get("roof_metal") or box_mat
+    placed = 0
+    for it in rooftop.plan_roof_plant(ring, top_z, seed):
+        kind = it["kind"]
+        if kind in {"vent", "aerial"} and not detail:
             continue
-        z = eaves_z + roof_h * 0.85 + 0.7
-        stack = add_box(f"{name}_chim{i}", (0.55, 0.45, 1.4), (x, y, z), u * 0.2)
-        assign(stack, mat)
-        cap = add_box(f"{name}_chimcap{i}", (0.7, 0.58, 0.12), (x, y, z + 0.75), 0.0)
-        assign(cap, mat)
+        sz = it["sz"]
+        _rooftop_box(box_mat if kind == "stair" else metal, (it["sx"], it["sy"], sz), (it["x"], it["y"], it["z"] + sz * 0.5), it["yaw"])
+        if kind == "stair":
+            _rooftop_box(metal, (it["sx"] + 0.15, it["sy"] + 0.15, 0.12), (it["x"], it["y"], it["z"] + sz + 0.04), it["yaw"])
         placed += 1
     return placed
 
@@ -1970,9 +2014,16 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             )
         return
 
-    if detail == "full" and shape != "flat" and int(bid) % 2 == 0:
-        chimney_mat = mats.get("chimney") or roof
-        add_chimneys(name, ring, max(2.5, eaves), roof_h, chimney_mat, int(bid) if bid else 1)
+    seed_id = int(bid) if str(bid).lstrip("-").isdigit() else 1
+    # LOD: chimneys and plant also crown the "simple" ring (skyline from the orbit view);
+    # corbels, pots, vents and aerials are near-spawn only.
+    if eff_shape != "flat" and seed_id % 2 == 0:
+        ROOFTOP_STATS["chimneys"] += add_chimneys(
+            ring, max(2.5, eaves), roof_h, eff_shape, {**mats, "roof": roof}, abs(seed_id) or 1, near_spawn
+        )
+    elif eff_shape == "flat":
+        flat_top = max(2.5, eaves) + min(0.55, max(0.35, roof_h))
+        ROOFTOP_STATS["plant"] += add_roof_plant(ring, flat_top, {**mats, "roof": roof}, abs(seed_id) or 1, near_spawn)
 
     for ei, edge in enumerate(bldg.get("street_edges") or []):
         i0 = int(edge["i0"])
@@ -2726,16 +2777,17 @@ def add_street_furniture(
     lamp_head_mat,
     trunk_mat,
     canopy_mats: list,
+    skip_lamps: bool = False,
 ) -> dict:
-    """Lamp posts, bollards, bins and bike racks near the spawn.
+    """Lamp posts near the spawn (bins / bollards / bike racks: see ``clutter_blender``).
 
     Benches are *not* generated here: they come from surveyed positions with a surveyed
     or rule-derived facing (``cityview.benches`` / ``benches_blender``).
     """
-    stats = {"lamps": 0, "bollards": 0, "bins": 0, "street_trees": 0, "bike_racks": 0}
+    stats = {"lamps": 0, "street_trees": 0}
     # Street trees now come from surveyed positions (layout["trees"], see
     # trees_blender); the old evenly-spaced kerb rows read as a straight parade.
-    max_lamps, max_bollards, max_bins, max_trees = 42, 70, 24, 0
+    max_lamps, max_trees = 42, 0
     for ri, road in enumerate(roads):
         kind = road.get("kind") or "residential"
         if kind in {"footway", "path", "cycleway", "steps"}:
@@ -2805,8 +2857,10 @@ def add_street_furniture(
                             assign(canopy2, leaf)
                             stats["street_trees"] += 1
                     else:
-                        kind_slot = slot % 5
-                        if kind_slot == 0 and stats["lamps"] < max_lamps:
+                        # Bins, bollards and bike racks are no longer invented here: they come
+                        # from OSM-mapped points (``clutter_blender``). Only lamps stay
+                        # procedural — OSM has no ``highway=street_lamp`` for this tile.
+                        if slot % 5 == 0 and stats["lamps"] < max_lamps and not skip_lamps:
                             pole = add_box(f"lamp_{stats['lamps']}", (0.1, 0.1, 4.6), (x, y, 2.3), 0.0)
                             assign(pole, metal_mat)
                             head = add_box(
@@ -2817,35 +2871,6 @@ def add_street_furniture(
                             )
                             assign(head, lamp_head_mat)
                             stats["lamps"] += 1
-                        elif kind_slot == 1 and stats["bollards"] < max_bollards:
-                            boll = add_box(
-                                f"bollard_{stats['bollards']}",
-                                (0.18, 0.18, 0.75),
-                                (x, y, 0.38),
-                                0.0,
-                            )
-                            assign(boll, metal_mat)
-                            stats["bollards"] += 1
-                        elif kind_slot == 2 and stats["bins"] < max_bins:
-                            bin_obj = add_box(
-                                f"bin_{stats['bins']}",
-                                (0.45, 0.45, 0.85),
-                                (x, y, 0.42),
-                                yaw,
-                            )
-                            assign(bin_obj, bin_mat)
-                            stats["bins"] += 1
-                        elif kind_slot == 4 and stats.get("bike_racks", 0) < 20:
-                            # Simple U-rack pair.
-                            for k, off in enumerate((-0.35, 0.35)):
-                                rack = add_box(
-                                    f"bike_{stats.get('bike_racks', 0)}_{k}",
-                                    (0.08, 0.55, 0.85),
-                                    (x + math.cos(yaw) * off, y + math.sin(yaw) * off, 0.42),
-                                    yaw,
-                                )
-                                assign(rack, metal_mat)
-                            stats["bike_racks"] = stats.get("bike_racks", 0) + 1
                     t += step + (slot % 3) * 0.8
                 dist += seg
     return stats
@@ -3158,6 +3183,10 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     dash_mat = principled("road_dash", (0.82, 0.78, 0.55, 1.0), 0.9)
     path_mat = principled("park_path", (0.48, 0.42, 0.32, 1.0), 0.95)
     chimney_mat = principled("chimney_brick", (0.32, 0.18, 0.14, 1.0), 0.9)
+    chimney_cap_mat = principled("chimney_cap", (0.50, 0.49, 0.46, 1.0), 0.85)
+    chimney_pot_mat = principled("chimney_pot", (0.48, 0.23, 0.14, 1.0), 0.8)
+    roof_box_mat = principled("roof_stairhead", (0.52, 0.50, 0.46, 1.0), 0.9)
+    roof_metal_mat = principled("roof_plant", (0.60, 0.62, 0.63, 1.0), 0.5, metallic=0.4)
     pole_mat = principled("pole", (0.18, 0.18, 0.18, 1.0), 0.5, metallic=0.4)
     housing_mat = principled("tl_housing", (0.08, 0.08, 0.08, 1.0), 0.45, metallic=0.35)
     lamp_mats = [
@@ -3179,6 +3208,18 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     wood_mat = principled("bench_wood", (0.32, 0.22, 0.12, 1.0), 0.88)
     bin_mat = principled("bin_green", (0.14, 0.28, 0.16, 1.0), 0.65, metallic=0.2)
     lamp_head_mat = glowing("lamp_head", (0.75, 0.72, 0.55, 1.0), 0.35, (1.0, 0.78, 0.45, 1.0))
+    clutter_mats = {
+        "metal": pole_mat,
+        "bin": bin_mat,
+        "lamp_head": lamp_head_mat,
+        "signal_red": principled("signal_red", (0.62, 0.06, 0.05, 1.0), 0.45, metallic=0.15),
+        "signal_white": principled("signal_white", (0.82, 0.82, 0.78, 1.0), 0.5),
+        "cabinet": principled("street_cabinet", (0.42, 0.45, 0.43, 1.0), 0.6, metallic=0.25),
+        "meter_blue": principled("ticket_meter", (0.10, 0.20, 0.45, 1.0), 0.45, metallic=0.2),
+        "container_green": principled("bring_glass_green", (0.10, 0.34, 0.18, 1.0), 0.55, metallic=0.1),
+        "container_blue": principled("bring_pmd_blue", (0.12, 0.26, 0.58, 1.0), 0.55, metallic=0.1),
+        "container_white": principled("bring_glass_white", (0.78, 0.78, 0.74, 1.0), 0.55, metallic=0.1),
+    }
 
     # Only bake materials for types/variants present in this tile — keeps GLB lean.
     used_keys = {"eclectic"}
@@ -3216,6 +3257,10 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "plinth": {n: principled(f"plinth_{n}", s["plinth"], 0.92) for n, s in style_items},
         "trim": {n: principled(f"trim_{n}", s["trim"], 0.7) for n, s in style_items},
         "chimney": chimney_mat,
+        "chimney_cap": chimney_cap_mat,
+        "chimney_pot": chimney_pot_mat,
+        "roof_box": roof_box_mat,
+        "roof_metal": roof_metal_mat,
         "ivy": ivy_mats,
         "climber": climber_mats,
         "shutter": shutter_mats,
@@ -3265,6 +3310,8 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Park amenities: {park_am}")
     bench_stats = benches_blender.add_benches(layout, RAILS, wood_mat, pole_mat)
     print(f"Benches (surveyed positions + facing): {bench_stats}")
+    clutter_stats = clutter_blender.add_clutter(layout, RAILS, clutter_mats)
+    print(f"Street clutter (OSM-mapped bins, hoops, bollards, hydrants, ...): {clutter_stats}")
 
     signal_placements = collect_signal_placements(layout, spawn_xy=spawn_xy)
     lights_n = 0
@@ -3301,6 +3348,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
             lamp_head_mat,
             trunk_mat,
             canopy_mats,
+            skip_lamps=any(c.get("kind") == "lamp" for c in layout.get("clutter") or []),
         )
         print(f"Street furniture: {furniture}")
 
@@ -3312,10 +3360,12 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     print(f"Climbing plants: {len(CLIMBERS)} houses on {len(streets)} streets (max {climbers.MAX_PER_STREET}/street)")
 
     DORMER_STATS["dormers"] = 0
+    ROOFTOP_STATS.update({"chimneys": 0, "plant": 0})
     ROOF_STATS.clear()
     ROOF_STATS.update({"measured": 0, "fallback": 0})
     for bldg in layout.get("buildings") or []:
         add_building(bldg, mats, spawn_xy=spawn_xy)
+    print(f"Rooftop detail: {ROOFTOP_STATS}, merged into {flush_rooftop()} meshes")
     print(f"Mansard dormers: {DORMER_STATS['dormers']}; textured roof families: {sorted((mats.get('roof_tex') or {}))}")
     print(f"Climbing-plant leaf clusters: {CLIMBER_STATS['leaves']}")
     print(f"Aerial-matched roofs: {ROOF_STATS}")
