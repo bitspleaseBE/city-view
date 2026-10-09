@@ -343,7 +343,9 @@
       import { createTraffic } from "./traffic.js";
       import { createTransit } from "./transit.js";
       import { createPedestrians } from "./pedestrians.js";
+      import { createMicromobility } from "./micromobility.js";
       import { createMinimap } from "./minimap.js";
+      import { createStreetLocator } from "./street-locate.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -653,7 +655,9 @@
       let traffic = { update() {}, dispose() {} };
       let transit = { update() {}, dispose() {} };
       let pedestrians = null;
+      let micromobility = null;
       let minimap = null;
+      let streetLocator = null;
       // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
       let playBounds = null;
       const _clampTmp = new THREE.Vector3();
@@ -1128,23 +1132,26 @@
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
           });
-          // ---- Mini map ----
-          // Mini map loads its own roads data, but we pass what we have
+          micromobility = await createMicromobility(scene, THREE, { count: 28 });
+          // ---- Mini map + street name locator ----
           minimap = createMinimap(THREE, {
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             width: 200,
             height: 200,
           });
+          streetLocator = await createStreetLocator();
           // Cars give way to trams/buses instead of driving through them.
           if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
           const nCars = traffic.count ?? 0;
           const nTransit = transit.count ?? 0;
           const nPeds = pedestrians?.groups?.reduce((n, g) => n + g.members.length, 0) ?? 0;
+          const nMicro = micromobility?.count ?? 0;
           const bits = [];
           if (nCars > 0) bits.push(`${nCars} cars`);
           if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
           if (nPeds > 0) bits.push(`${nPeds} people`);
+          if (nMicro > 0) bits.push(`${nMicro} bikes/scooters`);
           status.textContent =
             bits.length > 0
               ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · E boards the tram`
@@ -1286,6 +1293,7 @@
         traffic.update(simDt, walker);
         transit.update(simDt, walker);
         if (pedestrians) pedestrians.update(simDt);
+        if (micromobility) micromobility.update(simDt);
 
         // ---- Mini map (free mode teleport via click) ----
         if (minimap) {
@@ -1301,8 +1309,17 @@
               softClampXZ(freeCam, playBounds);
             }
           }
-          const ppos = mode === "walk" ? walkControls.getObject().position : avatar.position;
-          minimap.draw(ppos, traffic, transit, pedestrians, mode);
+          const ppos =
+            mode === "walk"
+              ? walkControls.getObject().position
+              : mode === "free"
+                ? freeCam
+                : avatar.position;
+          if (streetLocator && minimap.showStreetName) {
+            const { street, changed } = streetLocator.update(ppos.x, ppos.z);
+            if (changed && street) minimap.showStreetName(street);
+          }
+          minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility);
         }
 
         // Auto-alight when the requested stop dwell begins.

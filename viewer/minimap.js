@@ -30,6 +30,54 @@ export function createMinimap(THREE, opts = {}) {
   canvas.style.cursor = "pointer";
   document.body.appendChild(canvas);
 
+  // Street name label resting above the mini map
+  const streetLabel = document.createElement("div");
+  streetLabel.setAttribute("aria-live", "polite");
+  streetLabel.style.cssText = [
+    "position:fixed",
+    `right:${MARGIN}px`,
+    `bottom:${MARGIN + height + 8}px`,
+    "max-width:" + width + "px",
+    "padding:6px 10px",
+    "background:rgba(26,36,48,0.82)",
+    "color:#f4efe6",
+    "font:600 0.82rem/1.25 \"Iowan Old Style\",\"Palatino Linotype\",Palatino,serif",
+    "letter-spacing:0.01em",
+    "border:1px solid rgba(255,255,255,0.12)",
+    "border-radius:6px",
+    "pointer-events:none",
+    "z-index:500",
+    "text-align:right",
+    "opacity:0",
+    "transform:translateY(4px)",
+    "transition:opacity 280ms ease, transform 280ms ease",
+    "white-space:nowrap",
+    "overflow:hidden",
+    "text-overflow:ellipsis",
+  ].join(";");
+  document.body.appendChild(streetLabel);
+
+  let streetHideTimer = 0;
+  const STREET_HOLD_MS = 3200;
+
+  function showStreetName(name) {
+    if (!name) return;
+    streetLabel.textContent = name;
+    if (streetHideTimer) clearTimeout(streetHideTimer);
+    // Retrigger enter animation
+    streetLabel.style.opacity = "0";
+    streetLabel.style.transform = "translateY(4px)";
+    // Force reflow so the transition restarts
+    void streetLabel.offsetWidth;
+    streetLabel.style.opacity = "1";
+    streetLabel.style.transform = "translateY(0)";
+    streetHideTimer = setTimeout(() => {
+      streetLabel.style.opacity = "0";
+      streetLabel.style.transform = "translateY(4px)";
+      streetHideTimer = 0;
+    }, STREET_HOLD_MS);
+  }
+
   const ctx = canvas.getContext("2d");
   const W = canvas.width;
   const H = canvas.height;
@@ -107,7 +155,7 @@ export function createMinimap(THREE, opts = {}) {
   });
 
   // ---- Draw dynamic elements each frame ----
-  function draw(playerPos, traffic, transit, pedestrians, mode) {
+  function draw(playerPos, traffic, transit, pedestrians, mode, micromobility) {
     if (!visible) return;
 
     // Clear and redraw from background
@@ -138,6 +186,16 @@ export function createMinimap(THREE, opts = {}) {
         const p = toPixel(c.pos.x, c.pos.z);
         ctx.fillStyle = "#88aacc";
         ctx.fillRect(p.u - 1.5, p.v - 1, 3, 2);
+      }
+    }
+
+    // Bikes / scooters / cargo bikes
+    if (micromobility && micromobility.vehicles) {
+      for (const v of micromobility.vehicles) {
+        if (!v.pos) continue;
+        const p = toPixel(v.pos.x, v.pos.z);
+        ctx.fillStyle = v.kind === "scooter" ? "#00c2a8" : v.kind === "cargo" ? "#d4a020" : "#3a8a5a";
+        ctx.fillRect(p.u - 1, p.v - 1, 2, 2);
       }
     }
 
@@ -176,7 +234,13 @@ export function createMinimap(THREE, opts = {}) {
   function setVisible(v) {
     visible = v;
     canvas.style.display = v ? "block" : "none";
+    streetLabel.style.display = v ? "block" : "none";
+    if (!v && streetHideTimer) {
+      clearTimeout(streetHideTimer);
+      streetHideTimer = 0;
+      streetLabel.style.opacity = "0";
+    }
   }
 
-  return { draw, consumeTeleport, setVisible, canvas };
+  return { draw, consumeTeleport, setVisible, showStreetName, canvas };
 }
