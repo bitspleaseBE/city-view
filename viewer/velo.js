@@ -16,6 +16,28 @@ const RIM = 0xb8b8bc;
 // Modelled at 1:1.55 like blender/velo_blender.py; this is a real-size Velo (wheel r ≈ 0.31 m).
 const BIKE_SCALE = 1.55;
 
+/** Shared so every ride / street-parked Velo brightens together at night. */
+let _lampMat = null;
+let _tailMat = null;
+
+function nightMats(THREE) {
+  if (!_lampMat) {
+    _lampMat = new THREE.MeshStandardMaterial({
+      color: 0xfff6dd,
+      emissive: 0xfff2cc,
+      emissiveIntensity: 0,
+      roughness: 0.4,
+    });
+    _tailMat = new THREE.MeshStandardMaterial({
+      color: 0xa01010,
+      emissive: 0xff2020,
+      emissiveIntensity: 0,
+      roughness: 0.45,
+    });
+  }
+  return { lamp: _lampMat, tail: _tailMat };
+}
+
 /**
  * Compact Velo step-through. Front wheel toward local −Z (matches Three.js look dir).
  * Origin on the ground under the bottom bracket.
@@ -27,6 +49,7 @@ export function makeVeloBike(THREE) {
   const metal = new THREE.MeshStandardMaterial({ color: METAL, roughness: 0.35, metalness: 0.65 });
   const tire = new THREE.MeshStandardMaterial({ color: TIRE, roughness: 0.9, metalness: 0.05 });
   const rim = new THREE.MeshStandardMaterial({ color: RIM, roughness: 0.4, metalness: 0.5 });
+  const { lamp, tail } = nightMats(THREE);
 
   function tube(len, rad, mat) {
     return new THREE.Mesh(new THREE.CylinderGeometry(rad, rad, len, 8), mat);
@@ -129,6 +152,12 @@ export function makeVeloBike(THREE) {
   const arm = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.12, 0.02), metal);
   arm.position.set(0.04, 0.2, 0.02);
 
+  // Headlamp on the rack / fork; red reflector under the mudguard.
+  const headlamp = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), lamp);
+  headlamp.position.set(0, 0.5, -0.48);
+  const taillight = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.028, 0.022), tail);
+  taillight.position.set(0, 0.34, 0.52);
+
   g.add(
     front,
     rear,
@@ -147,7 +176,9 @@ export function makeVeloBike(THREE) {
     mud,
     badge,
     bb,
-    arm
+    arm,
+    headlamp,
+    taillight
   );
   g.userData.wheels = [front, rear];
   g.scale.setScalar(BIKE_SCALE);
@@ -401,6 +432,12 @@ export async function createVelo(scene, THREE) {
     hw: 1.0,
   }));
 
+  function setNight(glow) {
+    if (!_lampMat || !_tailMat) return;
+    _lampMat.emissiveIntensity = 0.3 + 1.6 * glow;
+    _tailMat.emissiveIntensity = 0.3 + 1.2 * glow;
+  }
+
   return {
     stations,
     solids,
@@ -410,6 +447,7 @@ export async function createVelo(scene, THREE) {
     getRideHud,
     getPrompt,
     update,
+    setNight,
     dispose,
     count: stations.length,
   };
