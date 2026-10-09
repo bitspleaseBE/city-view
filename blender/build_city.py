@@ -29,6 +29,7 @@ if _BLENDER_DIR not in sys.path:
 import benches_blender  # noqa: E402
 import barriers_blender  # noqa: E402
 import clutter_blender  # noqa: E402
+import courtyards_blender  # noqa: E402
 import roadware_blender  # noqa: E402
 import trees_blender  # noqa: E402
 
@@ -3283,6 +3284,31 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
             park_mat,
             uv_tile_m=surface_kit.surface_tile_m("grass"),
         )
+    courtyard_mats = {
+        # Private lots wear differently from the street: same asphalt, a little paler and bluer.
+        "asphalt": surface_mat("asphalt", "lot_asphalt", (0.14, 0.14, 0.15, 1.0), 0.94, tint=(0.80, 0.82, 0.86)),
+        "paving": surface_mat("sidewalk", "yard_paving", (0.50, 0.49, 0.45, 1.0), 0.95, tint=(0.82, 0.80, 0.76)),
+        "concrete": surface_mat("sidewalk", "yard_concrete", (0.48, 0.48, 0.47, 1.0), 0.96, tint=(0.62, 0.64, 0.66)),
+        "sett": surface_mat("curb", "yard_sett", (0.40, 0.39, 0.36, 1.0), 0.92, tint=(0.85, 0.84, 0.82)),
+        "gravel": surface_mat("gravel", "yard_gravel", (0.60, 0.58, 0.52, 1.0), 0.96, tint=(0.30, 0.30, 0.28)),
+        "grass": surface_mat("grass", "yard_grass", (0.28, 0.48, 0.26, 1.0), 0.92, tint=PARK_TINT),
+        "woodland": surface_mat("grass", "woodland_floor", (0.14, 0.24, 0.12, 1.0), 0.95, tint=(0.22, 0.20, 0.24)),
+        "dirt": principled("site_dirt", (0.30, 0.24, 0.16, 1.0), 0.97),
+        "rubber": principled("play_rubber", (0.46, 0.20, 0.14, 1.0), 0.92),
+        "turf": principled("pitch_turf", (0.10, 0.34, 0.12, 1.0), 0.9),
+        "pool": principled("pool_water", (0.16, 0.42, 0.52, 1.0), 0.1),
+    }
+    courtyard_tiles = {
+        "asphalt": surface_kit.surface_tile_m("asphalt"),
+        "paving": surface_kit.surface_tile_m("sidewalk"),
+        "concrete": surface_kit.surface_tile_m("sidewalk"),
+        "sett": surface_kit.surface_tile_m("curb"),
+        "gravel": surface_kit.surface_tile_m("gravel"),
+        "grass": surface_kit.surface_tile_m("grass"),
+        "woodland": surface_kit.surface_tile_m("grass"),
+    }
+    courtyard_stats = courtyards_blender.add_courtyards(layout, courtyard_mats, courtyard_tiles)
+    print(f"Courtyard surfaces (OSM car parks, playgrounds, pitches, sites, pools, woods): {courtyard_stats}")
     for i, road in enumerate(layout.get("roads") or []):
         add_road(
             f"road_{road.get('id', i)}",

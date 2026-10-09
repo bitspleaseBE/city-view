@@ -27,6 +27,7 @@ from cityview.paths import (
 )
 from cityview.benches import attach_benches, summarize as summarize_benches
 from cityview.barriers import attach_barriers, summarize as summarize_barriers
+from cityview.courtyards import attach_courtyards, summarize as summarize_courtyards
 from cityview.clutter import attach_clutter, summarize as summarize_clutter
 from cityview.trees import attach_trees, summarize as summarize_trees
 from cityview.streetscape import (
@@ -166,6 +167,9 @@ def city_command(args: argparse.Namespace) -> int:
     # OSM-mapped garden walls, hedges, fences, retaining walls (courtyard / plot boundaries); no network.
     barrier_plan = attach_barriers(layout, osm, bbox, origin, spawn_xy)
     print("barriers: " + summarize_barriers(barrier_plan))
+    # OSM-mapped courtyard ground (car parks, playgrounds, pitches, building sites, pools, woods).
+    courtyard_plan = attach_courtyards(layout, osm, bbox, origin)
+    print("courtyards: " + summarize_courtyards(courtyard_plan))
     edged = sum(1 for b in layout["buildings"] if b.get("street_edges"))
     type_counts: dict[str, int] = {}
     for b in layout["buildings"]:
