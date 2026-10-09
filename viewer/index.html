@@ -1429,6 +1429,9 @@
           // < zebra-on-rails), so the offset can never invert the stack at distance.
           const layerBias = (name) => {
             const n = (name || "").toLowerCase();
+            // Photo façades sit on the extruded wall; pull them forward so grazing
+            // night views don't z-fight into a checkerboard (also rebuilt prouder).
+            if (n.includes("facade") || n.includes("_landmark")) return { factor: -3, units: -3 };
             if (n.startsWith("zebra_rail")) return { factor: -5, units: -5 };
             if (n.startsWith("rail_")) return { factor: -4, units: -4 };
             if (n.startsWith("tram_")) return { factor: -3, units: -3 };
@@ -1447,9 +1450,9 @@
               obj.frustumCulled = true;
               if (obj.material) {
                 const bias = layerBias(obj.name);
-                // zebra_rail pieces share the stripe material with plain zebras but need a
-                // different bias, so give them a private copy.
-                if (bias && (obj.name || "").toLowerCase().startsWith("zebra_rail")) {
+                // Facades / zebra_rail share materials with coplanar neighbours (building
+                // rings, plain zebras); clone so the bias doesn't pull those forward too.
+                if (bias && /facade|_landmark|zebra_rail/i.test(obj.name || "")) {
                   obj.material = Array.isArray(obj.material)
                     ? obj.material.map((m) => m.clone())
                     : obj.material.clone();

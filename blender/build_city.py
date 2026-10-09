@@ -23,7 +23,16 @@ from cityview import parking as parking_plan  # noqa: E402
 from cityview.landmarks import LANDMARKS_DIR, resolve_landmark_photo  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 from cityview.shop_brands import fascia_for_brand  # noqa: E402
-from cityview.signals import face_dir, pedestrian_signal_yaw, vehicle_signal_yaw  # noqa: E402
+from cityview.signals import (  # noqa: E402
+    face_dir,
+    in_carriageway,
+    junction_approaches,
+    pedestrian_signal_yaw,
+    vehicle_signal_yaw,
+    zebra_bars,
+    ZEBRA_BAR_M,
+    ZEBRA_DEPTH_M,
+)
 
 _BLENDER_DIR = str(Path(__file__).resolve().parent)
 if _BLENDER_DIR not in sys.path:
@@ -1143,7 +1152,9 @@ def add_photo_facade(
     yaw = math.atan2(y1 - y0, x1 - x0)
     ux, uy = math.cos(yaw), math.sin(yaw)
     mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
-    ox, oy = mx + nx * 0.06, my + ny * 0.06
+    # Skin centre ≥ 12 cm clear of the extruded ring wall (half-depth 5 cm → back ≥ 7 cm).
+    # The old 6 cm centre left only ~1 cm, which z-fights into a checkerboard at night.
+    ox, oy = mx + nx * 0.12, my + ny * 0.12
     base_type = style_name.split("__v")[0]
     seed = zlib.adler32(name.encode("utf-8"))
     quads = facade_kit.plan_facade_quads(length * 0.98, eaves_z, floors, base_type, seed)
@@ -1173,8 +1184,8 @@ def add_photo_facade(
     bm.normal_update()
     apply_planar_uvs([f for f in bm.faces if f.material_index == 0], uv_layer, tile_m)
 
-    # Photo quads sit 10 cm proud of the skin centre line (>= 4 cm clear of its front face).
-    off = 0.16
+    # Photo quads sit clear of the skin front (≥ 6 cm) so night grazing angles stay clean.
+    off = 0.14
     # Which way does increasing "a" run as seen from the street? n == u x z  -> rightwards.
     rightwards = (uy * nx - ux * ny) > 0
     half = length * 0.98 * 0.5
@@ -1292,7 +1303,7 @@ def add_street_facade(
     nx, ny = outward
     yaw = math.atan2(y1 - y0, x1 - x0)
     mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
-    ox, oy = mx + nx * 0.06, my + ny * 0.06
+    ox, oy = mx + nx * 0.12, my + ny * 0.12
 
     mesh = bpy.data.meshes.new(name)
     # Slot order matches material_index below.
@@ -3311,64 +3322,8 @@ def _cluster_signal_nodes(
 def _approaches_at_junction(
     jx: float, jy: float, roads: list, *, search_r: float = 16.0
 ) -> list[dict]:
-    """Unique inbound approaches (stop-line + curb) around a junction centre."""
-    raw: list[dict] = []
-    for road in roads:
-        kind = road.get("kind") or "residential"
-        if kind not in _DRIVEABLE_SIGNAL_KINDS:
-            continue
-        pts = road.get("points") or []
-        width = float(road.get("width") or 6.0)
-        if len(pts) < 2:
-            continue
-        for i in range(len(pts) - 1):
-            ax, ay = float(pts[i][0]), float(pts[i][1])
-            bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
-            for ex, ey, ox, oy in ((ax, ay, bx, by), (bx, by, ax, ay)):
-                if math.hypot(ex - jx, ey - jy) > search_r:
-                    continue
-                dx, dy = ex - ox, ey - oy
-                length = math.hypot(dx, dy) or 1.0
-                # Inbound tangent: travel toward the junction endpoint.
-                tx, ty = dx / length, dy / length
-                # Stop-line ~3m before junction along the approach.
-                sx = ex - tx * 3.2
-                sy = ey - ty * 3.2
-                raw.append({"tx": tx, "ty": ty, "sx": sx, "sy": sy, "width": width})
-            # Mid-segment projection when the junction sits along a long way.
-            dx, dy = bx - ax, by - ay
-            len2 = dx * dx + dy * dy
-            if len2 < 1.0:
-                continue
-            t = max(0.0, min(1.0, ((jx - ax) * dx + (jy - ay) * dy) / len2))
-            if t <= 0.02 or t >= 0.98:
-                continue
-            cx, cy = ax + t * dx, ay + t * dy
-            if math.hypot(cx - jx, cy - jy) > search_r * 0.6:
-                continue
-            length = math.sqrt(len2)
-            tx, ty = dx / length, dy / length
-            for sign in (1.0, -1.0):
-                atx, aty = tx * sign, ty * sign
-                sx = jx - atx * 3.2
-                sy = jy - aty * 3.2
-                raw.append({"tx": atx, "ty": aty, "sx": sx, "sy": sy, "width": width})
-
-    # Angle-bin so we get at most one approach per compass arm.
-    bins: dict[int, dict] = {}
-    for ap in raw:
-        ang = math.atan2(ap["ty"], ap["tx"])
-        key = int(round(ang / (math.pi / 4.0))) % 8
-        prev = bins.get(key)
-        if prev is None:
-            bins[key] = ap
-            continue
-        # Prefer stop-lines closer to a typical 3m offset from junction.
-        d_new = abs(math.hypot(ap["sx"] - jx, ap["sy"] - jy) - 3.2)
-        d_old = abs(math.hypot(prev["sx"] - jx, prev["sy"] - jy) - 3.2)
-        if d_new < d_old:
-            bins[key] = ap
-    return list(bins.values())[:4]
+    """Inbound arms around a junction centre (see ``cityview.signals.junction_approaches``)."""
+    return junction_approaches(jx, jy, roads, search_r=search_r, kinds=_DRIVEABLE_SIGNAL_KINDS)
 
 
 def collect_signal_placements(
@@ -3405,20 +3360,23 @@ def collect_signal_placements(
                 {
                     "tx": tx,
                     "ty": ty,
-                    "sx": cx - tx * 3.0,
-                    "sy": cy - ty * 3.0,
+                    "zebra_x": cx,
+                    "zebra_y": cy,
+                    "stop_x": cx - tx * 2.4,
+                    "stop_y": cy - ty * 2.4,
                     "width": width,
                 }
             ]
         for ap in approaches:
-            sx, sy = ap["sx"], ap["sy"]
+            sx, sy = ap["stop_x"], ap["stop_y"]
             if any(math.hypot(sx - ux, sy - uy) < 5.5 for ux, uy in used_stops):
                 continue
             used_stops.append((sx, sy))
             tx, ty = ap["tx"], ap["ty"]
             width = float(ap["width"])
             half = width * 0.5
-            # Prefer right-hand curb; flip to left if that lands on a tram bed.
+            # Prefer right-hand curb; flip to left on tram bed or when the pole
+            # would sit in another carriageway (split roads, skewed junctions).
             rx, ry = ty, -tx
             pole_x = pole_y = None
             side = 1.0
@@ -3426,6 +3384,8 @@ def collect_signal_placements(
                 px = sx + rx * sign * (half + 0.85)
                 py = sy + ry * sign * (half + 0.85)
                 if RAILS and RAILS.within(px, py, railclear.CLEAR_SIGNAL_POLE):
+                    continue
+                if in_carriageway(px, py, roads, _DRIVEABLE_SIGNAL_KINDS):
                     continue
                 pole_x, pole_y = px, py
                 side = sign
@@ -3441,6 +3401,8 @@ def collect_signal_placements(
                     "pole_y": pole_y,
                     "stop_x": sx,
                     "stop_y": sy,
+                    "zebra_x": ap["zebra_x"],
+                    "zebra_y": ap["zebra_y"],
                     "tx": tx,
                     "ty": ty,
                     "yaw": yaw,
@@ -3532,24 +3494,26 @@ def _add_ped_figure(
         assign(legs, mat)
 
 
-def _add_zebra_stripe(name: str, cx: float, cy: float, tx: float, ty: float, span: float, stripe_mat) -> int:
-    """One stripe across a carriageway, split so rail-overlapping pieces ride on top.
+def _add_zebra_bar(name: str, cx: float, cy: float, tx: float, ty: float, stripe_mat) -> int:
+    """One zebra bar parallel to the kerb (along the sidewalk), split over rails.
 
-    Pieces outside rail corridors sit on the asphalt layer; pieces over a tram bed
-    sit above the rails (never z-fighting underneath them).
+    ``(tx, ty)`` is the road tangent. The bar's long axis follows that direction so
+    the stripes read as sidewalk-aligned; pieces that overlap a tram bed sit above
+    the rails.
     """
     yaw = math.atan2(ty, tx)
-    ux, uy = -ty, tx
     made = 0
-    for k, (t0, t1, on_rail) in enumerate(railclear.span_intervals(cx, cy, ux, uy, span, RAILS)):
+    for k, (t0, t1, on_rail) in enumerate(
+        railclear.span_intervals(cx, cy, tx, ty, ZEBRA_DEPTH_M, RAILS)
+    ):
         length = t1 - t0
         if length < 0.05:
             continue
         mid = (t0 + t1) * 0.5
         piece = add_box(
             f"{'zebra_rail' if on_rail else 'zebra'}_{name}_{k}",
-            (0.42, length, 0.02),
-            (cx + ux * mid, cy + uy * mid, Z_ZEBRA_ON_RAIL if on_rail else Z_ZEBRA),
+            (length, ZEBRA_BAR_M, 0.02),
+            (cx + tx * mid, cy + ty * mid, Z_ZEBRA_ON_RAIL if on_rail else Z_ZEBRA),
             yaw,
         )
         assign(piece, stripe_mat)
@@ -3565,18 +3529,24 @@ def add_crosswalks(
 ) -> int:
     """Zebra sets: one per signal approach, plus OSM crossings that sit on rails.
 
-    * A signal-approach zebra that would overlap a tram corridor is a decorative
-      guess, so it is skipped unless OSM maps a pedestrian crossing right there.
-    * OSM crossings on rails are drawn over the rails (see ``_add_zebra_stripe``).
+    Each white bar runs parallel to the sidewalk / kerb; bars are laid across the
+    carriageway. A signal-approach zebra that would sit on rails is skipped unless
+    OSM maps a pedestrian crossing there.
     """
     count = 0
     crossings = crossings or []
     covered: list[tuple[float, float]] = []
+    drawn: list[tuple[float, float, float, float]] = []
     for i, pl in enumerate(placements):
-        sx, sy = float(pl["stop_x"]), float(pl["stop_y"])
+        sx = float(pl.get("zebra_x", pl["stop_x"]))
+        sy = float(pl.get("zebra_y", pl["stop_y"]))
         if spawn_xy is not None and math.hypot(sx - spawn_xy[0], sy - spawn_xy[1]) > 220.0:
             continue
         tx, ty = float(pl["tx"]), float(pl["ty"])
+        # Both directions of one road share a zebra (mid-block lights, duplicate clusters).
+        if any(math.hypot(sx - dx, sy - dy) < 4.0 and abs(tx * dtx + ty * dty) > 0.8 for dx, dy, dtx, dty in drawn):
+            continue
+        drawn.append((sx, sy, tx, ty))
         width = float(pl.get("width") or 6.0)
         span = max(3.2, min(7.5, width * 0.92))
         if railclear.zebra_touches_rails(sx, sy, tx, ty, span, RAILS):
@@ -3584,9 +3554,9 @@ def add_crosswalks(
             if backed is None:
                 continue
         covered.append((sx, sy))
-        for s in range(5):
-            along = -1.6 + s * 0.8
-            count += _add_zebra_stripe(f"{i}_{s}", sx + tx * along, sy + ty * along, tx, ty, span, stripe_mat)
+        ux, uy = -ty, tx
+        for s, lat in enumerate(zebra_bars(span)):
+            count += _add_zebra_bar(f"{i}_{s}", sx + ux * lat, sy + uy * lat, tx, ty, stripe_mat)
 
     # Real OSM crossings over/next to rails that no signal zebra already covers.
     placed_rail = 0
@@ -3607,9 +3577,9 @@ def add_crosswalks(
         span = 5.5
         covered.append((x, y))
         placed_rail += 1
-        for s in range(5):
-            along = -1.6 + s * 0.8
-            count += _add_zebra_stripe(f"x{j}_{s}", x + tx * along, y + ty * along, tx, ty, span, stripe_mat)
+        ux, uy = -ty, tx
+        for s, lat in enumerate(zebra_bars(span)):
+            count += _add_zebra_bar(f"x{j}_{s}", x + ux * lat, y + uy * lat, tx, ty, stripe_mat)
     return count
 
 
