@@ -119,6 +119,8 @@ class RoadsExportTests(unittest.TestCase):
         # Clustered OSM nodes → stop-line approaches, not raw centre spam.
         self.assertGreaterEqual(len(payload["signals"]), 1)
         self.assertIn("stopX", payload["signals"][0])
+        self.assertIn("yaw", payload["signals"][0])
+        self.assertIn("pedYaw", payload["signals"][0])
 
 
 class MaxspeedTests(unittest.TestCase):

@@ -47,9 +47,18 @@ export const THREE = {
   CircleGeometry: Disposable,
   PlaneGeometry: Disposable,
   MeshLambertMaterial: class extends Disposable {
-    constructor() { super(); this.color = { setScalar() {}, setRGB() {} }; this.emissive = { setRGB() {} }; }
+    constructor() { super(); this.color = { setScalar() {}, setRGB() {}, setHex() {} }; this.emissive = { setRGB() {} }; this.userData = {}; }
   },
-  MeshBasicMaterial: class extends Disposable { constructor() { super(); this.opacity = 0; } },
+  MeshBasicMaterial: class extends Disposable {
+    constructor() {
+      super();
+      this.opacity = 0;
+      this.fog = true;
+      this.toneMapped = true;
+      this.userData = {};
+      this.color = { setScalar() {}, setRGB() {}, setHex() {} };
+    }
+  },
   SpriteMaterial: Disposable,
   CanvasTexture: class extends Disposable {
     constructor() { super(); this.needsUpdate = false; this.colorSpace = 0; this.anisotropy = 0; }

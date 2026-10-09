@@ -8,6 +8,7 @@ from typing import Any
 from cityview.building_heights import FLOOR_H, MAX_EAVES_M, MAX_LEVELS
 from cityview.directions import infer_parallel_track_directions, mark_dual_carriageways
 from cityview.passages import apply_building_passages
+from cityview.signals import pedestrian_signal_yaw, vehicle_signal_yaw
 
 
 def _dist(ax: float, ay: float, bx: float, by: float) -> float:
@@ -659,15 +660,23 @@ def _export_signal_stop_lines(
             width = float(ap["width"])
             half = width * 0.5
             rx, ry = ty, -tx
+            # Right-hand curb first (Belgian RHT); same rule as the Blender builder.
+            side = 1.0
+            pole_x = stop_x + rx * side * (half + 0.85)
+            pole_y = stop_y + ry * side * (half + 0.85)
+            yaw = vehicle_signal_yaw(tx, ty)
+            ped_yaw = pedestrian_signal_yaw(rx, ry, side)
             out.append(
                 {
                     "id": cluster[0][2],
-                    "x": stop_x + rx * (half + 0.85),
-                    "y": stop_y + ry * (half + 0.85),
+                    "x": pole_x,
+                    "y": pole_y,
                     "stopX": stop_x,
                     "stopY": stop_y,
                     "tx": tx,
                     "ty": ty,
+                    "yaw": yaw,
+                    "pedYaw": ped_yaw,
                     "width": width,
                     "kind": "traffic_signals",
                 }

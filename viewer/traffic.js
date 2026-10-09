@@ -69,6 +69,7 @@ const QUEUE_STUCK_SEC = 10; // even queueing cars should move eventually
 const MAX_STEP = 0.05; // s: largest integration step (kinematics tuned and soaked at <= 20 Hz)
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame
 const CYCLE_SEC = 30;
+const AMBER_SEC = 3; // green → amber → red → green (no amber returning to green)
 const METERS_PER_CAR = 480;
 const MIN_CARS = 8;
 const MAX_CARS = 16;
@@ -311,12 +312,20 @@ function buildSignals(raw, THREE, cycleSec, paths = []) {
     }
     // Axis group: NS vs EW for alternating greens within the 30s cycle.
     const ns = Math.abs(tan.z) >= Math.abs(tan.x);
+    const pole = new THREE.Vector3();
+    if (Number.isFinite(s.x) && Number.isFinite(s.y)) blenderToThree(s.x, s.y, pole);
+    else pole.copy(stop);
+    const yawBlender = Number(s.yaw);
+    const pedYawBlender = Number(s.pedYaw);
     signals.push({
       stop,
+      pole: pole.clone(),
       tan,
       ns,
       phaseOffset,
       width: s.width || 6,
+      yawBlender: Number.isFinite(yawBlender) ? yawBlender : null,
+      pedYawBlender: Number.isFinite(pedYawBlender) ? pedYawBlender : null,
     });
   }
   // A signalised junction must control every arm, not only the arms that happened to carry an
@@ -327,18 +336,204 @@ function buildSignals(raw, THREE, cycleSec, paths = []) {
       if (arm.hasHead) continue;
       const setback = Math.max(4.4, (arm.width || 6) * 0.6 + 1.2);
       const stop = new THREE.Vector3(node.c.x + arm.ux * setback, 0, node.c.z + arm.uz * setback);
+      // Approach tangent into the junction (cars travel along this toward the stop).
       const tan = new THREE.Vector3(-arm.ux, 0, -arm.uz);
+      const halfW = (arm.width || 6) * 0.5 + 0.85;
+      // Right-hand curb relative to inbound tan.
+      const pole = new THREE.Vector3(stop.x + -tan.z * halfW, 0, stop.z + tan.x * halfW);
       signals.push({
         stop,
+        pole,
         tan,
         ns: Math.abs(tan.z) >= Math.abs(tan.x),
         phaseOffset: node.offset,
         width: arm.width || 6,
+        yawBlender: null,
+        pedYawBlender: null,
         synthesized: true,
       });
     }
   }
   return { signals, cycleSec };
+}
+
+/** Blender local-+Y yaw → Three.js rotation.y when local +Z is the front. */
+function blenderFaceYawToThree(yaw) {
+  const fx = -Math.sin(yaw);
+  const fy = Math.cos(yaw);
+  return Math.atan2(fx, -fy);
+}
+
+/** Face oncoming traffic from an inbound Three.js tangent. */
+function faceYawFromTan(tan) {
+  return Math.atan2(-tan.x, -tan.z);
+}
+
+function signalPhase(sig, nowSec, cycleSec) {
+  const phase = ((nowSec + sig.phaseOffset) % cycleSec + cycleSec) % cycleSec;
+  const half = cycleSec * 0.5;
+  const mine = sig.ns ? phase < half : phase >= half;
+  if (!mine) return "red";
+  const local = sig.ns ? phase : phase - half;
+  if (local >= half - AMBER_SEC) return "amber";
+  return "green";
+}
+
+function makeEmissiveMat(THREE, color, on) {
+  const mat = new THREE.MeshBasicMaterial({
+    color,
+    fog: false,
+    toneMapped: false,
+  });
+  mat.userData = mat.userData || {};
+  mat.userData.base = color;
+  mat.userData.on = !!on;
+  return mat;
+}
+
+function setLampLit(mat, lit, litColor, dimColor) {
+  const next = lit ? litColor : dimColor;
+  const ud = mat.userData || (mat.userData = {});
+  if (ud.on === lit && ud.base === next) return;
+  if (mat.color && typeof mat.color.setHex === "function") mat.color.setHex(next);
+  ud.on = lit;
+  ud.base = next;
+}
+
+function addPedFigure(THREE, parent, y, walking, mat) {
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.04), mat);
+  head.position.set(0, y + 0.07, 0.02);
+  parent.add(head);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.09, 0.04), mat);
+  torso.position.set(0, y, 0.02);
+  parent.add(torso);
+  if (walking) {
+    const legA = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.04), mat);
+    legA.position.set(0.025, y - 0.08, 0.02);
+    parent.add(legA);
+    const legB = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.04), mat);
+    legB.position.set(-0.025, y - 0.08, 0.04);
+    parent.add(legB);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.03, 0.03), mat);
+    arm.position.set(0.04, y + 0.02, 0.03);
+    parent.add(arm);
+  } else {
+    const legs = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.04), mat);
+    legs.position.set(0, y - 0.08, 0.02);
+    parent.add(legs);
+  }
+}
+
+function buildSignalVisuals(signals, THREE, root) {
+  const housingMat = new THREE.MeshLambertMaterial({ color: 0x141414 });
+  const poleMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+  const dims = {
+    redOn: 0xff2a1a,
+    amberOn: 0xffa010,
+    greenOn: 0x1ad64a,
+    redOff: 0x3a100c,
+    amberOff: 0x3a2410,
+    greenOff: 0x0c2a14,
+    pedRedOn: 0xff3030,
+    pedGreenOn: 0x22e060,
+    pedRedOff: 0x351010,
+    pedGreenOff: 0x0e2814,
+  };
+  const lampGeo = new THREE.BoxGeometry(0.18, 0.16, 0.1);
+  const disposables = [housingMat, poleMat, lampGeo];
+
+  for (let i = 0; i < signals.length; i++) {
+    const sig = signals[i];
+    const group = new THREE.Group();
+    group.name = `runtime_signal_${i}`;
+    const polePos = sig.pole || sig.stop;
+    group.position.set(polePos.x, 0, polePos.z);
+    const faceYaw =
+      sig.yawBlender != null ? blenderFaceYawToThree(sig.yawBlender) : faceYawFromTan(sig.tan);
+    group.rotation.y = faceYaw;
+
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3.4, 0.1), poleMat);
+    pole.position.y = 1.7;
+    group.add(pole);
+
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.9, 0.22), housingMat);
+    head.position.set(0, 3.55, 0.18);
+    group.add(head);
+
+    const redMat = makeEmissiveMat(THREE, dims.redOff, false);
+    const amberMat = makeEmissiveMat(THREE, dims.amberOff, false);
+    const greenMat = makeEmissiveMat(THREE, dims.greenOff, false);
+    disposables.push(redMat, amberMat, greenMat);
+    const lamps = [
+      { mat: redMat, mesh: new THREE.Mesh(lampGeo, redMat), y: 3.85 },
+      { mat: amberMat, mesh: new THREE.Mesh(lampGeo, amberMat), y: 3.59 },
+      { mat: greenMat, mesh: new THREE.Mesh(lampGeo, greenMat), y: 3.33 },
+    ];
+    for (const lamp of lamps) {
+      lamp.mesh.position.set(0, lamp.y, 0.32);
+      group.add(lamp.mesh);
+    }
+
+    const pedGroup = new THREE.Group();
+    let pedYaw;
+    if (sig.pedYawBlender != null) pedYaw = blenderFaceYawToThree(sig.pedYawBlender);
+    else pedYaw = Math.atan2(sig.tan.z, -sig.tan.x);
+    pedGroup.rotation.y = pedYaw - faceYaw;
+    const pedHead = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.55, 0.14), housingMat);
+    pedHead.position.set(0, 2.35, 0.16);
+    pedGroup.add(pedHead);
+    const pedRedMat = makeEmissiveMat(THREE, dims.pedRedOff, false);
+    const pedGreenMat = makeEmissiveMat(THREE, dims.pedGreenOff, false);
+    disposables.push(pedRedMat, pedGreenMat);
+    const pedRed = new THREE.Group();
+    pedRed.position.set(0, 2.52, 0.26);
+    pedRed.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.08), pedRedMat));
+    addPedFigure(THREE, pedRed, 0, false, pedRedMat);
+    pedGroup.add(pedRed);
+    const pedGreen = new THREE.Group();
+    pedGreen.position.set(0, 2.3, 0.26);
+    pedGreen.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.2, 0.08), pedGreenMat));
+    addPedFigure(THREE, pedGreen, 0, true, pedGreenMat);
+    pedGroup.add(pedGreen);
+    group.add(pedGroup);
+
+    root.add(group);
+    sig.visual = {
+      redMat,
+      amberMat,
+      greenMat,
+      pedRedMat,
+      pedGreenMat,
+      dims,
+      group,
+    };
+  }
+  return disposables;
+}
+
+function updateSignalVisuals(signals, nowSec, cycleSec) {
+  for (let i = 0; i < signals.length; i++) {
+    const sig = signals[i];
+    const v = sig.visual;
+    if (!v) continue;
+    const phase = signalPhase(sig, nowSec, cycleSec);
+    const d = v.dims;
+    setLampLit(v.redMat, phase === "red", d.redOn, d.redOff);
+    setLampLit(v.amberMat, phase === "amber", d.amberOn, d.amberOff);
+    setLampLit(v.greenMat, phase === "green", d.greenOn, d.greenOff);
+    const walk = phase === "red";
+    setLampLit(v.pedRedMat, !walk, d.pedRedOn, d.pedRedOff);
+    setLampLit(v.pedGreenMat, walk, d.pedGreenOn, d.pedGreenOff);
+  }
+}
+
+/** Hide baked GLB signal lamps (always-on colours); runtime heads own the aspect. */
+function hideBakedSignalLamps(scene) {
+  if (!scene || typeof scene.traverse !== "function") return;
+  scene.traverse((obj) => {
+    const n = obj.name || "";
+    if (/^signal_\d/i.test(n)) obj.visible = false;
+  });
 }
 
 function samplePath(path, s, THREE, outPos, outTan) {
@@ -550,9 +745,8 @@ function fleetCount(paths, requested) {
 }
 
 function signalIsGreen(sig, nowSec, cycleSec) {
-  const phase = ((nowSec + sig.phaseOffset) % cycleSec + cycleSec) % cycleSec;
-  const nsGreen = phase < cycleSec * 0.5;
-  return sig.ns ? nsGreen : !nsGreen;
+  // Amber is not green: approaching cars must stop when they can.
+  return signalPhase(sig, nowSec, cycleSec) === "green";
 }
 
 /**
@@ -584,6 +778,9 @@ export async function createTraffic(scene, THREE, opts = {}) {
   const root = new THREE.Group();
   root.name = "RuntimeTraffic";
   scene.add(root);
+  hideBakedSignalLamps(scene);
+  const signalDisposables = buildSignalVisuals(signals, THREE, root);
+  updateSignalVisuals(signals, 0, cycleSec);
   const parts = makeSharedParts(THREE);
 
   const cars = [];
@@ -947,6 +1144,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     const n = Math.max(1, Math.ceil(total / MAX_STEP));
     const h = total / n;
     for (let i = 0; i < n; i++) stepSim(h, walkObject);
+    updateSignalVisuals(signals, simTime, cycleSec);
   }
 
   function stepSim(step, walkObject) {
@@ -1309,6 +1507,9 @@ export async function createTraffic(scene, THREE, opts = {}) {
     parts.headMat.dispose();
     parts.tailMat.dispose();
     for (const m of parts.bodyMats) m.dispose();
+    for (const d of signalDisposables) {
+      if (d && typeof d.dispose === "function") d.dispose();
+    }
   }
 
   /** Night glow for every car's head/tail lamps: 0 = day, 1 = full night. */
