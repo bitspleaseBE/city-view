@@ -75,6 +75,7 @@ jobs:
           print("meshopt ok; HumanSpawn present; lamps",
                 sum(1 for n in j["nodes"] if (n.get("name") or "").startswith("lamp_h_")))
           PY
+          rm -f viewer/klein_antwerpen.glb.premeshopt.glb
 
       - name: Verify façade photo textures are inside the GLB
         run: |
