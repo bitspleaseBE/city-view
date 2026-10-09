@@ -620,6 +620,10 @@
       let baseFogDensity = 0.00055; // retuned to the district size after the GLB loads
       let skirtMat = null;
       const glowMats = []; // { mat, scale }: emissive intensity = scale * glow(t)
+      /** Tree / shrub leaves + bark: lerp base colour toward night green/brown. */
+      const vegMats = []; // { mat, day: Color }
+      const VEG_NIGHT = new THREE.Color(0x0a120c);
+      const TRUNK_NIGHT = new THREE.Color(0x0c0908);
       const lampHeads = []; // world positions of street-lamp heads
       const LAMP_LIGHTS = 4;
       const LAMP_INTENSITY = 38;
@@ -727,6 +731,14 @@
         shops && shops.setNight(glow);
         terraces && terraces.setNight && terraces.setNight(glow);
         transit.setNight && transit.setNight(glow);
+
+        // Crowns stay vivid green under moonlight unless we pull them down with the sky.
+        for (const v of vegMats) {
+          v.mat.color.copy(v.day).lerp(v.night, night * 0.88);
+          if (v.mat.envMapIntensity != null) {
+            v.mat.envMapIntensity = v.dayEnv * (1 - 0.75 * night);
+          }
+        }
 
         starMat.opacity = smooth(0.55, 1.0, t) * 0.9;
         stars.visible = starMat.opacity > 0.01;
@@ -1476,6 +1488,19 @@
                   }
                   if (m.emissiveMap) glowMats.push({ mat: m, scale: 1.55 }); // lit windows
                   else if (m.name === "lamp_head") glowMats.push({ mat: m, scale: 2.6 }); // street lamps
+                  if (
+                    m.color &&
+                    m.name &&
+                    /^(canopy_|trunk$|shrub)/i.test(m.name) &&
+                    !vegMats.some((v) => v.mat === m)
+                  ) {
+                    vegMats.push({
+                      mat: m,
+                      day: m.color.clone(),
+                      night: /^trunk$/i.test(m.name) ? TRUNK_NIGHT : VEG_NIGHT,
+                      dayEnv: m.envMapIntensity ?? 1,
+                    });
+                  }
                   if (bias) {
                     m.polygonOffset = true;
                     m.polygonOffsetFactor = bias.factor;
