@@ -17,6 +17,11 @@ kind                   OSM tags                                     facing
 ``meter``              ``vending=parking_tickets`` (pay & display)  face toward the street
 ``flagpole``           ``man_made=flagpole``                        (round)
 ``lamp``               ``highway=street_lamp``                      arm over the carriageway
+``picnic_table``       ``leisure=picnic_table``                     table along the path
+``charging``           ``amenity=charging_station``                 face toward the street
+``vending``            ``amenity=vending_machine`` (not tickets)    face toward the street
+``artwork``            ``tourism=artwork``                          face toward the street
+``guidepost``          ``tourism=information`` / guidepost          board toward the street
 =====================  ===========================================  ==================
 
 Placement reuses the bench rules: duplicates within ``DEDUPE_M`` of the same kind collapse,
@@ -38,7 +43,23 @@ from cityview.trees import _Obstacles, _PointGrid
 
 ATTRIBUTION = "Street clutter: (c) OpenStreetMap contributors (ODbL)."
 
-KINDS = ("bin", "bike_rack", "bollard", "hydrant", "post_box", "recycling", "cabinet", "meter", "flagpole", "lamp")
+KINDS = (
+    "bin",
+    "bike_rack",
+    "bollard",
+    "hydrant",
+    "post_box",
+    "recycling",
+    "cabinet",
+    "meter",
+    "flagpole",
+    "lamp",
+    "picnic_table",
+    "charging",
+    "vending",
+    "artwork",
+    "guidepost",
+)
 
 DEDUPE_M = {
     "bin": 0.8,
@@ -51,6 +72,11 @@ DEDUPE_M = {
     "meter": 1.0,
     "flagpole": 1.0,
     "lamp": 1.5,
+    "picnic_table": 2.0,
+    "charging": 1.5,
+    "vending": 1.2,
+    "artwork": 2.0,
+    "guidepost": 1.5,
 }
 BUILDING_MARGIN = 0.15
 ROAD_NUDGE_M = 1.6  # survey points up to this deep in a carriageway slide to the kerb
@@ -64,7 +90,7 @@ HOOP_SPACING_M = 0.8
 # Max distance from the spawn for the small items (LOD); the landmarks (hydrants, post
 # boxes, cabinets, flagpoles, lamps) are kept tile-wide.
 SMALL_ITEM_RADIUS_M = 450.0
-SMALL_KINDS = frozenset({"bin", "bike_rack", "bollard", "meter"})
+SMALL_KINDS = frozenset({"bin", "bike_rack", "bollard", "meter", "vending", "guidepost"})
 
 
 def classify(tags: dict[str, str]) -> str | None:
@@ -94,6 +120,21 @@ def classify(tags: dict[str, str]) -> str | None:
         return "cabinet"
     if tags.get("vending") == "parking_tickets":
         return "meter"
+    if amenity == "vending_machine":
+        return "vending"
+    if amenity == "charging_station":
+        return "charging"
+    if tags.get("leisure") == "picnic_table":
+        return "picnic_table"
+    if tags.get("tourism") == "artwork":
+        return "artwork"
+    if tags.get("tourism") == "information" or tags.get("information") in {
+        "guidepost",
+        "board",
+        "map",
+        "trail_blaze",
+    }:
+        return "guidepost"
     if tags.get("man_made") == "flagpole":
         return "flagpole"
     if tags.get("highway") == "street_lamp":

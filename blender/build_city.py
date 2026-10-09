@@ -4033,6 +4033,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "metal": pole_mat,
         "bin": bin_mat,
         "lamp_head": lamp_head_mat,
+        "wood": wood_mat,
         "signal_red": principled("signal_red", (0.62, 0.06, 0.05, 1.0), 0.45, metallic=0.15),
         "signal_white": principled("signal_white", (0.82, 0.82, 0.78, 1.0), 0.5),
         "cabinet": principled("street_cabinet", (0.42, 0.45, 0.43, 1.0), 0.6, metallic=0.25),
@@ -4040,6 +4041,9 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "container_green": principled("bring_glass_green", (0.10, 0.34, 0.18, 1.0), 0.55, metallic=0.1),
         "container_blue": principled("bring_pmd_blue", (0.12, 0.26, 0.58, 1.0), 0.55, metallic=0.1),
         "container_white": principled("bring_glass_white", (0.78, 0.78, 0.74, 1.0), 0.55, metallic=0.1),
+        "plinth": principled("art_plinth", (0.55, 0.52, 0.48, 1.0), 0.85),
+        "artwork": principled("art_piece", (0.35, 0.38, 0.42, 1.0), 0.55, metallic=0.15),
+        "board": principled("info_board", (0.18, 0.22, 0.16, 1.0), 0.7),
     }
 
     # Only bake materials for types/variants present in this tile — keeps GLB lean.

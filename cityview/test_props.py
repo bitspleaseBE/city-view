@@ -15,6 +15,8 @@ class PropsExportTest(unittest.TestCase):
             "clutter": [
                 {"kind": "bollard", "x": 0, "y": 1},
                 {"kind": "bike_rack", "x": 2, "y": 2, "hoops": 5, "yaw": 1.0},
+                {"kind": "picnic_table", "x": 4, "y": 1, "yaw": 0.25},
+                {"kind": "charging", "x": 1, "y": 1},
                 {"kind": "flower_tub", "x": 2, "y": 3},
             ],
             "barriers": [
@@ -23,8 +25,15 @@ class PropsExportTest(unittest.TestCase):
             ],
         }
         out = export_props_for_viewer(layout, {"x": 0, "y": 0}, radius=100)
-        self.assertEqual(out["trunks"], [[1.0, 2.0, 0.23], [0.0, 1.0, 0.09]])
-        self.assertEqual(out["boxes"], [[3.0, 4.0, 0.5, 1.0, 0.3], [2.0, 2.0, 1.0, 2.0, 0.12]])
+        self.assertEqual(out["trunks"], [[1.0, 2.0, 0.23], [0.0, 1.0, 0.09], [1.0, 1.0, 0.28]])
+        self.assertEqual(
+            out["boxes"],
+            [
+                [3.0, 4.0, 0.5, 1.0, 0.3],
+                [2.0, 2.0, 1.0, 2.0, 0.12],
+                [4.0, 1.0, 0.25, 0.9, 0.55],
+            ],
+        )
         self.assertEqual(out["segments"], [[0.0, 0.0, 10.0, 0.0, 0.3]])
 
 
