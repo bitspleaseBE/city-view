@@ -14,8 +14,9 @@ import { createPeoplePool } from "./people.js";
 
 const ROADS_URL = "./roads.json";
 const JOIN_M = 5.0; // endpoints this close are the same junction
-const LATERAL_M = 0.28; // stay inside a 2 m sidewalk
+const LATERAL_M = 0.22; // stay inside a 2 m sidewalk, prefer the building half
 const SAFE_KINDS = new Set(["sidewalk", "footway", "path", "pedestrian", "steps"]);
+const MIN_SPAWN_M = 28; // short stubs only produce U-turn ping-pong
 const KNOCK_SPEED = 1.8;
 const SLIDE_DECEL = 5.5;
 const GET_UP_S = 1.4; // stand-ins without a rig just tip back up
@@ -206,28 +207,48 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       // Prefer forward, safe, long paths; crossings only when needed / when green.
       const redCross = isCross && !crossingOk(dest.id);
       const score =
-        align * 3 +
-        (isSafe ? 1.2 : 0) -
-        (isCross ? 1.5 : 0) -
-        (redCross ? 2.5 : 0) -
-        pingPong * 2 +
-        Math.min(2, dest.length / 40);
-      return { c, align, score, isCross, redCross };
+        align * 3.5 +
+        (isSafe ? 1.5 : 0) -
+        (isCross ? 2.2 : 0) -
+        (redCross ? 4 : 0) -
+        pingPong * 3 +
+        Math.min(2.5, dest.length / 35);
+      return { c, align, score, isCross, redCross, isSafe };
     });
     scored.sort((a, b) => b.score - a.score);
 
-    // Prefer forward non-crossing options; fall back to any forward; then any.
-    const forwardSafe = scored.filter((s) => s.align > 0.2 && !s.isCross);
-    const forwardGreen = scored.filter((s) => s.align > 0.15 && !s.redCross);
-    const forward = scored.filter((s) => s.align > 0.15);
+    // Stay on pavement: forward safe → forward green crossing → forward only.
+    // Never fall back to a reverse/U-turn edge here (that is advanceEnd's job).
+    const forwardSafe = scored.filter((s) => s.align > 0.25 && !s.isCross && s.isSafe);
+    const forwardGreen = scored.filter((s) => s.align > 0.2 && !s.redCross && (s.isSafe || s.isCross));
+    const forward = scored.filter((s) => s.align > 0.2 && !s.isCross);
     const pool = forwardSafe.length
       ? forwardSafe
       : forwardGreen.length
         ? forwardGreen
-        : forward.length
-          ? forward
-          : scored;
+        : forward;
+    if (!pool.length) return null;
     return pool[(Math.random() * Math.min(3, pool.length)) | 0].c;
+  }
+
+  /** Hop onto another long sidewalk instead of pacing a stub forever. */
+  function relocateMember(m) {
+    const pool = spawnPool.length ? spawnPool : walkRoutes.filter((r) => r.kind !== "crossing");
+    if (!pool.length) return false;
+    let dest = pool[(Math.random() * pool.length) | 0];
+    for (let k = 0; k < 6; k++) {
+      const cand = pool[(Math.random() * pool.length) | 0];
+      if (cand !== walkRoutes[m.routeIdx] && cand.length >= (dest.length || 0)) dest = cand;
+    }
+    const idx = walkRoutes.indexOf(dest);
+    if (idx < 0) return false;
+    const rLen = routeLength(dest);
+    m.routeIdx = idx;
+    m.dir = Math.random() < 0.5 ? 1 : -1;
+    m.s = 2 + Math.random() * Math.max(1, rLen - 4);
+    m.recent = new Set();
+    m.turns = 0;
+    return true;
   }
 
   function advanceEnd(m) {
@@ -238,22 +259,30 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     const next = pickNext(m.routeIdx, atEnd, heading, m.recent);
     if (next) {
       m.recent.add(m.routeIdx);
-      if (m.recent.size > 4) {
-        m.recent = new Set([...m.recent].slice(-3));
+      if (m.recent.size > 5) {
+        m.recent = new Set([...m.recent].slice(-4));
       }
+      m.turns = 0;
       m.routeIdx = next.routeIdx;
       m.dir = next.reverse ? -1 : 1;
       m.s = next.reverse ? routeLength(walkRoutes[next.routeIdx]) - 0.05 : 0.05;
       return;
     }
-    // Dead end: turn around (natural on a cul-de-sac).
+    m.turns = (m.turns || 0) + 1;
+    // Cul-de-sac: one U-turn is fine on a long sidewalk; short stubs / repeat
+    // reversals → relocate onto the connected network.
+    if (route.length < MIN_SPAWN_M || m.turns >= 2) {
+      if (relocateMember(m)) return;
+    }
     m.dir = -m.dir;
     m.s = Math.max(0.05, Math.min(routeLength(route) - 0.05, m.s));
   }
 
   function spawnRoutes() {
-    const safe = walkRoutes.filter((r) => r.safe !== false && SAFE_KINDS.has(r.kind) && r.length >= 12);
-    return safe.length ? safe : walkRoutes.filter((r) => r.kind !== "crossing");
+    const safe = walkRoutes.filter(
+      (r) => r.safe !== false && SAFE_KINDS.has(r.kind) && r.length >= MIN_SPAWN_M
+    );
+    return safe.length ? safe : walkRoutes.filter((r) => r.kind !== "crossing" && r.length >= 16);
   }
 
   /** `at` keeps an existing group's place ({ routeIdx, s, dir, side0 }) when re-dressing it. */
@@ -264,7 +293,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     const startS = at ? at.s : Math.random() * Math.max(1, rLen - 4);
     const dir = at ? at.dir : Math.random() < 0.5 ? 1 : -1;
     // Pavement lane: group centre, then fan members slightly so they don't stack.
-    const side0 = at ? at.side0 : (Math.random() < 0.5 ? -1 : 1) * (0.1 + Math.random() * LATERAL_M);
+    const side0 = at ? at.side0 : (Math.random() < 0.5 ? -1 : 1) * (0.06 + Math.random() * LATERAL_M);
     const member = (mesh, s, side, speed, prof) => ({
       mesh,
       routeIdx,
@@ -276,6 +305,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       animRate: speed / WALK_SPEED,
       prof,
       recent: new Set(),
+      turns: 0,
       offX: 0,
       offZ: 0,
       down: null,
@@ -720,6 +750,7 @@ function buildWalkRoutes(walks, center) {
       id: w.id,
       kind: w.kind || "sidewalk",
       safe: w.safe !== false,
+      side: w.side || null,
       points: pts,
       length: len,
     });
