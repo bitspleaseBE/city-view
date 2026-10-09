@@ -14,7 +14,9 @@ import math
 import re
 from typing import Any, Iterable
 
+from cityview.facade_kit import TARGET_HOUSE_M, TOWER_HOUSE_M, TOWER_LEVELS
 from cityview.geo import project
+from cityview.shop_brands import normalize_shop_brand, shopfront_style
 
 # OSM tag value → viewer category (colour + icon + default hours).
 AMENITY_CATS = {
@@ -63,8 +65,16 @@ DEFAULT_HOURS: dict[str, list[list[tuple[float, float]]]] = {
 FACADE_SEARCH_M = 14.0  # a shop node farther than this from any façade is dropped
 STREET_BONUS_M = 12.0  # a street-facing wall wins over a nearer side / courtyard wall
 MIN_SPACING_M = 3.2  # two signs on one façade keep this far apart
-SIGN_MAX_W = 6.5
+SIGN_MAX_W = 5.6  # keep under one photo-façade house (~6.4 m)
 SIGN_MIN_W = 2.4
+
+
+def house_bays(length: float, floors: int = 4) -> list[tuple[float, float]]:
+    """Same house cuts as ``facade_kit.plan_facade_quads`` (metres along the edge)."""
+    target = TARGET_HOUSE_M if floors < TOWER_LEVELS else TOWER_HOUSE_M
+    reps = max(1, int(round(length / target)))
+    rep = length / reps
+    return [(i * rep, (i + 1) * rep) for i in range(reps)]
 
 
 def category_for(tags: dict[str, str]) -> tuple[str, str] | None:
@@ -269,9 +279,14 @@ def snap_to_facade(
     _, b, i0, i1, t, length, (nx, ny), street = best
     ring = b["ring"]
     a, c = ring[i0], ring[i1]
-    w = max(SIGN_MIN_W, min(SIGN_MAX_W, length * 0.7))
-    margin = (w * 0.5 + 0.3) / length
-    t = min(max(t, margin), 1.0 - margin) if margin < 0.5 else 0.5
+    floors = int(b.get("floors") or 4)
+    # Snap onto one photo-façade house so a sign never straddles two elevations.
+    along = t * length
+    bays = house_bays(length, floors)
+    a0, a1 = min(bays, key=lambda bay: abs((bay[0] + bay[1]) * 0.5 - along))
+    house_w = a1 - a0
+    w = max(SIGN_MIN_W, min(SIGN_MAX_W, house_w * 0.88))
+    t = ((a0 + a1) * 0.5) / length
     return {
         "x": a[0] + (c[0] - a[0]) * t,
         "y": a[1] + (c[1] - a[1]) * t,
@@ -282,7 +297,8 @@ def snap_to_facade(
         "t": t,
         "length": length,
         "street": street,
-        "floors": int(b.get("floors") or 0),
+        "floors": floors,
+        "houseW": round(house_w, 2),
     }
 
 
@@ -323,6 +339,8 @@ def plan_shops(
             continue
         taken.append(along)
         hours = parse_opening_hours(tags.get("opening_hours"))
+        style = shopfront_style(tags, kind, category, int(node["id"]))
+        brand = normalize_shop_brand(tags) or style.get("brand")
         rec = {
             "id": int(node["id"]),
             "name": (tags.get("name") or tags.get("brand") or "").strip()[:28],
@@ -333,11 +351,23 @@ def plan_shops(
             "nx": round(snap["nx"], 4),
             "ny": round(snap["ny"], 4),
             "w": round(snap["w"], 2),
+            "houseW": snap.get("houseW") or snap["w"],
             "hours": [[list(s) for s in day] for day in (hours or DEFAULT_HOURS[category])],
             "hoursKnown": hours is not None,
+            "mood": style.get("mood") or "retail",
+            "fascia": [round(c, 3) for c in style["fascia"][:3]],
+            "accent": [round(c, 3) for c in style["accent"][:3]],
+            "glass": [round(c, 3) for c in style["glass"][:3]],
         }
+        if brand:
+            rec["brand"] = brand
         if snap["street"] and has_terrace(tags, kind, category):
             rec["terrace"] = True
+        # Banks and cafés get a ground-floor shopfront panel under the fascia.
+        if style.get("mood") in {"bank", "cafe"} or brand in {
+            "belfius", "kbc", "crelan", "bpost", "ing", "argenta", "bnp",
+        }:
+            rec["shopfront"] = True
         placed.append(rec)
     return placed
 

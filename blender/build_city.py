@@ -2864,13 +2864,14 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             near_spawn=near_spawn,
             climber=CLIMBERS.get((int(bid), ei)) if detail == "full" else None,
         )
-        if type_id == "supermarket" and detail == "full" and edge is primary:
+        brand_key = bldg.get("brand_key") or (bldg.get("use") or {}).get("brand_key")
+        if detail == "full" and edge is primary and brand_key:
             add_supermarket_fascia(
                 f"{name}_fascia{ei}",
                 ring[i0],
                 ring[i1],
                 edge.get("outward") or [0.0, 1.0],
-                bldg.get("brand_key") or (bldg.get("use") or {}).get("brand_key"),
+                brand_key,
             )
 
 

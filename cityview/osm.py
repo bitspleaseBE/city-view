@@ -661,7 +661,11 @@ def join_pois_to_buildings(
 
 
 def _use_fields(tags: dict[str, str]) -> dict[str, Any]:
-    brand_key = normalize_shop_brand(tags) if tags.get("shop") in POI_SHOPS else None
+    brand_key = (
+        normalize_shop_brand(tags)
+        if tags.get("shop") in POI_SHOPS or tags.get("amenity") == "bank"
+        else None
+    )
     use: dict[str, Any] = {}
     if tags.get("amenity"):
         use["amenity"] = tags["amenity"]
