@@ -456,6 +456,7 @@
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
       import { createOutdoorsGuard } from "./outdoors.js";
+      import { wireParkedCarLamps } from "./cars.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -725,6 +726,7 @@
         lampGlow = glow;
         for (const l of lampLights) l.intensity = LAMP_INTENSITY * glow * l.userData.on;
         traffic.setNight && traffic.setNight(glow);
+        parkedCars && parkedCars.setNight(glow);
         scooters && scooters.setNight(glow);
         micromobility && micromobility.setNight && micromobility.setNight(glow);
         velo && velo.setNight && velo.setNight(glow);
@@ -849,6 +851,7 @@
       let shops = null;
       let terraces = null;
       let props = null;
+      let parkedCars = null;
       let outdoors = null;
       const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
       /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
@@ -1519,6 +1522,9 @@
               lampHeads.push(new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld));
             }
           });
+          // Wrap kerbside cars + bolt-on lamps before merge so they stay discrete.
+          parkedCars = wireParkedCarLamps(cityRoot, THREE);
+          cityRoot.updateMatrixWorld(true);
           setLoad(0.9, "Building the streets");
           await nextFrame();
           if (new URLSearchParams(location.search).get("merge") !== "0") {
