@@ -3,6 +3,11 @@
  * with car-following, 30s lights at real stop-lines, and stuck recovery.
  * Never uses tram/rail ways.
  *
+ * Directions: every road carries `oneway` (1 = only along its points, -1 = only against, 0 =
+ * both ways) straight from the OSM oneway tags, and `onewayBus` for buses. Cars only ever
+ * spawn, respawn and hand over onto a road in a legal direction, so the two halves of a dual
+ * carriageway (each its own one-way OSM way) carry traffic in opposite directions.
+ *
  * Speeds: each road carries `speedKmh` (OSM maxspeed, else a Belgian urban
  * default by highway class) exported into roads.json. Cars cruise slightly
  * under that limit (per-driver variance) and brake kinematically for leaders,
@@ -114,6 +119,22 @@ function resolveSpeedKmh(road, kind) {
   return DEFAULT_SPEED_KMH[kind] ?? FALLBACK_SPEED_KMH;
 }
 
+/** 1 / -1 / 0 from an exported oneway code (anything unknown = two-way). */
+function directionCode(v) {
+  const n = Number(v);
+  return n > 0 ? 1 : n < 0 ? -1 : 0;
+}
+
+/** May a car drive `path` backwards (`reverse`) / forwards? */
+function mayDrive(path, reverse) {
+  return path.dir === 0 || path.dir === (reverse ? -1 : 1);
+}
+
+/** The travel direction a car is allowed on `path` (random on two-way roads). */
+function legalReverse(path) {
+  return path.dir === 0 ? Math.random() < 0.5 : path.dir < 0;
+}
+
 function buildPaths(roads, THREE) {
   const paths = [];
   for (const road of roads) {
@@ -142,9 +163,12 @@ function buildPaths(roads, THREE) {
     if (len < 4) continue;
     const laneOffset = Number.isFinite(road.laneOffset) ? road.laneOffset : LANE_OFFSET;
     const limitKmh = resolveSpeedKmh(road, kind);
+    const dir = directionCode(road.oneway);
     paths.push({
       id: road.id,
       kind,
+      dir, // legal car direction along `points`: 1 forward only, -1 reverse only, 0 both
+      busDir: Number.isFinite(road.onewayBus) ? directionCode(road.onewayBus) : dir,
       limitKmh,
       speedLimit: limitKmh * KMH,
       width: road.width || 6,
@@ -424,17 +448,25 @@ function pickNextPath(paths, path, atEnd, cars, car, THREE) {
     if (other === path) continue;
     const dStart = tip.distanceTo(other.start);
     const dEnd = tip.distanceTo(other.end);
-    if (dStart < SNAP_M) {
+    // Entering `other` at its start means driving it forwards, at its end backwards: only
+    // roads that may be driven that way are on the menu (never a one-way street's wrong end).
+    if (dStart < SNAP_M && mayDrive(other, false)) {
       const inTan = entryTangent(other, false, THREE);
       candidates.push({ index: i, reverse: false, d: dStart, align: outTan.dot(inTan) });
     }
-    if (dEnd < SNAP_M) {
+    if (dEnd < SNAP_M && mayDrive(other, true)) {
       const inTan = entryTangent(other, true, THREE);
       candidates.push({ index: i, reverse: true, d: dEnd, align: outTan.dot(inTan) });
     }
   }
-  if (!candidates.length) {
-    return { index: paths.indexOf(path), reverse: !atEnd ? false : true, flip: true };
+  // A one-way road cannot turn round at its end, and swinging back onto the opposite
+  // carriageway is not a junction either: with no legal way on, the car leaves the map and
+  // re-enters elsewhere (advanceJunction → respawnCar).
+  if (!candidates.length || (path.dir !== 0 && candidates.every((c) => c.align < -0.5))) {
+    if (path.dir !== 0) {
+      return { index: paths.indexOf(path), reverse: !atEnd, flip: true, recycle: true, align: -1 };
+    }
+    return { index: paths.indexOf(path), reverse: !atEnd ? false : true, flip: true, align: -1 };
   }
   // Prefer continuing forward; avoid U-turns; prefer quieter edges.
   for (const c of candidates) {
@@ -462,7 +494,7 @@ function pickNextPath(paths, path, atEnd, cars, car, THREE) {
 function createCar(paths, THREE, parts) {
   const index = (Math.random() * paths.length) | 0;
   const path = paths[index];
-  const reverse = Math.random() < 0.5;
+  const reverse = legalReverse(path);
   const s = 2 + Math.random() * Math.max(1, path.length * 0.8 - 4);
   const colorIndex = (Math.random() * BODY_COLORS.length) | 0;
   const mesh = makeCarMesh(THREE, parts, colorIndex);
@@ -564,7 +596,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       if (!clash) break;
       car.pathIndex = (Math.random() * paths.length) | 0;
       car.s = 2 + Math.random() * Math.max(1, paths[car.pathIndex].length * 0.8 - 4);
-      car.reverse = Math.random() < 0.5;
+      car.reverse = legalReverse(paths[car.pathIndex]);
       tries++;
     }
     // Path may have been re-rolled above; start at a fraction of *its* limit.
@@ -577,8 +609,13 @@ export async function createTraffic(scene, THREE, opts = {}) {
   const playerPos = new THREE.Vector3();
   let simTime = Math.random() * cycleSec;
 
-  /** Lane centre for a vehicle heading (tx, tz) on the car road nearest (x, z); see lanes.js. */
-  function laneAt(x, z, tx, tz, out) {
+  /**
+   * Lane centre for a vehicle heading (tx, tz) on the car road nearest (x, z); see lanes.js.
+   * Only roads the vehicle may legally drive that way count (`mode` "bus" honours
+   * oneway:bus), so a bus never snaps into the lane of a one-way carriageway it would be
+   * driving the wrong way down.
+   */
+  function laneAt(x, z, tx, tz, out, mode = "car") {
     let bestD = 4.5;
     let found = false;
     for (let i = 0; i < paths.length; i++) {
@@ -601,6 +638,8 @@ export async function createTraffic(scene, THREE, opts = {}) {
         let uz = dz / len;
         const dot = ux * tx + uz * tz;
         if (Math.abs(dot) < 0.7) continue;
+        const legal = mode === "bus" ? path.busDir : path.dir;
+        if (legal !== 0 && legal !== (dot < 0 ? -1 : 1)) continue;
         if (dot < 0) {
           ux = -ux;
           uz = -uz;
@@ -743,7 +782,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     const origin = { pathIndex: car.pathIndex, reverse: car.reverse, s: car.s };
     for (let attempt = 0; attempt < 48; attempt++) {
       const pathIndex = (Math.random() * paths.length) | 0;
-      const reverse = Math.random() < 0.5;
+      const reverse = legalReverse(paths[pathIndex]);
       const s = 2 + Math.random() * Math.max(1, paths[pathIndex].length * 0.85 - 4);
       car.pathIndex = pathIndex;
       car.reverse = reverse;
@@ -838,6 +877,15 @@ export async function createTraffic(scene, THREE, opts = {}) {
     const path = paths[car.pathIndex];
     const atEnd = !car.reverse;
     const next = car.next || pickNextPath(paths, path, atEnd, cars, car, THREE);
+    if (next.recycle) {
+      // End of a one-way road with no legal way on (map edge / dead end): it may not turn
+      // round, so it leaves and re-enters on a free road, always in a legal direction.
+      car.next = null;
+      if (respawnCar(car, "oneway-end")) return true;
+      car.s = path.length - 0.5; // no free spot yet: wait at the end, retry next step
+      car.velocity = 0;
+      return false;
+    }
     const nextPath = paths[next.index];
     // Sharp turns / U-turns swing the car's body back across the road it came from, onto the
     // car following it. Drop it a car-half-length further along so it clears that lane.
@@ -1006,7 +1054,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       if (car.holdEntry) {
         desire = 0;
         reason = "cross";
-        if (car.next) {
+        if (car.next && !car.next.recycle) {
           const b = entryBlocked(
             car,
             car.next.index,
@@ -1017,7 +1065,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
           else if (b) leader = b;
         }
       }
-      if (car.next && remaining < NEXT_LOOKAHEAD) {
+      if (car.next && !car.next.recycle && remaining < NEXT_LOOKAHEAD) {
         const nx = car.next;
         // Do not roll up to the hand-off while the drop point is occupied: stop short of it
         // smoothly instead of being held at the last moment (a hard stop gets us rear-ended).

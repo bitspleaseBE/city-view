@@ -1,6 +1,11 @@
 /**
  * Runtime trams + buses on De Lijn / OSM transit paths.
  * Halt dwell (smooth brake / 20s stop / accel), E to board/alight.
+ *
+ * Directions: every path carries `direction` in transit.json (1 = drive the points in order,
+ * -1 = against, 0 = either). Tram tracks get it from the ordered OSM route relations (the two
+ * tracks of a dual-carriageway median run opposite ways), GTFS bus shapes are inherently
+ * stop-to-stop. Vehicles only ever spawn, hand over, and (re-)enter in the legal direction.
  */
 
 import { shared } from "./lanes.js";
@@ -43,6 +48,22 @@ function blenderToThree(x, y, out) {
   return out;
 }
 
+/** 1 / -1 / 0 from an exported direction code (unknown = either way). */
+function directionCode(v) {
+  const n = Number(v);
+  return n > 0 ? 1 : n < 0 ? -1 : 0;
+}
+
+/** May a vehicle drive `path` backwards (`reverse`) / forwards? */
+function mayDrive(path, reverse) {
+  return path.dir === 0 || path.dir === (reverse ? -1 : 1);
+}
+
+/** The direction flag a vehicle must use on `path`; `want` only decides on two-way paths. */
+function legalReverse(path, want) {
+  return path.dir === 0 ? !!want : path.dir < 0;
+}
+
 function buildPaths(rawPaths, THREE) {
   const paths = [];
   for (const path of rawPaths) {
@@ -71,6 +92,7 @@ function buildPaths(rawPaths, THREE) {
       id: path.id,
       mode,
       lines: path.lines || [],
+      dir: directionCode(path.direction),
       points: cleaned,
       cumulative,
       length: len,
@@ -512,8 +534,9 @@ function pickNextPath(paths, path, atEnd, THREE) {
     if (other.mode !== path.mode && !(path.mode === "tram" && other.mode === "subway")) continue;
     const dStart = tip.distanceTo(other.start);
     const dEnd = tip.distanceTo(other.end);
-    if (dStart < SNAP_M) candidates.push({ index: i, reverse: false, d: dStart });
-    if (dEnd < SNAP_M) candidates.push({ index: i, reverse: true, d: dEnd });
+    // Entering at the start drives the path forwards, at the end backwards: only legal ways.
+    if (dStart < SNAP_M && mayDrive(other, false)) candidates.push({ index: i, reverse: false, d: dStart });
+    if (dEnd < SNAP_M && mayDrive(other, true)) candidates.push({ index: i, reverse: true, d: dEnd });
   }
   if (!candidates.length) {
     return { index: paths.indexOf(path), reverse: !atEnd ? false : true, flip: true };
@@ -557,7 +580,7 @@ function steerBus(v, rate, dt) {
   if (v.mode !== "bus" || !v.offSet) return;
   let tx = -v.tan.z * 1.1;
   let tz = v.tan.x * 1.1;
-  if (shared.laneAt && shared.laneAt(v.baseX, v.baseZ, v.tan.x, v.tan.z, _lane)) {
+  if (shared.laneAt && shared.laneAt(v.baseX, v.baseZ, v.tan.x, v.tan.z, _lane, "bus")) {
     tx = _lane.x - v.baseX;
     tz = _lane.z - v.baseZ;
   }
@@ -574,7 +597,7 @@ function createVehicle(paths, THREE, parts, mode) {
   const indexInUse = (Math.random() * use.length) | 0;
   const path = use[indexInUse];
   const index = paths.indexOf(path);
-  const reverse = Math.random() < 0.5;
+  const reverse = legalReverse(path, Math.random() < 0.5);
   const s = Math.random() * path.length * 0.85;
   const mesh = mode === "tram" ? makeTramMesh(THREE, parts) : makeBusMesh(THREE, parts);
   const base = mode === "tram" ? TRAM_SPEED : BUS_SPEED;
@@ -706,9 +729,11 @@ export async function createTransit(scene, THREE, opts = {}) {
         const inside = Math.hypot(tmpP.x - spawnLocal.x, tmpP.z - spawnLocal.z) < ENTRY_R;
         if (inside) path.inside.push(c);
         if (prevIn !== null && inside !== prevIn) {
-          // outside -> inside going forward = forward gate; inside -> outside = reverse gate
-          if (inside) grp.push({ pathIndex: pi, reverse: false, coord: Math.min(path.length - 1, c + 2) });
-          else grp.push({ pathIndex: pi, reverse: true, coord: Math.max(1, c - STEP - 2) });
+          // outside -> inside going forward = forward gate; inside -> outside = reverse gate.
+          // A directed path only has the gate it may be driven through (a one-way track or bus
+          // shape is never entered backwards at the far rim).
+          if (inside && mayDrive(path, false)) grp.push({ pathIndex: pi, reverse: false, coord: Math.min(path.length - 1, c + 2) });
+          else if (!inside && mayDrive(path, true)) grp.push({ pathIndex: pi, reverse: true, coord: Math.max(1, c - STEP - 2) });
         }
         prevIn = inside;
       }
@@ -740,7 +765,7 @@ export async function createTransit(scene, THREE, opts = {}) {
     const path = allPaths[pathIndex];
     if (!path) return;
     v.pathIndex = pathIndex;
-    v.reverse = !!reverse;
+    v.reverse = legalReverse(path, reverse); // one-way paths ignore the requested direction
     const ts = Math.max(0.5, Math.min(path.length - 0.5, travel));
     v.s = v.reverse ? path.length - ts : ts;
     v.phase = "cruise";
@@ -817,7 +842,7 @@ export async function createTransit(scene, THREE, opts = {}) {
       const v = createVehicle(allPaths, THREE, parts, "tram");
       // Force onto the service path (or its reverse counterpart if present).
       let pi = pathIndex;
-      let reverse = false;
+      let reverse = false; // placeOnPath coerces this to the path's legal direction
       if (i % 2 === 1 && tramPaths.length > 1) {
         // Prefer the other tram way when it also hosts this halt.
         for (let j = 0; j < allPaths.length; j++) {
@@ -848,7 +873,8 @@ export async function createTransit(scene, THREE, opts = {}) {
       } else if (i === 1) {
         // Inbound ~55 m before halt — arrives soon if the waiter left.
         reverse = false;
-        const approach = Math.max(1, h.s - 55);
+        // ~55 m *before* the halt along the direction of travel.
+        const approach = allPaths[pi].dir < 0 ? Math.min(allPaths[pi].length - 1, h.s + 55) : Math.max(1, h.s - 55);
         placeOnPath(v, pi, approach, reverse);
         v.velocity = v.speed;
       } else {

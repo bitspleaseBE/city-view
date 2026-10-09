@@ -7,6 +7,7 @@ import unittest
 
 from cityview.geo import project
 from cityview.railclear import CLEAR_TREE
+from cityview.roadclear import TRUNK_MARGIN
 from cityview.trees import (
     CLEAR_REAL_TRUNK,
     _point_in_ring,
@@ -102,9 +103,54 @@ class RealTreeTests(unittest.TestCase):
 
     def test_trees_off_carriageway(self):
         layout = _layout(roads=[{"id": 1, "kind": "residential", "width": 8.0, "points": [[-50.0, 0.0], [50.0, 0.0]]}])
-        plan = plan_trees(layout, _payload([(0.0, 0.5), (0.0, 6.0)]), ORIGIN)
-        self.assertEqual(len(plan["trees"]), 1)
+        plan = plan_trees(layout, _payload([(0.0, 0.5), (30.0, 6.0)]), ORIGIN)
+        # The in-lane tree is snapped onto the pavement (not dropped, never left in the lane).
+        self.assertEqual(len(plan["trees"]), 2)
+        self.assertEqual(plan["stats"]["relocated_road"], 1)
+        for tree in plan["trees"]:
+            self.assertGreaterEqual(abs(tree["y"]) - 4.0, TRUNK_MARGIN - 0.01)
+
+    def test_snap_keeps_tree_on_its_own_side_and_close(self):
+        layout = _layout(roads=[{"id": 1, "kind": "residential", "width": 8.0, "points": [[-50.0, 0.0], [50.0, 0.0]]}])
+        plan = plan_trees(layout, _payload([(0.0, -2.5), (20.0, 3.0)]), ORIGIN)
+        low, high = sorted(plan["trees"], key=lambda t: t["x"])
+        self.assertLess(low["y"], -4.0)  # was on the -y half: stays on the -y pavement
+        self.assertGreater(high["y"], 4.0)
+        self.assertLess(math.hypot(low["x"] - 0.0, low["y"] + 2.5), 2.6)
+
+    def test_tree_in_lane_dropped_when_no_legal_ground_nearby(self):
+        # Centre of a very wide road: nowhere within snap range is clear of the asphalt.
+        layout = _layout(roads=[{"id": 1, "kind": "primary", "width": 16.0, "points": [[-50.0, 0.0], [50.0, 0.0]]}])
+        plan = plan_trees(layout, _payload([(0.0, 0.0)]), ORIGIN)
+        self.assertEqual(plan["trees"], [])
         self.assertEqual(plan["stats"]["dropped_road"], 1)
+
+    def test_snap_does_not_walk_into_buildings_or_trams(self):
+        layout = _layout(
+            roads=[{"id": 1, "kind": "residential", "width": 8.0, "points": [[-50.0, 0.0], [50.0, 0.0]]}],
+            buildings=[{"id": 1, "ring": [[-50.0, 4.2], [50.0, 4.2], [50.0, 20.0], [-50.0, 20.0]]}],
+        )
+        plan = plan_trees(layout, _payload([(0.0, 1.0)]), ORIGIN)
+        # +y pavement is a façade; the tree goes to the free -y side or is dropped, never into the wall.
+        for tree in plan["trees"]:
+            self.assertLess(tree["y"], -4.0)
+
+    def test_footpaths_are_not_carriageway(self):
+        layout = _layout(roads=[{"id": 1, "kind": "footway", "width": 2.2, "points": [[-50.0, 0.0], [50.0, 0.0]]}])
+        plan = plan_trees(layout, _payload([(0.0, 0.3)]), ORIGIN)
+        self.assertEqual(len(plan["trees"]), 1)
+        self.assertEqual(plan["stats"]["relocated_road"], 0)
+
+    def test_fill_trees_never_on_carriageway(self):
+        park = {"id": 9, "ring": _square(-60.0, -60.0, 120.0)}
+        layout = _layout(
+            parks=[park],
+            roads=[{"id": 1, "kind": "residential", "width": 8.0, "points": [[-60.0, 0.0], [60.0, 0.0]]}],
+        )
+        plan = plan_trees(layout, {}, ORIGIN)
+        self.assertTrue(plan["trees"])
+        for tree in plan["trees"]:
+            self.assertGreaterEqual(abs(tree["y"]) - 4.0, TRUNK_MARGIN)
 
 
 class ParkFillTests(unittest.TestCase):

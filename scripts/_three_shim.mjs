@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve, sep } from "node:path";
 
-export const viewerRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "viewer");
+// VIEWER_ROOT lets the audits replay an older checkout of viewer/ (before/after comparisons).
+export const viewerRoot = process.env.VIEWER_ROOT
+  ? resolve(process.env.VIEWER_ROOT)
+  : join(dirname(fileURLToPath(import.meta.url)), "..", "viewer");
 
 export class Vector3 {
   constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }

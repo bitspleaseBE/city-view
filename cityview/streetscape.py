@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from cityview.directions import infer_parallel_track_directions, mark_dual_carriageways
+
 
 def _dist(ax: float, ay: float, bx: float, by: float) -> float:
     return math.hypot(bx - ax, by - ay)
@@ -503,6 +505,15 @@ def _tram_segments(layout: dict[str, Any]) -> list[tuple[float, float, float, fl
     return segs
 
 
+def _direction_code(value: Any) -> int:
+    """Normalise a travel-direction code to 1 (along points) / -1 (against) / 0 (both)."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return 1 if n > 0 else (-1 if n < 0 else 0)
+
+
 def export_roads_near_spawn(
     layout: dict[str, Any],
     spawn: dict[str, Any] | None,
@@ -539,6 +550,7 @@ def export_roads_near_spawn(
                 {
                     "id": rid,
                     "kind": kind,
+                    "name": str(road.get("name") or ""),
                     "width": float(road.get("width") or 6.0),
                     # Posted limit from OSM (null when untagged) + the limit
                     # traffic actually uses (tagged or urban default), km/h.
@@ -547,6 +559,10 @@ def export_roads_near_spawn(
                     # Wider right-lane offset when highway hugs tram rails.
                     "laneOffset": 2.4 if shared else 1.15,
                     "tramShared": shared,
+                    # Legal direction along `points` (1 / -1 / 0 = both ways) from OSM
+                    # oneway tags; buses may be exempt (contraflow bus lane).
+                    "oneway": _direction_code(road.get("oneway")),
+                    "onewayBus": _direction_code(road.get("oneway_bus", road.get("oneway"))),
                     "points": [[float(p[0]), float(p[1])] for p in pts],
                 },
             )
@@ -556,11 +572,13 @@ def export_roads_near_spawn(
     signals = _export_signal_stop_lines(
         layout, sx, sy, radius=min(radius, 220.0), max_clusters=14
     )
+    chosen_roads = [item[1] for item in scored[:max_roads]]
+    mark_dual_carriageways(chosen_roads)
 
     return {
         "spawn": {"x": sx, "y": sy},
         "radius": radius,
-        "roads": [item[1] for item in scored[:max_roads]],
+        "roads": chosen_roads,
         "signals": signals,
         "cycleSeconds": 30,
     }
@@ -742,6 +760,11 @@ def export_transit_near_spawn(
         if dmin > radius:
             continue
         lines = list(line.get("lines") or line.get("refs") or [])
+        direction = _direction_code(line.get("direction"))
+        source = "relation" if direction else "none"
+        if not direction and line.get("source") == "gtfs":
+            # GTFS shapes are ordered stop-to-stop: always driven along their points.
+            direction, source = 1, "gtfs"
         path_scored.append(
             (
                 dmin,
@@ -749,12 +772,17 @@ def export_transit_near_spawn(
                     "id": line.get("id"),
                     "mode": line.get("mode") or "bus",
                     "lines": lines,
+                    # Vehicles may only drive `points` forward (1) / backward (-1); 0 = both.
+                    "direction": direction,
+                    "directionSource": source,
                     "points": [[float(p[0]), float(p[1])] for p in pts],
                 },
             )
         )
     path_scored.sort(key=lambda item: item[0])
     chosen_paths = [item[1] for item in path_scored[:max_paths]]
+    # Undirected tram tracks: a parallel partner (right-hand traffic) fixes the direction.
+    infer_parallel_track_directions([p for p in chosen_paths if p["mode"] in {"tram", "subway"}])
 
     def _stop_near_paths(x: float, y: float, thresh: float = 35.0) -> bool:
         for path in chosen_paths:
