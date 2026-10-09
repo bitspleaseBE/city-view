@@ -440,7 +440,7 @@
     <div id="status">Loading sunny Klein Antwerpen…</div>
     <div id="ride">
       <p class="line" id="ride-line">Tram</p>
-      <p class="next" id="ride-next">Next: —</p>
+      <p class="next" id="ride-next">Volgende: —</p>
     </div>
     <div id="prompt"></div>
     <div id="hud">
@@ -1303,14 +1303,14 @@
           avatar.visible = false;
           rideEl.style.display = "block";
           rideLine.textContent = `${result.mode === "bus" ? "Bus" : "Tram"} ${result.line}`;
-          rideNext.textContent = `Next halt: ${result.nextHalt}`;
+          rideNext.textContent = `Volgende halte: ${result.nextHalt}`;
           promptEl.style.display = "none";
-          hint.textContent = "Riding — E request stop · get off at next halt";
-          status.textContent = `On board · next ${result.nextHalt}`;
+          hint.textContent = "Op lijn — E halt aanvragen · uitstappen volgende halte";
+          status.textContent = `Aan boord · volgende ${result.nextHalt}`;
         } else if (result.action === "request_alight") {
-          rideNext.textContent = `Getting off at: ${result.nextHalt}`;
-          hint.textContent = `Stop requested — leave at ${result.nextHalt}`;
-          status.textContent = `Alighting at ${result.nextHalt}`;
+          rideNext.textContent = `Uitstappen: ${result.nextHalt}`;
+          hint.textContent = `Halt aangevraagd — uitstappen aan ${result.nextHalt}`;
+          status.textContent = `Uitstappen aan ${result.nextHalt}`;
         } else if (result.action === "alight") {
           applyAlightDrop(result.drop);
         }
@@ -1409,13 +1409,13 @@
           rideEl.style.display = "block";
           rideLine.textContent = `${hud.mode === "bus" ? "Bus" : "Tram"} ${hud.line}`;
           if (hud.wantAlight) {
-            rideNext.textContent = `Getting off at: ${hud.nextHalt}`;
+            rideNext.textContent = `Uitstappen: ${hud.nextHalt}`;
           } else if (hud.dwelling && hud.currentHalt) {
             rideNext.textContent = touch
-              ? `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · tap Go to leave`
-              : `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · E to leave`;
+              ? `Halte ${hud.currentHalt} · volgende ${hud.nextHalt} · tik Go om uit te stappen`
+              : `Halte ${hud.currentHalt} · volgende ${hud.nextHalt} · E om uit te stappen`;
           } else {
-            rideNext.textContent = `Next halt: ${hud.nextHalt}`;
+            rideNext.textContent = `Volgende halte: ${hud.nextHalt}`;
           }
           promptEl.style.display = "none";
         } else {
