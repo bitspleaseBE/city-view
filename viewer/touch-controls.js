@@ -139,12 +139,12 @@ export function createTouchControls(opts) {
   root.hidden = true;
   root.innerHTML = `
     <div class="tc-top">
-      <button type="button" class="tc-btn tc-mode" data-act="mode">Map</button>
-      <button type="button" class="tc-btn" data-act="night">Night</button>
+      <button type="button" class="tc-btn tc-mode" data-act="mode">Kaart</button>
+      <button type="button" class="tc-btn" data-act="night">Nacht</button>
       <button type="button" class="tc-btn" data-act="map">Radar</button>
-      <button type="button" class="tc-btn" data-act="help">Help</button>
+      <button type="button" class="tc-btn" data-act="help">Hulp</button>
     </div>
-    <div class="tc-pad" aria-label="Move">
+    <div class="tc-pad" aria-label="Bewegen">
       <div class="tc-ring"></div>
       <div class="tc-knob"></div>
     </div>
@@ -153,8 +153,8 @@ export function createTouchControls(opts) {
         <button type="button" class="tc-btn tc-sprint wide" data-hold="shift">Sprint</button>
       </div>
       <div class="tc-row">
-        <button type="button" class="tc-btn tc-jump" data-hold="space">Jump</button>
-        <button type="button" class="tc-btn tc-interact big" data-act="interact">Go</button>
+        <button type="button" class="tc-btn tc-jump" data-hold="space">Spring</button>
+        <button type="button" class="tc-btn tc-interact big" data-act="interact">Ga</button>
       </div>
     </div>
   `;
@@ -377,11 +377,11 @@ export function createTouchControls(opts) {
   }
 
   function setModeLabel(mode) {
-    modeBtn.textContent = mode === "free" ? "Walk" : "Map";
+    modeBtn.textContent = mode === "free" ? "Lopen" : "Kaart";
   }
 
   function setNightLabel(isNight) {
-    nightBtn.textContent = isNight ? "Day" : "Night";
+    nightBtn.textContent = isNight ? "Dag" : "Nacht";
   }
 
   /** Rewrite keyboard-centric prompts for touch. */
@@ -390,8 +390,9 @@ export function createTouchControls(opts) {
     return text
       .replace(/^Press E to (\w)/i, (_, c) => c.toUpperCase())
       .replace(/^E · /i, "")
-      .replace(/ · E to leave/i, " · tap Go to leave")
-      .replace(/\bE\b/g, "Go");
+      .replace(/ · E om uit te stappen/i, " · tik Ga om uit te stappen")
+      .replace(/ · E to leave/i, " · tik Ga om uit te stappen")
+      .replace(/\bE\b/g, "Ga");
   }
 
   return {

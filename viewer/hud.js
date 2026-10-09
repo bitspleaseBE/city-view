@@ -108,7 +108,7 @@ export function createHud(opts = {}) {
       const t = statusEl.textContent.trim();
       if (!t || t === lastStatus) return;
       lastStatus = t;
-      if (/^(Walking|Free view|Loading)/.test(t)) return; // mode chatter, not news
+      if (/^(Walking|Lopen|Free view|Kaart|Loading|Laden)/.test(t)) return; // mode chatter, not news
       if (/\d+ cars|people/.test(t)) {
         census = t;
         return;
