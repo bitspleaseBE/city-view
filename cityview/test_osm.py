@@ -160,5 +160,55 @@ class OsmLayoutTests(unittest.TestCase):
         self.assertEqual(buildings[0]["name"], "Finch")
 
 
+
+def _grid_nodes(pts, base=1000, lat0=51.2000, lon0=4.4000):
+    """Nodes for local-metre points (x east, y north) near (lat0, lon0)."""
+    out = []
+    for i, (x, y) in enumerate(pts):
+        out.append({"type": "node", "id": base + i, "lat": lat0 + y / 110540.0, "lon": lon0 + x / 69900.0})
+    return out
+
+
+class MultipolygonTests(unittest.TestCase):
+    def _osm(self, with_campus=False):
+        outer = [(0, 0), (60, 0), (60, 40), (0, 40)]
+        hole = [(20, 15), (40, 15), (40, 25), (20, 25)]
+        els = _grid_nodes(outer, 1000) + _grid_nodes(hole, 2000)
+        els += [
+            {"type": "way", "id": 10, "nodes": [1000, 1001, 1002], "tags": {}},
+            {"type": "way", "id": 11, "nodes": [1002, 1003, 1000], "tags": {}},
+            {"type": "way", "id": 12, "nodes": [2000, 2001, 2002, 2003, 2000], "tags": {}},
+            {
+                "type": "relation",
+                "id": 77,
+                "tags": {"type": "multipolygon", "building": "hospital", "building:levels": "3"},
+                "members": [
+                    {"type": "way", "ref": 10, "role": "outer"},
+                    {"type": "way", "ref": 11, "role": "outer"},
+                    {"type": "way", "ref": 12, "role": "inner"},
+                ],
+            },
+        ]
+        if with_campus:
+            campus = [(-20, -20), (90, -20), (90, 70), (-20, 70)]
+            els += _grid_nodes(campus, 3000)
+            els.append({"type": "way", "id": 20, "nodes": [3000, 3001, 3002, 3003, 3000], "tags": {"amenity": "hospital"}})
+        return {"elements": els}
+
+    def test_relation_building_with_hole(self):
+        layout = layout_from_osm(self._osm(), (51.2000, 4.4000), style_policy="historic")
+        rel = [b for b in layout["buildings"] if b.get("osm_type") == "relation"]
+        self.assertEqual(len(rel), 1)
+        self.assertEqual(rel[0]["id"], 77)
+        self.assertEqual(len(rel[0]["holes"]), 1)
+        self.assertEqual(layout["multipolygon_stats"]["holes_added"], 1)
+
+    def test_campus_outline_not_extruded_when_buildings_inside(self):
+        layout = layout_from_osm(self._osm(with_campus=True), (51.2000, 4.4000), style_policy="historic")
+        ids = {b["id"] for b in layout["buildings"]}
+        self.assertNotIn(20, ids)
+        self.assertEqual(layout["multipolygon_stats"]["campus_outlines_dropped"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

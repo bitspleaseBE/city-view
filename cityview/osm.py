@@ -22,7 +22,7 @@ from cityview.directions import (
     route_way_directions,
 )
 from cityview.geo import project
-from cityview.landmarks import attach_landmark, load_manifest
+from cityview.landmarks import attach_landmark, landmark_nodes, load_manifest
 from cityview.parking import parse_road_parking
 from cityview.shop_brands import normalize_shop_brand
 from cityview.streetscape import (
@@ -135,6 +135,8 @@ def overpass_query(south: float, west: float, north: float, east: float) -> str:
   relation["water"]({bbox});
   relation["landuse"="basin"]({bbox});
   relation["leisure"="park"]({bbox});
+  relation["building"]["type"="multipolygon"]({bbox});
+  node["historic"~"^(memorial|monument)$"]({bbox});
   relation["route"~"^(tram|bus|subway|light_rail)$"]({bbox});
 );
 (._;>;);
@@ -803,6 +805,31 @@ def finalize_building_heights(
     }
 
 
+def apply_landmark_heights(buildings: list[dict[str, Any]]) -> int:
+    """Surveyed massing for hand-modelled landmarks beats both OSM numbers and priors.
+
+    OSM can be badly off on these (Feestzaal Harmonie is tagged one level), and the
+    mesh builder is drawn to the surveyed storeys, so footprint, collision and the
+    mesh must agree. ``height_source`` becomes ``landmark``.
+    """
+    n = 0
+    for bldg in buildings:
+        lm = bldg.get("landmark") or {}
+        if not lm.get("custom"):
+            continue
+        if "height_m" in lm or "levels" in lm:
+            levels = int(lm.get("levels") or max(1, round(float(lm["height_m"]) / FLOOR_H)))
+            bldg["floors"] = max(1, min(MAX_LEVELS, levels))
+            bldg["height"] = float(lm.get("height_m") or levels * FLOOR_H)
+            bldg["height_source"] = "landmark"
+            n += 1
+        if "roof_height_m" in lm:
+            bldg["roof_height"] = float(lm["roof_height_m"])
+        if "roof_shape" in lm:
+            bldg["roof_shape"] = str(lm["roof_shape"])
+    return n
+
+
 def _level_histogram(buildings: list[dict[str, Any]]) -> dict[str, int]:
     out: dict[int, int] = {}
     for b in buildings:
@@ -848,6 +875,116 @@ def _relation_rings(
     return rings
 
 
+def _stitch_rings(lines: list[list[list[float]]]) -> list[list[list[float]]]:
+    """Join open member ways end-to-end into closed rings (multipolygons may split rings)."""
+    rings: list[list[list[float]]] = []
+    pending = [list(line) for line in lines if len(line) >= 2]
+    while pending:
+        cur = pending.pop(0)
+        grew = True
+        while cur[0] != cur[-1] and grew:
+            grew = False
+            for i, nxt in enumerate(pending):
+                if nxt[0] == cur[-1]:
+                    cur.extend(nxt[1:])
+                elif nxt[-1] == cur[-1]:
+                    cur.extend(reversed(nxt[:-1]))
+                elif nxt[-1] == cur[0]:
+                    cur = nxt[:-1] + cur
+                elif nxt[0] == cur[0]:
+                    cur = list(reversed(nxt[1:])) + cur
+                else:
+                    continue
+                pending.pop(i)
+                grew = True
+                break
+        if cur[0] == cur[-1]:
+            ring = _closed(cur)
+            if len(ring) >= 3:
+                rings.append(ring)
+    return rings
+
+
+def relation_building_polygons(
+    rel: dict[str, Any],
+    ways: dict[int, dict],
+    nodes: dict[int, dict],
+    origin: tuple[float, float],
+) -> list[tuple[list[list[float]], list[list[list[float]]], list[int]]]:
+    """(outer ring, holes, outer way ids) per outer ring of a building multipolygon."""
+    outer_lines: list[list[list[float]]] = []
+    outer_ids: list[int] = []
+    inner_lines: list[list[list[float]]] = []
+    for member in rel.get("members") or []:
+        if member.get("type") != "way":
+            continue
+        way = ways.get(int(member["ref"]))
+        if not way:
+            continue
+        pts = _way_xy(way, nodes, origin)
+        if member.get("role") == "inner":
+            inner_lines.append(pts)
+        elif member.get("role") in {"outer", ""}:
+            outer_lines.append(pts)
+            outer_ids.append(int(way["id"]))
+    outers = _stitch_rings(outer_lines)
+    inners = [r for r in _stitch_rings(inner_lines) if _area(r) >= 4.0]
+    out = []
+    for ring in outers:
+        holes = [h for h in inners if all(_point_in_ring(p[0], p[1], ring) for p in h)]
+        out.append((ring, holes, outer_ids))
+    return out
+
+
+RELATION_BUILDING_AREA_MAX = CAMPUS_AREA_MAX  # one courtyard block can exceed a way's cap
+
+
+def add_relation_buildings(
+    buildings: list[dict[str, Any]],
+    rels: dict[int, dict],
+    ways: dict[int, dict],
+    nodes: dict[int, dict],
+    origin: tuple[float, float],
+    style_policy: str,
+) -> dict[str, int]:
+    """Append ``type=multipolygon`` building relations (outer ring + courtyard holes).
+
+    When the outer way is itself a mapped building, the holes go onto that way instead
+    of adding a duplicate mass. Returns counts for the layout audit.
+    """
+    by_id = {int(b["id"]): b for b in buildings}
+    stats = {"relations": 0, "buildings_added": 0, "holes_added": 0, "holes_on_existing": 0}
+    for rel in sorted(rels.values(), key=lambda r: int(r["id"])):
+        tags = rel.get("tags") or {}
+        if "building" not in tags or tags.get("type") != "multipolygon":
+            continue
+        polys = relation_building_polygons(rel, ways, nodes, origin)
+        if not polys:
+            continue
+        stats["relations"] += 1
+        for i, (ring, holes, outer_ids) in enumerate(polys):
+            existing = next((by_id[w] for w in outer_ids if w in by_id and by_id[w]["ring"] == ring), None)
+            if existing is not None:
+                existing.setdefault("holes", []).extend(holes)
+                stats["holes_on_existing"] += len(holes)
+                continue
+            net = _area(ring) - sum(_area(h) for h in holes)
+            if not (20.0 <= net and _area(ring) <= RELATION_BUILDING_AREA_MAX):
+                continue
+            bid = int(rel["id"]) if len(polys) == 1 else int(rel["id"]) * 100 + i
+            if bid in by_id:
+                bid = int(rel["id"]) * 100 + 50 + i
+            bldg = _make_building(bid, ring, dict(tags), style_policy)
+            bldg["osm_type"] = "relation"
+            if holes:
+                bldg["holes"] = holes
+            buildings.append(bldg)
+            by_id[bid] = bldg
+            stats["buildings_added"] += 1
+            stats["holes_added"] += len(holes)
+    return stats
+
+
 def _is_park(tags: dict[str, str]) -> bool:
     return tags.get("leisure") in {"park", "garden"} or tags.get("landuse") in {"grass", "recreation_ground"}
 
@@ -864,6 +1001,7 @@ def layout_from_osm(
     parks: list[dict[str, Any]] = []
     transit_lines: list[dict[str, Any]] = []
     transit_stops_raw: list[dict[str, Any]] = []
+    campuses: list[tuple[int, list[list[float]], dict[str, str]]] = []
     way_refs = _route_refs_by_way(rels)
     # Tram tracks carry no direction tag: it comes from the ordered route relations.
     track_dirs = route_way_directions(rels, ways)
@@ -906,12 +1044,13 @@ def layout_from_osm(
             if len(ring) >= 3 and 20.0 <= area <= BUILDING_AREA_MAX:
                 buildings.append(_make_building(int(way["id"]), ring, tags, style_policy))
             continue
-        # Campus polygons tagged amenity=hospital|school without building=*.
+        # Campus polygons tagged amenity=hospital|school without building=*: only a
+        # stand-in mass when no real building is mapped inside (decided below).
         if tags.get("amenity") in CAMPUS_AMENITIES and "building" not in tags:
             ring = _closed(pts)
             area = _area(ring)
             if len(ring) >= 3 and 20.0 <= area <= CAMPUS_AREA_MAX:
-                buildings.append(_make_building(int(way["id"]), ring, tags, style_policy))
+                campuses.append((int(way["id"]), ring, tags))
             continue
         if any(
             [
@@ -956,6 +1095,17 @@ def layout_from_osm(
             if tags.get("tunnel") == "building_passage":
                 road["passage"] = True
             roads.append(road)
+
+    multipolygon_stats = add_relation_buildings(buildings, rels, ways, nodes, origin, style_policy)
+    multipolygon_stats["campus_outlines_dropped"] = 0
+    for cid, ring, tags in campuses:
+        inside = any(
+            _point_in_ring(*_ring_centroid(b["ring"]), ring) for b in buildings if _area(b["ring"]) < _area(ring)
+        )
+        if inside:
+            multipolygon_stats["campus_outlines_dropped"] += 1
+        else:
+            buildings.append(_make_building(cid, ring, tags, style_policy))
 
     for rel in rels.values():
         tags = rel.get("tags") or {}
@@ -1057,11 +1207,12 @@ def layout_from_osm(
                 bldg["roof_shape"] = safe_roof_shape(
                     roof_shape_for(tags, btype, osm_id), bldg["ring"]
                 )
-        attach_landmark(bldg, manifest)
+        attach_landmark(bldg, manifest, origin)
         finalized.append(bldg)
         final_tags.append(tags)
 
     height_stats = finalize_building_heights(finalized, final_tags, style_policy)
+    apply_landmark_heights(finalized)
 
     layout = {
         "origin": list(origin),
@@ -1074,5 +1225,7 @@ def layout_from_osm(
         "transit_lines": transit_lines,
         "transit_stops": _dedupe_stops(transit_stops_raw),
         "height_stats": height_stats,
+        "multipolygon_stats": multipolygon_stats,
+        "landmark_nodes": landmark_nodes(nodes, origin, manifest),
     }
     return annotate_layout(layout)

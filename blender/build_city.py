@@ -18,6 +18,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parents[1])
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from cityview import facade_kit, surface_kit  # noqa: E402
+from cityview import landmark_kit, landmark_models  # noqa: E402
 from cityview import climbers, kerbs, railclear, rooftop  # noqa: E402
 from cityview import parking as parking_plan  # noqa: E402
 from cityview.landmarks import LANDMARKS_DIR, resolve_landmark_photo  # noqa: E402
@@ -574,14 +575,19 @@ def ring_mesh(
     height: float,
     z: float = 0.0,
     uv_tile_m: float | None = None,
+    holes: list | None = None,
 ) -> bpy.types.Mesh | None:
     if len(ring) < 3:
         return None
     mesh = bpy.data.meshes.new(name)
     bm = bmesh.new()
-    verts = [bm.verts.new((p[0], p[1], z)) for p in ring]
+    edges = []
+    # Courtyards (multipolygon inner rings) are extra loops: triangle_fill leaves them open
+    # and the extrusion below raises their walls with the outer ones.
+    for loop in [ring] + [h for h in (holes or []) if len(h) >= 3]:
+        verts = [bm.verts.new((p[0], p[1], z)) for p in loop]
+        edges += [bm.edges.new((vert, verts[(i + 1) % len(verts)])) for i, vert in enumerate(verts)]
     bm.verts.ensure_lookup_table()
-    edges = [bm.edges.new((vert, verts[(i + 1) % len(verts)])) for i, vert in enumerate(verts)]
     filled = bmesh.ops.triangle_fill(bm, edges=edges)
     faces = [ele for ele in filled.get("geom", []) if isinstance(ele, bmesh.types.BMFace)]
     if not faces:
@@ -676,8 +682,9 @@ def add_ring(
     z: float,
     mat: bpy.types.Material,
     uv_tile_m: float | None = None,
+    holes: list | None = None,
 ) -> bpy.types.Object | None:
-    mesh = ring_mesh(name, ring, height, z, uv_tile_m=uv_tile_m)
+    mesh = ring_mesh(name, ring, height, z, uv_tile_m=uv_tile_m, holes=holes)
     if mesh is None:
         return None
     obj = bpy.data.objects.new(name, mesh)
@@ -823,9 +830,20 @@ def add_mansard_roof(
 
 
 def add_lod2_roof(
-    name: str, ring, eaves_z: float, roof_h: float, shape: str, mat, uv_tile_m: float | None = None
+    name: str, ring, eaves_z: float, roof_h: float, shape: str, mat, uv_tile_m: float | None = None, holes=None
 ) -> None:
     h = max(0.35, roof_h)
+    if holes:
+        # Courtyard blocks: a pitched skirt round every courtyard instead of a roof over it.
+        kit = landmark_kit.Mesh()
+        ring2 = [(float(p[0]), float(p[1])) for p in ring]
+        holes2 = [[(float(p[0]), float(p[1])) for p in hh] for hh in holes]
+        if shape == "flat":
+            kit.cap(landmark_kit.oriented(ring2), [landmark_kit.oriented(hh, ccw=False) for hh in holes2], eaves_z + 0.3, "slate")
+        else:
+            landmark_kit.ring_roof(kit, ring2, holes2, eaves_z, min(h, 2.4), min(4.0, max(1.5, h * 1.2)), "slate")
+        add_kit_mesh(name, kit, {"slate": (mat, uv_tile_m or 2.0)})
+        return
     # Irregular / L-shaped footprints: OBB gables spill past walls — use mansard.
     if shape in {"gable", "hip"} and not _prism_roof_ok(ring):
         shape = "mansard"
@@ -2228,6 +2246,87 @@ def make_church_materials(surface_mat_fn) -> dict:
     }
 
 
+def make_landmark_materials(surface_mat_fn, church_mats: dict) -> dict:
+    """Logical landmark-kit material names -> (Blender material, UV tile metres)."""
+
+    def wall_img(key: str):
+        return load_texture(TEXTURES_DIR / facade_kit.wall_tile_file(key))
+
+    def tile(key: str) -> float:
+        return float(facade_kit.WALL_TILES[key]["tile_m"])
+
+    brick_img, brown_img = wall_img("brick_red"), wall_img("brick_brown")
+    plaster_img, stucco_img, stone_img = wall_img("plaster_white"), wall_img("stucco_cream"), wall_img("stone_buff")
+    slate_m = float(surface_kit.surface_tile_m("roof_slate"))
+    return {
+        "brick": (textured("lm_brick_red", brick_img, (0.40, 0.2, 0.15, 1.0), 0.9, tint=(0.78, 0.6, 0.52)), tile("brick_red")),
+        "brick_dark": (textured("lm_brick_dark", brick_img, (0.28, 0.14, 0.11, 1.0), 0.94, tint=(0.6, 0.46, 0.4)), tile("brick_red")),
+        "brick_brown": (textured("lm_brick_brown", brown_img, (0.30, 0.18, 0.13, 1.0), 0.92, tint=(0.72, 0.6, 0.54)), tile("brick_brown")),
+        "stone_white": (textured("lm_stone_white", stone_img, (0.86, 0.84, 0.79, 1.0), 0.78, tint=(1.0, 1.0, 0.98)), tile("stone_buff")),
+        "stone_grey": (textured("lm_stone_grey", stone_img, (0.62, 0.62, 0.6, 1.0), 0.85, tint=(0.8, 0.82, 0.82)), tile("stone_buff")),
+        "bluestone": (surface_mat_fn("curb", "lm_bluestone", (0.3, 0.31, 0.33, 1.0), 0.86, tint=(0.62, 0.66, 0.72)), float(surface_kit.surface_tile_m("curb"))),
+        "render_white": (textured("lm_render_white", plaster_img, (0.9, 0.89, 0.86, 1.0), 0.86, tint=(1.0, 0.99, 0.96)), tile("plaster_white")),
+        "render_cream": (textured("lm_render_cream", stucco_img, (0.86, 0.8, 0.68, 1.0), 0.86, tint=(1.0, 0.97, 0.9)), tile("stucco_cream")),
+        "render_shade": (textured("lm_render_shade", plaster_img, (0.72, 0.7, 0.66, 1.0), 0.9, tint=(0.8, 0.78, 0.74)), tile("plaster_white")),
+        "slate": (church_mats.get("slate") or principled("lm_slate", (0.14, 0.14, 0.15, 1.0), 0.7), slate_m),
+        "zinc": (surface_mat_fn("roof_zinc", "lm_zinc", (0.42, 0.44, 0.46, 1.0), 0.55, tint=(0.82, 0.84, 0.86)), float(surface_kit.surface_tile_m("roof_zinc"))),
+        "glass": (principled("lm_glass", (0.04, 0.05, 0.06, 1.0), 0.15, metallic=0.35), 2.0),
+        "glass_roof": (principled("lm_glass_roof", (0.55, 0.6, 0.62, 1.0), 0.2, metallic=0.3), 2.0),
+        "glass_dark": (principled("lm_glass_dark", (0.015, 0.016, 0.018, 1.0), 0.3, metallic=0.2), 2.0),
+        "frame_white": (principled("lm_frame_white", (0.84, 0.84, 0.81, 1.0), 0.6), 2.0),
+        "frame_dark": (principled("lm_frame_dark", (0.09, 0.09, 0.09, 1.0), 0.6, metallic=0.3), 2.0),
+        "iron": (principled("lm_iron", (0.06, 0.07, 0.065, 1.0), 0.5, metallic=0.6), 2.0),
+        "gold": (principled("lm_gold", (0.78, 0.6, 0.22, 1.0), 0.35, metallic=1.0), 2.0),
+        "door": (principled("lm_door", (0.13, 0.07, 0.04, 1.0), 0.8), 2.0),
+        "canopy": (principled("lm_canopy", (0.84, 0.82, 0.74, 1.0), 0.8), 2.0),
+        "water": (principled("lm_water", (0.07, 0.11, 0.12, 1.0), 0.08), 2.0),
+    }
+
+
+LANDMARK_STATS = {"objects": 0, "tris": 0}
+
+
+def add_kit_mesh(name: str, kit, mats: dict) -> bpy.types.Object | None:
+    """landmark_kit.Mesh -> one object, one material slot per logical material."""
+    names = sorted(kit.materials_used())
+    if not names:
+        return None
+    slot = {n: i for i, n in enumerate(names)}
+    bm = bmesh.new()
+    verts = [bm.verts.new(v) for v in kit.verts]
+    for face, mname in zip(kit.faces, kit.mats):
+        try:
+            bf = bm.faces.new([verts[i] for i in face])
+        except ValueError:
+            continue
+        bf.material_index = slot[mname]
+    for cap in kit.caps:
+        edges = []
+        for loop in [cap.outer] + cap.holes:
+            vs = [bm.verts.new((p[0], p[1], cap.z)) for p in loop]
+            edges += [bm.edges.new((v, vs[(i + 1) % len(vs)])) for i, v in enumerate(vs)]
+        filled = bmesh.ops.triangle_fill(bm, edges=edges, use_beauty=True)
+        for bf in filled.get("geom", []):
+            if isinstance(bf, bmesh.types.BMFace):
+                bf.material_index = slot[cap.mat]
+                if bf.normal.z < 0.0:
+                    bf.normal_flip()
+    bm.normal_update()
+    uv = bm.loops.layers.uv.verify()
+    for mname, idx in slot.items():
+        apply_planar_uvs([bf for bf in bm.faces if bf.material_index == idx], uv, float(mats[mname][1]))
+    mesh = bpy.data.meshes.new(name)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    obj = link(bpy.data.objects.new(name, mesh))
+    for mname in names:
+        obj.data.materials.append(mats[mname][0])
+    LANDMARK_STATS["objects"] += 1
+    LANDMARK_STATS["tris"] += sum(len(p.vertices) - 2 for p in mesh.polygons)
+    return obj
+
+
 def _append_pyramid(
     bm,
     cx: float,
@@ -2660,6 +2759,13 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
         return
     bid = bldg.get("id", 0)
     name = f"bldg_{bid}"
+    holes = bldg.get("holes") or None
+    if (bldg.get("landmark") or {}).get("custom") and mats.get("landmark"):
+        # Hand-modelled landmark: full detail at any distance, no facade photo / atlas.
+        kit = landmark_models.build_landmark(bldg)
+        if kit is not None:
+            add_kit_mesh(f"{name}_landmark", kit, mats["landmark"])
+            return
     eaves = float(bldg.get("height", 12.0))
     roof_h = float(bldg.get("roof_height") or max(1.2, eaves * 0.15))
     floors = int(bldg.get("floors") or max(1, round(eaves / 3.15)))
@@ -2689,7 +2795,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     wall_tile_m = float(facade_kit.WALL_TILES[facade_kit.wall_tile_for_type(base_type, TYPES_DOC)]["tile_m"])
     if type_id == "church" and church_mats.get("brick_tile_m"):
         wall_tile_m = float(church_mats["brick_tile_m"])
-    add_ring(name, ring, body_h, 0.0, wall, uv_tile_m=wall_tile_m)
+    add_ring(name, ring, body_h, 0.0, wall, uv_tile_m=wall_tile_m, holes=holes)
     roof_uv_tile = None
     roof_pool = mats.get("roof_tex") or {}
     # Irregular footprints fall back to a mansard stack inside add_lod2_roof.
@@ -2713,7 +2819,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             roof_uv_tile = surface_kit.surface_tile_m(surf)
             ROOF_STATS[surf] = ROOF_STATS.get(surf, 0) + 1
             ROOF_STATS["measured" if measured else "fallback"] += 1
-    add_lod2_roof(f"{name}_roof", ring, body_h, roof_h, shape, roof, uv_tile_m=roof_uv_tile)
+    add_lod2_roof(f"{name}_roof", ring, body_h, roof_h, shape, roof, uv_tile_m=roof_uv_tile, holes=holes)
 
     cx = sum(p[0] for p in ring) / len(ring)
     cy = sum(p[1] for p in ring) / len(ring)
@@ -2821,7 +2927,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     seed_id = int(bid) if str(bid).lstrip("-").isdigit() else 1
     # LOD: chimneys and plant also crown the "simple" ring (skyline from the orbit view);
     # corbels, pots, vents and aerials are near-spawn only.
-    if far:
+    if far or holes:
         pass
     elif eff_shape != "flat" and seed_id % 2 == 0:
         ROOFTOP_STATS["chimneys"] += add_chimneys(
@@ -4094,6 +4200,7 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
         "climber": climber_mats,
         "shutter": shutter_mats,
         "church": church_mats,
+        "landmark": make_landmark_materials(surface_mat, church_mats),
     }
     # Ensure the church style wall uses the same red-brick tile as the landmark volumes.
     if "church" in mats["wall"]:
@@ -4256,6 +4363,11 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     ROOF_STATS.update({"measured": 0, "fallback": 0})
     for bldg in layout.get("buildings") or []:
         add_building(bldg, mats, spawn_xy=spawn_xy)
+    for node in layout.get("landmark_nodes") or []:
+        kit = landmark_models.build_node_landmark(node)
+        if kit is not None:
+            add_kit_mesh(f"landmark_{node['id']}", kit, mats["landmark"])
+    print(f"Hand-modelled landmarks: {LANDMARK_STATS['objects']} objects, {LANDMARK_STATS['tris']} tris")
     print(f"Rooftop detail: {ROOFTOP_STATS}, merged into {flush_rooftop()} meshes")
     print(f"Mansard dormers: {DORMER_STATS['dormers']}; textured roof families: {sorted((mats.get('roof_tex') or {}))}")
     print(f"Climbing-plant leaf clusters: {CLIMBER_STATS['leaves']}")
