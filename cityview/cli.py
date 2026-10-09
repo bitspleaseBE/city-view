@@ -310,8 +310,14 @@ def city_command(args: argparse.Namespace) -> int:
 def serve_command(args: argparse.Namespace) -> int:
     from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
+    class RevalidatingHandler(SimpleHTTPRequestHandler):
+        # Re-baked GLBs and edited modules must show up on reload, not from a stale cache.
+        def end_headers(self) -> None:
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
     os.chdir(VIEWER)
-    server = ThreadingHTTPServer((args.host, args.port), SimpleHTTPRequestHandler)
+    server = ThreadingHTTPServer((args.host, args.port), RevalidatingHandler)
     print(f"Street viewer at http://{args.host}:{args.port}/")
     server.serve_forever()
     return 0

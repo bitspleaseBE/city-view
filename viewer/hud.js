@@ -15,6 +15,11 @@ const CSS = `
 #hud-day { font-weight: 600; font-size: 0.78rem; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.85; margin-top: 4px; }
 #hud-wallet { font-weight: 700; font-size: 1.45rem; color: #8fe08c; margin-top: 6px; font-variant-numeric: tabular-nums; transition: color .3s; }
 #hud-wallet.spent { color: #ff8f7a; }
+#hud-wallet.earned { color: #d4ffc4; text-shadow: 0 0 2px #000, 0 0 10px rgba(120,255,120,0.9); }
+#hud-health { width: 150px; height: 8px; margin: 8px 0 0 auto; background: rgba(0,0,0,0.55); border-radius: 3px;
+  overflow: hidden; opacity: 0; transition: opacity .6s; }
+#hud-health.on { opacity: 1; }
+#hud-health i { display: block; height: 100%; width: 100%; background: #e04a3a; transition: width .25s; }
 #hud-feed { position: fixed; left: 22px; bottom: 196px; width: 248px; z-index: 600; pointer-events: none;
   display: flex; flex-direction: column-reverse; gap: 6px; }
 .hud-note { background: rgba(10,12,16,0.78); color: #f2f2f2; font: 500 0.86rem/1.35 "Helvetica Neue", Arial, sans-serif;
@@ -56,6 +61,8 @@ export function createHud(opts = {}) {
   const clock = el("div", "hud-clock", "", tr);
   const day = el("div", "hud-day", "", tr);
   const wallet = el("div", "hud-wallet", "", tr);
+  const healthBar = el("div", "hud-health", "", tr);
+  const healthFill = el("i", "", "", healthBar);
   const feed = el("div", "hud-feed");
   const speed = el("div", "hud-speed", "hud-font");
   speed.innerHTML = '<span class="v">0</span><span class="u">KM/H</span><div class="bar"><i></i></div><div class="sub"></div>';
@@ -183,10 +190,31 @@ export function createHud(opts = {}) {
     if (label) notify(`${label} · −${fmtMoney(amount)}`);
   }
 
+  function earn(amount, label) {
+    money += amount;
+    wallet.textContent = fmtMoney(money);
+    wallet.classList.remove("spent");
+    wallet.classList.add("earned");
+    setTimeout(() => wallet.classList.remove("earned"), 900);
+    if (label) notify(`${label} · +${fmtMoney(amount)}`);
+  }
+
+  let shownHealth = -1;
+  /** 0–100; the bar shows only while you're hurt. */
+  function setHealth(v) {
+    const h = Math.round(v);
+    if (h === shownHealth) return;
+    shownHealth = h;
+    healthFill.style.width = `${h}%`;
+    healthBar.classList.toggle("on", h < 100);
+  }
+
   return {
     update,
     notify,
     spend,
+    earn,
+    setHealth,
     showHelp,
     toggleHelp,
     toggleStats,
