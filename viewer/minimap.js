@@ -57,7 +57,7 @@ export function createMinimap(THREE, opts = {}) {
   let streetHideTimer = 0;
   const STREET_HOLD_MS = 3200;
 
-  function showStreetName(name, subtitle) {
+  function showStreetName(name, subtitle, holdMs) {
     if (!name) return;
     streetLabel.innerHTML = "";
     const sub = document.createElement("div");
@@ -72,11 +72,12 @@ export function createMinimap(THREE, opts = {}) {
     void streetLabel.offsetWidth;
     streetLabel.style.opacity = "1";
     streetLabel.style.transform = "translateY(0)";
+    const hold = Number.isFinite(holdMs) && holdMs > 0 ? holdMs : STREET_HOLD_MS;
     streetHideTimer = setTimeout(() => {
       streetLabel.style.opacity = "0";
       streetLabel.style.transform = "translateY(4px)";
       streetHideTimer = 0;
-    }, STREET_HOLD_MS);
+    }, hold);
   }
 
   const ctx = canvas.getContext("2d");
