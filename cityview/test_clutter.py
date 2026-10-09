@@ -46,6 +46,9 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(classify({"leisure": "picnic_table"}), "picnic_table")
         self.assertEqual(classify({"tourism": "artwork"}), "artwork")
         self.assertEqual(classify({"tourism": "information", "information": "board"}), "guidepost")
+        self.assertEqual(classify({"amenity": "shelter", "shelter_type": "public_transport"}), "shelter")
+        self.assertEqual(classify({"amenity": "fountain"}), "fountain")
+        self.assertEqual(classify({"advertising": "poster_box"}), "poster")
         self.assertEqual(classify({"highway": "street_lamp"}), "lamp")
 
     def test_things_that_do_not_stand_on_the_pavement_are_ignored(self):
@@ -54,6 +57,8 @@ class ClassifyTests(unittest.TestCase):
         self.assertIsNone(classify({"amenity": "waste_basket", "access": "private"}))
         self.assertIsNone(classify({"amenity": "recycling", "recycling_type": "centre"}))
         self.assertIsNone(classify({"amenity": "bench"}))
+        self.assertIsNone(classify({"amenity": "shelter", "building": "yes"}))
+        self.assertIsNone(classify({"amenity": "fountain", "access": "private"}))
 
     def test_hoops_follow_capacity(self):
         self.assertEqual(hoop_count({"capacity": "6"}), 3)

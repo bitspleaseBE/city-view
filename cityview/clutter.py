@@ -22,6 +22,9 @@ kind                   OSM tags                                     facing
 ``vending``            ``amenity=vending_machine`` (not tickets)    face toward the street
 ``artwork``            ``tourism=artwork``                          face toward the street
 ``guidepost``          ``tourism=information`` / guidepost          board toward the street
+``shelter``            ``amenity=shelter`` (public transport)       open side to the street
+``fountain``           ``amenity=fountain``                         (round)
+``poster``             ``advertising=poster_box``                   face toward the street
 =====================  ===========================================  ==================
 
 Placement reuses the bench rules: duplicates within ``DEDUPE_M`` of the same kind collapse,
@@ -59,6 +62,9 @@ KINDS = (
     "vending",
     "artwork",
     "guidepost",
+    "shelter",
+    "fountain",
+    "poster",
 )
 
 DEDUPE_M = {
@@ -77,12 +83,15 @@ DEDUPE_M = {
     "vending": 1.2,
     "artwork": 2.0,
     "guidepost": 1.5,
+    "shelter": 8.0,
+    "fountain": 4.0,
+    "poster": 2.0,
 }
 BUILDING_MARGIN = 0.15
 ROAD_NUDGE_M = 1.6  # survey points up to this deep in a carriageway slide to the kerb
 FACE_REACH_M = 14.0  # how far to look for the street an object faces
-# Bollards close pedestrian streets and guard kerbs: they may stand on the road surface.
-ON_ROAD_OK = frozenset({"bollard", "flagpole"})
+# Bollards close pedestrian streets; transit shelters sit on platforms by the kerb.
+ON_ROAD_OK = frozenset({"bollard", "flagpole", "shelter"})
 # Hoops per bike_parking node when ``capacity`` is missing, and the cap per site.
 DEFAULT_HOOPS = 2
 MAX_HOOPS = 6
@@ -135,6 +144,19 @@ def classify(tags: dict[str, str]) -> str | None:
         "trail_blaze",
     }:
         return "guidepost"
+    if amenity == "shelter":
+        if tags.get("building") == "yes":
+            return None  # closed shelter building, not a glass wait bay
+        if tags.get("shelter_type") and tags.get("shelter_type") not in {
+            "public_transport",
+            "weather_shelter",
+        }:
+            return None
+        return "shelter"
+    if amenity == "fountain":
+        return "fountain"
+    if tags.get("advertising") in {"poster_box", "billboard", "column"}:
+        return "poster"
     if tags.get("man_made") == "flagpole":
         return "flagpole"
     if tags.get("highway") == "street_lamp":
