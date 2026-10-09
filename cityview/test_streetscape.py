@@ -199,6 +199,31 @@ class WalkExportTests(unittest.TestCase):
         sw = [w for w in walks if w["kind"] == "sidewalk"]
         self.assertTrue(any(abs(w["points"][0][1]) > 2.5 for w in sw))
 
+    def test_living_street_uses_sidewalks_not_centreline(self):
+        layout = {
+            "roads": [
+                {"id": 9, "kind": "living_street", "width": 5.0, "points": [[0.0, 0.0], [50.0, 0.0]]},
+            ]
+        }
+        walks = export_walks_near_spawn(layout, {"x": 25.0, "y": 0.0}, radius=80.0)
+        self.assertTrue(walks)
+        self.assertTrue(all(w["kind"] == "sidewalk" for w in walks))
+        self.assertTrue(all(abs(w["points"][0][1]) > 2.0 for w in walks))
+
+    def test_crossing_links_opposite_kerbs(self):
+        layout = {
+            "roads": [
+                {"id": 1, "kind": "residential", "width": 8.0, "points": [[0.0, 0.0], [40.0, 0.0]]},
+            ],
+            "crossings": [{"id": 99, "x": 20.0, "y": 0.0, "kind": "uncontrolled"}],
+        }
+        walks = export_walks_near_spawn(layout, {"x": 20.0, "y": 0.0}, radius=50.0)
+        crosses = [w for w in walks if w["kind"] == "crossing"]
+        self.assertEqual(len(crosses), 1)
+        self.assertFalse(crosses[0]["safe"])
+        y0, y1 = crosses[0]["points"][0][1], crosses[0]["points"][1][1]
+        self.assertGreater(abs(y0 - y1), 6.0)
+
 
 if __name__ == "__main__":
     unittest.main()

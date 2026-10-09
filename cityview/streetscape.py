@@ -518,7 +518,9 @@ def _direction_code(value: Any) -> int:
     return 1 if n > 0 else (-1 if n < 0 else 0)
 
 
-WALK_WAY_KINDS = frozenset({"footway", "path", "pedestrian", "steps", "living_street"})
+# Pedestrian-only OSM ways (centreline is the path). Living streets stay on
+# sidewalk ribbons — their centreline is still a shared carriageway.
+WALK_WAY_KINDS = frozenset({"footway", "path", "pedestrian", "steps"})
 SIDEWALK_HOST_KINDS = frozenset(
     {
         "residential",
@@ -533,6 +535,8 @@ SIDEWALK_HOST_KINDS = frozenset(
     }
 )
 SIDEWALK_W = 2.0
+# Half-width of the asphalt strip we refuse to walk on (host road excluded).
+_WALK_CARRIAGE_MARGIN = 0.45
 
 
 def _offset_polyline(points: list[list[float]], offset: float) -> list[list[float]]:
@@ -553,24 +557,112 @@ def _offset_polyline(points: list[list[float]], offset: float) -> list[list[floa
     return out
 
 
+def _polyline_length(pts: list[list[float]]) -> float:
+    return sum(_dist(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) for i in range(len(pts) - 1))
+
+
+def _safe_sidewalk_runs(
+    walk: list[list[float]],
+    roads: list[dict[str, Any]],
+    host_idx: int,
+) -> list[list[list[float]]]:
+    """Split a kerb ribbon wherever it dips into a driveable carriageway."""
+    runs: list[list[list[float]]] = []
+    cur: list[list[float]] = []
+    for p in walk:
+        if in_carriageway(
+            p[0],
+            p[1],
+            roads,
+            DRIVEABLE_ROAD_KINDS,
+            skip=host_idx,
+            margin=_WALK_CARRIAGE_MARGIN,
+        ):
+            if len(cur) >= 2 and _polyline_length(cur) >= 6.0:
+                runs.append(cur)
+            cur = []
+        else:
+            cur.append(p)
+    if len(cur) >= 2 and _polyline_length(cur) >= 6.0:
+        runs.append(cur)
+    return runs
+
+
+def _crossing_walks(
+    layout: dict[str, Any],
+    sx: float,
+    sy: float,
+    radius: float,
+) -> list[dict[str, Any]]:
+    """Short kerb-to-kerb links at OSM crossings — the only intentional road walks."""
+    roads = layout.get("roads") or []
+    out: list[dict[str, Any]] = []
+    for cross in layout.get("crossings") or []:
+        cx = float(cross.get("x") or 0.0)
+        cy = float(cross.get("y") or 0.0)
+        if _dist(sx, sy, cx, cy) > radius:
+            continue
+        best: tuple[float, float, float, float, float, float] | None = None  # d,hx,hy,tx,ty,half
+        for road in roads:
+            kind = str(road.get("kind") or "").lower()
+            if kind not in SIDEWALK_HOST_KINDS:
+                continue
+            pts = road.get("points") or []
+            half = float(road.get("width") or 6.0) * 0.5
+            for i in range(len(pts) - 1):
+                ax, ay = float(pts[i][0]), float(pts[i][1])
+                bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+                dx, dy = bx - ax, by - ay
+                len2 = dx * dx + dy * dy
+                if len2 < 1e-6:
+                    continue
+                t = max(0.0, min(1.0, ((cx - ax) * dx + (cy - ay) * dy) / len2))
+                px, py = ax + t * dx, ay + t * dy
+                d = _dist(cx, cy, px, py)
+                if d > half + 2.5:
+                    continue
+                if best is None or d < best[0]:
+                    length = math.sqrt(len2)
+                    best = (d, px, py, dx / length, dy / length, half)
+        if best is None:
+            continue
+        _d, px, py, tx, ty, half = best
+        nx, ny = -ty, tx  # left-hand normal
+        inset = half + SIDEWALK_W * 0.5
+        left = [round(px + nx * inset, 2), round(py + ny * inset, 2)]
+        right = [round(px - nx * inset, 2), round(py - ny * inset, 2)]
+        if _dist(left[0], left[1], right[0], right[1]) < 2.0:
+            continue
+        out.append(
+            {
+                "id": f"cross{cross.get('id')}",
+                "kind": "crossing",
+                "safe": False,
+                "points": [left, right],
+            }
+        )
+    return out
+
+
 def export_walks_near_spawn(
     layout: dict[str, Any],
     spawn: dict[str, Any] | None,
     *,
     radius: float = 220.0,
-    max_walks: int = 120,
+    max_walks: int = 140,
 ) -> list[dict[str, Any]]:
     """Pedestrian-safe polylines near spawn for the walker crowd.
 
     Uses OSM footways / paths / plazas, plus kerb-side sidewalk ribbons along
     ordinary streets (same offset as the Blender pavement). Carriageway
-    centreline is never used, so people stay off the asphalt unless they are
-    on a living street or pedestrianised way.
+    centrelines are never walked; short ``crossing`` links at OSM zebra /
+    signal nodes are the only intentional road crossings.
     """
     sx = float(spawn["x"]) if spawn else 0.0
     sy = float(spawn["y"]) if spawn else 0.0
+    roads = layout.get("roads") or []
     scored: list[tuple[float, dict[str, Any]]] = []
-    for road in layout.get("roads") or []:
+    for ri, road in enumerate(roads):
         kind = str(road.get("kind") or "").lower()
         pts = [[float(p[0]), float(p[1])] for p in (road.get("points") or [])]
         if len(pts) < 2:
@@ -578,40 +670,45 @@ def export_walks_near_spawn(
         dmin = min(_dist(sx, sy, p[0], p[1]) for p in pts)
         if dmin > radius:
             continue
-        length = sum(_dist(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) for i in range(len(pts) - 1))
+        length = _polyline_length(pts)
         if length < 4.0:
             continue
         if kind in WALK_WAY_KINDS:
-            scored.append(
-                (
-                    dmin,
-                    {
-                        "id": f"w{road.get('id')}",
-                        "kind": kind,
-                        "safe": True,
-                        "points": pts,
-                    },
+            # Plazas are shared space; footways/paths get clipped where they cross asphalt.
+            runs = [pts] if kind == "pedestrian" else _safe_sidewalk_runs(pts, roads, ri)
+            for run_i, run in enumerate(runs):
+                scored.append(
+                    (
+                        dmin,
+                        {
+                            "id": f"w{road.get('id')}" + (f"_{run_i}" if run_i else ""),
+                            "kind": kind,
+                            "safe": True,
+                            "points": run if kind == "pedestrian" else [[round(p[0], 2), round(p[1], 2)] for p in run],
+                        },
+                    )
                 )
-            )
             continue
         if kind not in SIDEWALK_HOST_KINDS:
             continue
         half = float(road.get("width") or 6.0) * 0.5
         for side, sign in (("L", 1.0), ("R", -1.0)):
             walk = _offset_polyline(pts, sign * (half + SIDEWALK_W * 0.5))
-            if len(walk) < 2:
-                continue
-            scored.append(
-                (
-                    dmin,
-                    {
-                        "id": f"sw{road.get('id')}_{side}",
-                        "kind": "sidewalk",
-                        "safe": True,
-                        "points": [[round(p[0], 2), round(p[1], 2)] for p in walk],
-                    },
+            for run_i, run in enumerate(_safe_sidewalk_runs(walk, roads, ri)):
+                scored.append(
+                    (
+                        dmin,
+                        {
+                            "id": f"sw{road.get('id')}_{side}" + (f"_{run_i}" if run_i else ""),
+                            "kind": "sidewalk",
+                            "safe": True,
+                            "side": side,
+                            "points": [[round(p[0], 2), round(p[1], 2)] for p in run],
+                        },
+                    )
                 )
-            )
+    for cross in _crossing_walks(layout, sx, sy, radius):
+        scored.append((_dist(sx, sy, cross["points"][0][0], cross["points"][0][1]), cross))
     scored.sort(key=lambda item: item[0])
     return [item[1] for item in scored[:max_walks]]
 
