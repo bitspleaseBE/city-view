@@ -7,7 +7,7 @@
  */
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
-export const CHARACTERS = ["Remy", "Amy", "James", "Michelle", "Aj"];
+export const CHARACTERS = ["Remy", "Amy", "James", "Michelle"];
 
 const base = new URL("./characters/", import.meta.url);
 const loader = new GLTFLoader();

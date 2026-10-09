@@ -22,3 +22,4 @@ assets/gtfs/
 *.blend1
 *.blend2
 .python-version
+assets/rocketbox/
