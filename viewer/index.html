@@ -433,9 +433,9 @@
     </script>
     <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E Velo / scooter / tram · V free · N day/night</div>
     <div id="modes">
-      <button type="button" id="btn-walk" class="active">Walk</button>
-      <button type="button" id="btn-free">Free view</button>
-      <button type="button" id="btn-night" aria-pressed="false">Night</button>
+      <button type="button" id="btn-walk" class="active">Lopen</button>
+      <button type="button" id="btn-free">Kaart</button>
+      <button type="button" id="btn-night" aria-pressed="false">Nacht</button>
     </div>
     <div id="status">Loading sunny Klein Antwerpen…</div>
     <div id="ride">
@@ -447,7 +447,7 @@
       <h1>Klein Antwerpen</h1>
       <p>Mechelsesteenweg · tram lijn 4 en 7 · Velo · te voet</p>
     </div>
-    <div id="click-cue">Click to play</div>
+    <div id="click-cue">Klik om te spelen</div>
     <div id="crosshair"></div>
     <script type="importmap">
       {
@@ -779,7 +779,7 @@
         skirtMat && skirtMat.color.set(GROUND_SKIRT).lerp(_tmpCol.set(0x23252b), night);
 
         const isNight = t > 0.5;
-        btnNight.textContent = isNight ? "Day" : "Night";
+        btnNight.textContent = isNight ? "Dag" : "Nacht";
         btnNight.setAttribute("aria-pressed", String(isNight));
         btnNight.classList.toggle("active", isNight);
         touch?.setNightLabel(isNight);
@@ -875,7 +875,7 @@
       if (TOUCH) {
         document.body.classList.add("touch-device");
         const cue = document.getElementById("click-cue");
-        if (cue) cue.textContent = "Tap to play";
+        if (cue) cue.textContent = "Tik om te spelen";
       }
       let touch = null;
       // Jump physics
@@ -1185,7 +1185,7 @@
           hint.textContent = TOUCH
             ? "Walk: stick move · drag look · Go interact · Sprint / Jump"
             : "Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · Esc · V free · N night · M map";
-          status.textContent = "Walking — Halte Gounod";
+          status.textContent = "Lopen — Halte Gounod";
           touch?.setModeLabel("walk");
         } else {
           if (walkControls.isLocked) walkControls.unlock();
@@ -1207,7 +1207,7 @@
           hint.textContent = TOUCH
             ? "Map view: drag pan · pinch zoom · tap radar to teleport"
             : "Free view (top-down): WASD pan · Shift fast · scroll zoom · click map teleport · V walk · N night";
-          status.textContent = "Free view";
+          status.textContent = "Kaart";
           touch?.setModeLabel("free");
         }
       }
@@ -1412,7 +1412,7 @@
             rideNext.textContent = `Uitstappen: ${hud.nextHalt}`;
           } else if (hud.dwelling && hud.currentHalt) {
             rideNext.textContent = touch
-              ? `Halte ${hud.currentHalt} · volgende ${hud.nextHalt} · tik Go om uit te stappen`
+              ? `Halte ${hud.currentHalt} · volgende ${hud.nextHalt} · tik Ga om uit te stappen`
               : `Halte ${hud.currentHalt} · volgende ${hud.nextHalt} · E om uit te stappen`;
           } else {
             rideNext.textContent = `Volgende halte: ${hud.nextHalt}`;
@@ -1884,10 +1884,10 @@
           if (nVelo > 0) bits.push(`${nVelo} Velo stations`);
           status.textContent =
             bits.length > 0
-              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · ${TOUCH ? "tap Go for Velo / tram" : "E Velo / tram"}`
+              ? `${tod > 0.5 ? "Nacht" : "Zonnige dag"} — ${bits.join(" · ")} · ${TOUCH ? "tik Ga voor Velo / tram" : "E Velo / tram"}`
               : TOUCH
-                ? "Sunny day — tap to walk"
-                : "Sunny day — click to walk";
+                ? "Zonnige dag — tik om te lopen"
+                : "Zonnige dag — klik om te lopen";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
           setLoad(0.97, "Lichten opwarmen");
