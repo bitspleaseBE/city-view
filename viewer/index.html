@@ -722,6 +722,7 @@
         for (const l of lampLights) l.intensity = LAMP_INTENSITY * glow * l.userData.on;
         traffic.setNight && traffic.setNight(glow);
         scooters && scooters.setNight(glow);
+        micromobility && micromobility.setNight && micromobility.setNight(glow);
         shops && shops.setNight(glow);
         terraces && terraces.setNight && terraces.setNight(glow);
         transit.setNight && transit.setNight(glow);

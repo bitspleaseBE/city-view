@@ -16,6 +16,37 @@ const STOP_GAP = 1.6; // m nose-to-tail when queued
 const SWERVE = 0.75; // m to the right when an oncoming rider shares the lane
 const OVERTAKE = 1.3; // m to the left when passing something that blocks the lane
 
+/** Shared lamp materials so setNight can brighten every rider at once. */
+let _lampMat = null;
+let _tailMat = null;
+
+function nightMats(THREE) {
+  if (!_lampMat) {
+    _lampMat = new THREE.MeshStandardMaterial({
+      color: 0xfff6dd,
+      emissive: 0xfff2cc,
+      emissiveIntensity: 0,
+      roughness: 0.4,
+    });
+    _tailMat = new THREE.MeshStandardMaterial({
+      color: 0xa01010,
+      emissive: 0xff2020,
+      emissiveIntensity: 0,
+      roughness: 0.45,
+    });
+  }
+  return { lamp: _lampMat, tail: _tailMat };
+}
+
+function addBikeLights(THREE, g, frontZ, rearZ, y = 0.55) {
+  const { lamp, tail } = nightMats(THREE);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), lamp);
+  head.position.set(0, y, frontZ);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.03, 0.025), tail);
+  back.position.set(0, y - 0.05, rearZ);
+  g.add(head, back);
+}
+
 const RIDING_FILES = [
   "Remy_Riding.glb",
   "Amy_Riding.glb",
@@ -253,6 +284,7 @@ function makeBicycle(THREE, color, rideTemplates) {
   rear.position.set(0, 0.3, -0.46);
 
   g.add(top, down, seatTube, seatPost, seat, stem, bars, fork, front, rear);
+  addBikeLights(THREE, g, 0.5, -0.5, 0.72);
   const rider = makeRider(THREE, rideTemplates, true);
   rider.position.set(0, 0.55, -0.22);
   g.add(rider);
@@ -284,6 +316,7 @@ function makeScooter(THREE, color, scooterTemplates) {
   rear.position.set(0, 0.12, -0.38);
 
   g.add(deck, stem, bars, head, front, rear);
+  addBikeLights(THREE, g, 0.48, -0.42, 0.95);
   const rider = makeRider(THREE, scooterTemplates, false);
   rider.position.set(0, 0.08, -0.08);
   g.add(rider);
@@ -329,6 +362,7 @@ function makeCargoBike(THREE, color, rideTemplates) {
   battery.position.set(0, 0.28, -0.15);
 
   g.add(frame, box, lid, seatPost, seat, stem, bars, frontL, frontR, rear, battery);
+  addBikeLights(THREE, g, 1.05, -0.7, 0.7);
   const rider = makeRider(THREE, rideTemplates, true);
   rider.position.set(0, 0.52, -0.32);
   g.add(rider);
@@ -600,11 +634,19 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     vehicles.length = 0;
   }
 
+  function setNight(glow) {
+    const g = Math.max(0, Math.min(1, Number(glow) || 0));
+    nightMats(THREE);
+    _lampMat.emissiveIntensity = 0.25 + 1.8 * g;
+    _tailMat.emissiveIntensity = 0.2 + 1.4 * g;
+  }
+
   return {
     update,
     dispose,
     vehicles,
     count: vehicles.length,
     mixamo: rideTemplates.length > 0 || scooterTemplates.length > 0,
+    setNight,
   };
 }
