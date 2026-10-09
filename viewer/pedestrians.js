@@ -18,10 +18,19 @@ const LATERAL_M = 0.28; // stay inside a 2 m sidewalk
 const SAFE_KINDS = new Set(["sidewalk", "footway", "path", "pedestrian", "steps"]);
 const KNOCK_SPEED = 1.8;
 const SLIDE_DECEL = 5.5;
-const GET_UP_S = 1.4;
+const GET_UP_S = 1.4; // stand-ins without a rig just tip back up
+const FALL_BLEND_S = 0.3; // walk → face-down pose while thrown
+const RECOVER_S = 0.45; // end of the scramble → walking again
+// Health lost per m/s of impact above KNOCK_SPEED: a full-speed scooter hit (7.6 m/s) kills,
+// half speed knocks someone down and a second hit finishes them.
+const HIT_DAMAGE = 22;
+const FRAILTY = { child: 0.85, senior: 0.75 };
+const BODY_CLEAR_S = 20; // a body may be cleared away once out of sight this long after death
 const REDRESS_EVERY_S = 2.5;
 const REDRESS_HIDDEN_M = 28; // out of view and at least this far from the camera
 const REDRESS_FAR_M = 90; // or simply this far away
+
+const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 export async function createPedestrians(scene, THREE, opts = {}) {
   const COUNT = opts.count || 40;
@@ -332,6 +341,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
         return 0;
       },
       setBlocker() {},
+      setOnKilled() {},
       setCrossingGate() {},
     };
   }
@@ -350,7 +360,8 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     }
   }
 
-  function placeMember(m) {
+  /** `dt` (walking updates only) lets someone back on their feet turn to the route, not snap. */
+  function placeMember(m, dt = 0) {
     const route = walkRoutes[m.routeIdx];
     const pos = routePosition(route, m.s);
     const baseY = m.mesh.userData.baseY || 0;
@@ -364,7 +375,13 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     const dx = ahead.x - pos.x;
     const dz = ahead.z - pos.z;
     if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
-      m.mesh.rotation.y = Math.atan2(dx, dz);
+      const yaw = Math.atan2(dx, dz);
+      if (dt > 0 && (m.recover > 0 || m.turning)) {
+        m.mesh.rotation.y += wrapAngle(yaw - m.mesh.rotation.y) * Math.min(1, dt * 4);
+        m.turning = Math.abs(wrapAngle(yaw - m.mesh.rotation.y)) > 0.05;
+      } else {
+        m.mesh.rotation.y = yaw;
+      }
     }
   }
 
@@ -387,7 +404,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     for (const gi of order) {
       const g = groups[gi];
       const hidden = g.members.every((m) => {
-        if (m.down) return false;
+        if (m.down && !(m.down.dead && m.down.deadFor > BODY_CLEAR_S)) return false;
         const d = m.mesh.position.distanceTo(cam);
         if (d > REDRESS_FAR_M) return true;
         _sphere.center.copy(m.mesh.position).y += 0.9;
@@ -419,7 +436,13 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const _qFall = new THREE.Quaternion();
   const _qYaw = new THREE.Quaternion();
   let blocked = () => false;
+  let onKilled = () => {};
 
+  /**
+   * Something (the player's scooter) moving at vx/vz m/s sweeps a circle of radius `r` at x/z.
+   * Anyone inside is shoved, or above a walking pace knocked off their feet and thrown along
+   * with the impact; hard enough hits kill. Returns the number of people hit.
+   */
   function hitTest(x, z, vx, vz, r) {
     const speed = Math.hypot(vx, vz);
     let hits = 0;
@@ -442,14 +465,34 @@ export async function createPedestrians(scene, THREE, opts = {}) {
         const k = 0.75 + Math.random() * 0.15;
         const tvx = vx * k + (dx / d) * speed * 0.2;
         const tvz = vz * k + (dz / d) * speed * 0.2;
+        const age = m.mesh.userData.person?.template.person.age;
+        m.health ??= 100 * (FRAILTY[age] || 1);
+        m.health -= (speed - KNOCK_SPEED) * HIT_DAMAGE * (0.8 + Math.random() * 0.4);
+        const dead = m.health <= 0;
+        const getUp = m.mesh.userData.person?.getUp;
+        if (getUp) {
+          // Held on the clip's first frame (lying face down) until it is time to scramble up.
+          const w0 = m.recover ? getUp.getEffectiveWeight() : 0;
+          m.recover = 0;
+          getUp.reset().play();
+          getUp.paused = true;
+          getUp.setEffectiveWeight(w0);
+        }
         m.down = {
+          rigged: !!getUp,
+          dead,
+          deadFor: 0,
+          t: 0,
+          w0: getUp ? getUp.getEffectiveWeight() : 0,
+          yaw0: m.mesh.rotation.y,
+          throwYaw: Math.atan2(tvx, tvz),
           vx: tvx,
           vz: tvz,
           vy: 0.6 + speed * 0.12,
           y: 0,
           angle: 0,
           spin: 4.5 + speed * 0.5,
-          lie: 3.5 + Math.random() * 3,
+          lie: dead ? Infinity : 3.5 + Math.random() * 3,
           getUp: 0,
           yaw: m.mesh.rotation.y,
           axis: _axis.crossVectors(UP, new THREE.Vector3(tvx, 0, tvz).normalize()).clone(),
@@ -487,6 +530,11 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       f.y = Math.max(0, f.y + f.vy * dt);
       if (f.y === 0) f.vy = 0;
     }
+    if (f.dead && hs < 0.05 && !airborne) {
+      if (!f.deadFor) onKilled({ x: p.x, y: p.y - (m.mesh.userData.baseY || 0), z: p.z, yaw: m.mesh.rotation.y });
+      f.deadFor += dt;
+    }
+    if (f.rigged) return updateDownRigged(m, f, dt, hs, airborne);
     let up = false;
     if (f.getUp > 0) {
       f.getUp -= dt;
@@ -512,6 +560,43 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     return true;
   }
 
+  /** Rigged people: dive into the face-down pose, lie still, then play the scramble back up. */
+  function updateDownRigged(m, f, dt, hs, airborne) {
+    const { mixer, action: walk, getUp } = m.mesh.userData.person;
+    f.t += dt;
+    // Pitched along the throw, so they land face first in the direction they were hit.
+    const w = Math.min(1, f.w0 + (f.t / FALL_BLEND_S) * (1 - f.w0));
+    getUp.setEffectiveWeight(w);
+    walk?.setEffectiveWeight(1 - w);
+    const turn = Math.min(1, f.t / FALL_BLEND_S);
+    m.mesh.rotation.set(0, f.yaw0 + wrapAngle(f.throwYaw - f.yaw0) * turn, 0);
+    if (!f.scrambling && hs < 0.05 && !airborne && (f.lie -= dt) <= 0) {
+      f.scrambling = true;
+      getUp.paused = false;
+    }
+    mixer.update(dt);
+    const p = m.mesh.position;
+    p.y = (m.mesh.userData.baseY || 0) + f.y;
+    if (f.scrambling && getUp.time >= getUp.getClip().duration - 1e-3) {
+      m.down = null;
+      m.recover = RECOVER_S;
+      m.offX = p.x - m.routeX;
+      m.offZ = p.z - m.routeZ;
+      return false;
+    }
+    return true;
+  }
+
+  /** Ease from the end of the scramble back into the walk cycle. */
+  function recoverStep(m, dt) {
+    m.recover = Math.max(0, m.recover - dt);
+    const { action: walk, getUp } = m.mesh.userData.person;
+    const w = m.recover / RECOVER_S;
+    getUp.setEffectiveWeight(w);
+    walk?.setEffectiveWeight(1 - w);
+    if (!m.recover) getUp.stop();
+  }
+
   function setWalkAnim(m, moving) {
     const action = m.mesh.userData.action;
     if (action) action.setEffectiveTimeScale(moving ? m.animRate : 0);
@@ -533,6 +618,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     for (const g of groups) {
       for (const m of g.members) {
         if (m.down && updateDown(m, dt)) continue;
+        if (m.recover > 0) recoverStep(m, dt);
 
         const route = walkRoutes[m.routeIdx];
         const rLen = routeLength(route);
@@ -551,7 +637,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
           advanceEnd(m);
         }
 
-        placeMember(m);
+        placeMember(m, dt);
 
         if (m.offX || m.offZ) {
           const keep = Math.max(0, 1 - dt * 0.8);
@@ -595,6 +681,10 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     hitTest,
     setBlocker(fn) {
       blocked = fn;
+    },
+    /** fn({ x, y, z, yaw }) once a killed pedestrian's body comes to rest (y = ground). */
+    setOnKilled(fn) {
+      onKilled = fn;
     },
     setCrossingGate(fn) {
       crossingOk = typeof fn === "function" ? fn : () => true;

@@ -18,6 +18,8 @@ const END_CLEAR = 9; // m from road ends: no scooters in junction mouths
 const KERB_BACK = 0.85; // m behind the kerb line, on the footway
 const PRICE_UNLOCK = 1.0;
 const PRICE_MIN = 0.25;
+const SKID_DECEL = 6; // m/s² of a scooter sliding on its side
+const FALLEN_LEAN = 1.45; // rad: lying on its side, propped up a little by the bar end
 
 const FLEETS = [
   { name: "Dott", body: 0x18a6e0, trim: 0xf4f6f8, deck: 0x22262b },
@@ -113,7 +115,7 @@ export function makeShareScooter(THREE, fleet) {
   const stemLen = 0.98;
   const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.034, stemLen, 12), body);
   const rake = 0.16;
-  stem.rotation.x = -rake;
+  stem.rotation.x = rake;
   stem.position.set(0, 0.2 + (stemLen / 2) * Math.cos(rake), -0.42 + (stemLen / 2) * Math.sin(rake));
   const stemTop = new THREE.Vector3(0, 0.2 + stemLen * Math.cos(rake), -0.42 + stemLen * Math.sin(rake));
   const neck = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.22, 0.06), body);
@@ -122,8 +124,8 @@ export function makeShareScooter(THREE, fleet) {
   headlight.rotation.x = Math.PI / 2;
   headlight.position.set(0, 0.44, -0.44);
   const brand = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.3, 0.012), trim);
-  brand.position.set(0, 0.62, -0.335);
-  brand.rotation.x = -rake;
+  brand.position.set(0, 0.62, -0.42 + 0.42 * Math.tan(rake) + 0.034); // rider side of the stem
+  brand.rotation.x = rake;
 
   const bars = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.5, 8), metal);
   bars.rotation.z = Math.PI / 2;
@@ -135,7 +137,7 @@ export function makeShareScooter(THREE, fleet) {
   gripR.position.x = 0.22;
   const display = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.02, 0.07), screen);
   display.position.set(0, stemTop.y + 0.02, stemTop.z + 0.03);
-  display.rotation.x = -0.5;
+  display.rotation.x = 0.5;
   const basket = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.05, 0.05), body);
   basket.position.set(0, stemTop.y - 0.06, stemTop.z - 0.04);
 
@@ -267,10 +269,55 @@ export async function createScooters(scene, THREE, opts = {}) {
       return { action: "empty" };
     }
     n.s.parked = false;
+    n.s.fall = null; // picked back up off the ground
     n.s.mesh.userData.kickstand.visible = false;
     n.s.mesh.rotation.z = 0;
     ride = { s: n.s, t: 0, cost: PRICE_UNLOCK };
     return { action: "take", brand: n.s.brand, battery: n.s.battery };
+  }
+
+  /** Rider thrown off: the ride ends where it is and the scooter skids away on its side. */
+  function crash(player) {
+    if (!ride) return null;
+    const s = ride.s;
+    const yaw = player.yaw ?? 0;
+    const speed = Math.max(0, player.speed || 0);
+    const side = Math.random() < 0.5 ? 1 : -1;
+    s.parked = true;
+    s.mesh.userData.kickstand.visible = false;
+    s.fall = {
+      t: 0,
+      side,
+      lean: s.mesh.rotation.z,
+      vx: -Math.sin(yaw) * speed * 0.5,
+      vz: -Math.cos(yaw) * speed * 0.5,
+      spin: (Math.random() - 0.5) * speed * 0.5,
+    };
+    const cost = ride.cost;
+    ride = null;
+    return { brand: s.brand, cost };
+  }
+
+  function updateFalls(dt) {
+    for (const s of fleet) {
+      const f = s.fall;
+      if (!f) continue;
+      f.t += dt;
+      const hs = Math.hypot(f.vx, f.vz);
+      if (hs > 0.02) {
+        const slow = Math.max(0, hs - SKID_DECEL * dt) / hs;
+        f.vx *= slow;
+        f.vz *= slow;
+        s.mesh.position.x += f.vx * dt;
+        s.mesh.position.z += f.vz * dt;
+        s.mesh.rotation.y += f.spin * dt * slow;
+      }
+      // Tips over in ~0.35 s and comes to rest on the bar end and deck edge.
+      const k = Math.min(1, f.t / 0.35);
+      s.mesh.rotation.z = f.lean + (f.side * FALLEN_LEAN - f.lean) * k * k;
+      s.mesh.position.y = groundAt(s.mesh.position.x, s.mesh.position.z) + 0.06 * k;
+      if (k >= 1 && hs <= 0.02) s.fall = null;
+    }
   }
 
   function getPrompt(player) {
@@ -286,6 +333,7 @@ export async function createScooters(scene, THREE, opts = {}) {
   let groundY = 0;
   function update(dt, player) {
     if (toastT > 0) toastT -= dt;
+    updateFalls(dt);
     if (!player) return;
     if ((cullClock -= dt) <= 0) {
       cullClock = 0.5;
@@ -347,6 +395,7 @@ export async function createScooters(scene, THREE, opts = {}) {
     count: fleet.length,
     isRiding: () => !!ride,
     tryInteract,
+    crash,
     getPrompt,
     update,
     getRideHud,

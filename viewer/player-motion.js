@@ -19,7 +19,7 @@ function approach(v, target, up, down, dt) {
 }
 
 export function createPlayerMotion(THREE, camera, controls) {
-  const state = { fwd: 0, side: 0, kind: "walk" };
+  const state = { fwd: 0, side: 0, kind: "walk", footScale: 1 };
   const euler = new THREE.Euler(0, 0, 0, "YXZ");
   const dir = new THREE.Vector3();
 
@@ -41,7 +41,7 @@ export function createPlayerMotion(THREE, camera, controls) {
       state.side = 0;
     }
     const onWheels = kind !== "walk";
-    const top = cfg.speed * (keys.shift ? cfg.boost : 1);
+    const top = cfg.speed * (keys.shift ? cfg.boost : 1) * (onWheels ? 1 : state.footScale);
     const fwdIn = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
     const sideIn = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
     const fwdTarget = fwdIn > 0 ? top : fwdIn < 0 ? -(onWheels ? cfg.reverse : top * 0.8) : 0;
@@ -77,6 +77,10 @@ export function createPlayerMotion(THREE, camera, controls) {
     bump,
     stop,
     eye: (kind) => (MOVE[kind] || MOVE.walk).eye,
+    /** Walking / jogging pace multiplier (injuries); rides are unaffected. */
+    setFootScale(f) {
+      state.footScale = f;
+    },
     /** Signed forward speed in m/s (for the speedometer). */
     get speed() {
       return state.fwd;

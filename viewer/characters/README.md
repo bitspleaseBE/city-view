@@ -5,8 +5,9 @@ Adobe Mixamo civilians for the web viewer. Humanoids + animation clips only — 
 | File | Clip |
 |------|------|
 | `{Name}_Walking.glb` | Rider mesh and textures, plus the in-place walk the rider clips are baked from |
-| `{Name}_Riding.glb` | Seated bike pedal loop (micromobility bikes / cargo) |
-| `{Name}_Scooter.glb` | Standing kick-scooter push-step loop |
+| `{Name}_Riding.glb` | Seated bike pedal loop, hands on the grips (micromobility bikes / cargo) |
+| `{Name}_Scooter.glb` | Standing on an e-scooter deck, hands on the grips |
+| `{Name}_GetUp.glb` | Face down → push-up → all fours → kneel → stand (source for the Rocketbox get-up) |
 
 Riders: Remy, Amy, James, Michelle. Sidewalk pedestrians use the Rocketbox people below.
 
@@ -17,12 +18,14 @@ Riders: Remy, Amy, James, Michelle. Sidewalk pedestrians use the Rocketbox peopl
 blender --background --python scripts/fbx_to_glb.py -- viewer/characters/*_Walking.fbx
 ```
 
-## Bake Riding + Scooter from Walking
+## Bake Riding + Scooter + GetUp from Walking
 
-Pose-baked looping clips on the Mixamo skeleton (Blender 5 slotted actions). Re-run after replacing Walking assets:
+Pose-baked clips on the Mixamo skeleton (Blender 5 slotted actions): the looping rider poses and
+the IK-solved scramble back up after a knock-down. Re-run after replacing Walking assets:
 
 ```bash
-blender --background --python scripts/bake_mixamo_rider_clips.py
+blender --background --python scripts/bake_mixamo_rider_clips.py            # all
+blender --background --python scripts/bake_mixamo_rider_clips.py -- GetUp   # some kinds
 ```
 
 Assets are Adobe Mixamo characters; use under Mixamo’s license terms.
@@ -43,4 +46,15 @@ python3 scripts/fetch_rocketbox.py                      # ~3.8 GB into assets/ro
 blender --background --python scripts/build_rocketbox_characters.py              # all
 blender --background --python scripts/build_rocketbox_characters.py -- Hasidic_Father  # some
 blender --background --python scripts/_render_people_check.py -- /tmp/lineup.png 12 Hasidic_Father Hasidic_Mother
+```
+
+Rocketbox has no fall or get-up animation, so `people/getup/<id>.glb` (animation only, ~100 KB)
+is the Mixamo `Remy_GetUp.glb` scramble retargeted onto each person: bones matched in world space,
+wrists and ankles IK'd to the source's floor heights, and the root raised where a bulkier body or
+coat would sink into the paving. Knocked-down pedestrians play it after lying still for a while.
+Re-run after rebuilding people:
+
+```bash
+blender --background --python scripts/bake_rocketbox_getup.py                  # all
+blender --background --python scripts/bake_rocketbox_getup.py -- Male_Adult_15 # some
 ```

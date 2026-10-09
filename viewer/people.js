@@ -70,9 +70,10 @@ export async function createPeoplePool(THREE, { initial = 22, resident = 30 } = 
     if (loaded.has(id)) return loaded.get(id);
     if (loading.has(id)) return loading.get(id);
     const person = byId.get(id);
-    const p = loader
-      .loadAsync(new URL(person.file, DIR).href)
-      .then((gltf) => {
+    // The get-up (scripts/bake_rocketbox_getup.py) is optional: without it they tip up stiffly.
+    const getUpGltf = loader.loadAsync(new URL(`getup/${id}.glb`, DIR).href).catch(() => null);
+    const p = Promise.all([loader.loadAsync(new URL(person.file, DIR).href), getUpGltf])
+      .then(([gltf, getUpGltf]) => {
         gltf.scene.traverse((o) => {
           if (!o.isMesh) return;
           o.castShadow = true;
@@ -85,6 +86,7 @@ export async function createPeoplePool(THREE, { initial = 22, resident = 30 } = 
           person,
           scene: gltf.scene,
           clip: gltf.animations[0] || null,
+          getUp: getUpGltf?.animations[0] || null,
           users: 0,
           lastUsed: 0,
           since: performance.now(),
@@ -270,8 +272,9 @@ export async function createPeoplePool(THREE, { initial = 22, resident = 30 } = 
   }
 
   /**
-   * A walking clone of `t`: { root, mixer, action, height, naturalSpeed }. naturalSpeed is the
-   * pace (m/s) at which the clip's feet do not slide, after scaling to `height`.
+   * A walking clone of `t`: { root, mixer, action, getUp, height, naturalSpeed }. naturalSpeed
+   * is the pace (m/s) at which the clip's feet do not slide, after scaling to `height`. getUp
+   * (null without a baked clip) is a stopped, play-once scramble from lying face down to standing.
    */
   function instance(t) {
     const p = t.person;
@@ -286,9 +289,15 @@ export async function createPeoplePool(THREE, { initial = 22, resident = 30 } = 
       action.play();
       action.time = Math.random() * t.clip.duration;
     }
+    let getUp = null;
+    if (t.getUp) {
+      getUp = mixer.clipAction(t.getUp);
+      getUp.setLoop(THREE.LoopOnce, 1);
+      getUp.clampWhenFinished = true;
+    }
     t.users++;
     t.lastUsed = performance.now();
-    return { root, mixer, action, height, naturalSpeed: p.walkSpeed * jitter, template: t };
+    return { root, mixer, action, getUp, height, naturalSpeed: p.walkSpeed * jitter, template: t };
   }
 
   function release(inst) {
