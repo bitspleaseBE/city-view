@@ -1,0 +1,57 @@
+{
+  "origin": [
+    51.2017,
+    4.4114
+  ],
+  "landmarks": [
+    {
+      "id": "7345816",
+      "name": "ZAS Vincentius (Sint-Vincentiusgasthuis)",
+      "kind": "hospital",
+      "x": 137.65,
+      "y": 458.04
+    },
+    {
+      "id": "231220414",
+      "name": "Feestzaal Harmonie",
+      "kind": "hall",
+      "x": -7.35,
+      "y": 44.95
+    },
+    {
+      "id": "501410388",
+      "name": "Mechelsesteenweg 123 (Art Deco)",
+      "kind": "apartments",
+      "x": -85.5,
+      "y": 502.65
+    },
+    {
+      "id": "232921425",
+      "name": "In de Gulden Spoor",
+      "kind": "house",
+      "x": 127.35,
+      "y": 529.3
+    },
+    {
+      "id": "117235287",
+      "name": "Muziekkiosk Koning Albertpark",
+      "kind": "bandstand",
+      "x": 106.1,
+      "y": -235.9
+    },
+    {
+      "id": "gulden_spoor_gate",
+      "name": "In de Gulden Spoor \u2013 poortgebouw",
+      "kind": "gatehouse",
+      "x": 177.31,
+      "y": 524.69
+    },
+    {
+      "id": "2396262252",
+      "name": "Monument Peter Benoit",
+      "kind": "memorial",
+      "x": -5.0,
+      "y": 62.0
+    }
+  ]
+}
