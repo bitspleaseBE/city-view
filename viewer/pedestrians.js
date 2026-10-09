@@ -8,16 +8,9 @@
  * forward option. At signalised crossings they wait on the kerb until
  * ``setCrossingGate`` says the ped light is green. Lateral offset stays on the pavement.
  */
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
+import { loadCharacterTemplates } from "./characters.js";
 
-const CHARACTER_FILES = [
-  "Remy_Walking.glb",
-  "Amy_Walking.glb",
-  "James_Walking.glb",
-  "Michelle_Walking.glb",
-  "Aj_Walking.glb",
-];
 const ROADS_URL = "./roads.json";
 const JOIN_M = 5.0; // endpoints this close are the same junction
 const LATERAL_M = 0.28; // stay inside a 2 m sidewalk
@@ -36,7 +29,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const walks = opts.walks || (await loadWalks());
   const walkRoutes = buildWalkRoutes(walks, SPAWN_CENTER);
   const graph = buildGraph(walkRoutes);
-  const templates = await loadCharacterTemplates(THREE);
+  const templates = await loadCharacterTemplates("Walking");
   const useMixamo = templates.length > 0;
   /** `(routeId) => boolean` — false means wait at the kerb (red ped light). */
   let crossingOk = () => true;
@@ -627,28 +620,4 @@ function buildGraph(routes) {
     graph.set(key, links);
   }
   return graph;
-}
-
-async function loadCharacterTemplates(THREE) {
-  const loader = new GLTFLoader();
-  const base = new URL("./characters/", import.meta.url);
-  const out = [];
-  await Promise.all(
-    CHARACTER_FILES.map(async (file) => {
-      try {
-        const url = new URL(file, base).href;
-        const gltf = await loader.loadAsync(url);
-        gltf.scene.traverse((o) => {
-          if (o.isMesh) {
-            o.castShadow = true;
-            o.receiveShadow = true;
-          }
-        });
-        out.push({ name: file, scene: gltf.scene, clips: gltf.animations || [] });
-      } catch (err) {
-        console.warn(`[cityview] Mixamo load failed: ${file}`, err);
-      }
-    })
-  );
-  return out;
 }
