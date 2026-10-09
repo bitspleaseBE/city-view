@@ -1,4 +1,10 @@
-"""Named church/hospital landmark photos + massing presets."""
+"""Named church/hospital landmark photos + massing presets.
+
+Churches use extruded OSM footprints with hip roofs, portals, and parametric
+towers/spires from ``massing`` (no free-standing photo billboards). Hospital
+photos may still dress one street wall; church photos in the manifest are
+reference/attribution only.
+"""
 
 from __future__ import annotations
 

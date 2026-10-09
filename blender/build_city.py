@@ -1256,6 +1256,7 @@ def add_street_facade(
     window_kind: str | None = None,
     near_spawn: bool = False,
     climber: dict | None = None,
+    prefer_procedural: bool = False,
 ) -> None:
     """One batched mesh per street edge (skin, plinth, cornice, windows)."""
     style = style_of(style_name)
@@ -1269,8 +1270,13 @@ def add_street_facade(
     length = math.hypot(x1 - x0, y1 - y0)
     if length < 2.6 or eaves_z < 4.0:
         return
-    if FACADE_PHOTO_MAT is not None and add_photo_facade(
-        name, p0, p1, outward, eaves_z, floors, style_name, mats, mat_key, detail, near_spawn, climber
+    # Churches skip the townhouse photo atlas — arched procedural elevations instead.
+    if (
+        FACADE_PHOTO_MAT is not None
+        and not prefer_procedural
+        and add_photo_facade(
+            name, p0, p1, outward, eaves_z, floors, style_name, mats, mat_key, detail, near_spawn, climber
+        )
     ):
         return
     nx, ny = outward
@@ -1682,7 +1688,7 @@ def add_landmark_photo_quad(
     crop: list[float],
     proud: float = 0.35,
 ) -> None:
-    """Full-height photo elevation on one street edge (sits proud of the wall mass)."""
+    """Photo elevation dressed onto one street wall (proud of the extruded mass, not a free billboard)."""
     x0, y0 = p0
     x1, y1 = p1
     length = math.hypot(x1 - x0, y1 - y0)
@@ -1716,43 +1722,6 @@ def add_landmark_photo_quad(
     bm.free()
     mesh.update()
     link(bpy.data.objects.new(name, mesh))
-
-
-def add_photo_church_shell(
-    name: str,
-    p0: list[float],
-    p1: list[float],
-    outward: list[float],
-    facade_w: float,
-    nave_h: float,
-    depth: float,
-    wall,
-    roof,
-) -> None:
-    """Façade-aligned rectangular nave behind the photo (not the whole OSM campus)."""
-    x0, y0 = p0
-    x1, y1 = p1
-    edge = math.hypot(x1 - x0, y1 - y0) or 1.0
-    ux, uy = (x1 - x0) / edge, (y1 - y0) / edge
-    nx, ny = outward
-    nl = math.hypot(nx, ny) or 1.0
-    nx, ny = nx / nl, ny / nl
-    mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
-    # Centre of the volume sits half-depth behind the street edge.
-    cx = mx - nx * (depth * 0.5)
-    cy = my - ny * (depth * 0.5)
-    yaw = math.atan2(uy, ux)
-    mesh = bpy.data.meshes.new(f"{name}_nave")
-    mesh.materials.append(wall)
-    mesh.materials.append(roof)
-    bm = bmesh.new()
-    _append_box(bm, cx, cy, nave_h * 0.5, facade_w * 0.98, depth, nave_h, yaw, 0)
-    # Thin flat roof cap so the shell reads solid from above.
-    _append_box(bm, cx, cy, nave_h + 0.2, facade_w * 0.98, depth, 0.4, yaw, 1)
-    bm.to_mesh(mesh)
-    bm.free()
-    mesh.update()
-    link(bpy.data.objects.new(f"{name}_nave", mesh))
 
 def _primary_street_edge(
     bldg: dict,
@@ -1798,6 +1767,32 @@ def _append_pyramid_spire(bm, cx: float, cy: float, z0: float, base: float, heig
         _append_box(bm, cx, cy, z0 + (i + 0.5) * zh, base * mid, base * mid, zh * 1.05, yaw, mat_i)
 
 
+def _place_church_tower_volume(
+    name: str,
+    tx: float,
+    ty: float,
+    tower_h: float,
+    tw: float,
+    spire_h: float,
+    yaw: float,
+    wall,
+    spire_mat,
+) -> None:
+    """One square shaft + belfry + pyramidal spire + finial."""
+    mesh = bpy.data.meshes.new(name)
+    mesh.materials.append(wall)
+    mesh.materials.append(spire_mat)
+    bm = bmesh.new()
+    _append_box(bm, tx, ty, tower_h * 0.5, tw, tw, tower_h, yaw, 0)
+    _append_box(bm, tx, ty, tower_h + 0.55, tw * 0.92, tw * 0.92, 1.2, yaw, 0)
+    _append_pyramid_spire(bm, tx, ty, tower_h + 1.1, tw * 0.95, spire_h, yaw, 1)
+    _append_box(bm, tx, ty, tower_h + 1.1 + spire_h + 0.4, 0.16, 0.16, 0.9, yaw, 1)
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    link(bpy.data.objects.new(name, mesh))
+
+
 def add_church_tower(
     name: str,
     ring: list[list[float]],
@@ -1825,12 +1820,13 @@ def add_church_tower(
         nl = math.hypot(nx, ny) or 1.0
         nx, ny = nx / nl, ny / nl
         yaw = math.atan2(uy, ux)
-        tw = min(6.2, max(4.6, elen * 0.32))
+        tw = min(6.2, max(4.6, elen * 0.28))
 
     tower_h = max(24.0, nave_h * 1.55)
     if massing == "neo_romanesque_twin":
-        tower_h = max(27.0, nave_h * 1.7)
-        spire_h = 14.0
+        tower_h = max(26.0, nave_h * 1.65)
+        spire_h = 12.5
+        tw = min(5.8, max(4.4, elen * 0.22))
     elif "gothic" in massing:
         tower_h = max(30.0, nave_h * 1.85)
         spire_h = tower_h * 0.35
@@ -1839,8 +1835,8 @@ def add_church_tower(
 
     cx = sum(p[0] for p in ring) / len(ring)
     cy = sum(p[1] for p in ring) / len(ring)
-    # Street-left of the façade, inset behind the photo plane so it doesn't cover it.
-    along = 0.14 if massing in {"neo_gothic_tower_left", "neo_romanesque_twin"} else 0.5
+    # Street-left / centre of the façade, inset into the extruded footprint.
+    along = 0.16 if massing in {"neo_gothic_tower_left", "neo_romanesque_twin"} else 0.5
     if p0 is not None:
         tx = p0[0] + ux * (elen * along) - nx * (tw * 0.55)
         ty = p0[1] + uy * (elen * along) - ny * (tw * 0.55)
@@ -1849,40 +1845,115 @@ def add_church_tower(
 
     # Slate spire colour (avoid asphalt flat-roof texture on the needle).
     spire_mat = principled(f"{name}_spire", (0.14, 0.14, 0.15, 1.0), 0.72)
+    _place_church_tower_volume(f"{name}_tower", tx, ty, tower_h, tw, spire_h, yaw, wall, spire_mat)
 
-    mesh = bpy.data.meshes.new(f"{name}_tower")
+    if massing == "neo_romanesque_twin" and p0 is not None:
+        # Matching street-right tower (Heilige Geestkerk twin west front).
+        rtx = p0[0] + ux * (elen * 0.84) - nx * (tw * 0.55)
+        rty = p0[1] + uy * (elen * 0.84) - ny * (tw * 0.55)
+        _place_church_tower_volume(
+            f"{name}_tower_r",
+            rtx,
+            rty,
+            tower_h * 0.96,
+            tw * 0.95,
+            spire_h * 0.95,
+            yaw,
+            wall,
+            spire_mat,
+        )
+
+
+def add_church_entrance(
+    name: str,
+    ring: list[list[float]],
+    nave_h: float,
+    wall,
+    trim,
+    street_edge: dict | None,
+) -> None:
+    """Street-facing portal, rose recess, and buttresses so churches read from the sidewalk."""
+    if street_edge is None:
+        return
+    i0, i1 = int(street_edge["i0"]), int(street_edge["i1"])
+    if i0 >= len(ring) or i1 >= len(ring):
+        return
+    p0, p1 = ring[i0], ring[i1]
+    elen = math.hypot(p1[0] - p0[0], p1[1] - p0[1]) or 1.0
+    if elen < 4.0:
+        return
+    ux, uy = (p1[0] - p0[0]) / elen, (p1[1] - p0[1]) / elen
+    nx, ny = street_edge.get("outward") or [0.0, 1.0]
+    nl = math.hypot(nx, ny) or 1.0
+    nx, ny = nx / nl, ny / nl
+    yaw = math.atan2(uy, ux)
+    mx, my = (p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5
+    portal_w = min(5.8, max(3.4, elen * 0.24))
+    portal_h = min(8.0, max(5.2, nave_h * 0.48))
+    glass = principled(f"{name}_rose", (0.12, 0.18, 0.22, 1.0), 0.25)
+    mesh = bpy.data.meshes.new(f"{name}_portal")
     mesh.materials.append(wall)
-    mesh.materials.append(spire_mat)
+    mesh.materials.append(trim)
+    mesh.materials.append(glass)
     bm = bmesh.new()
-    # Square tower shaft
-    _append_box(bm, tx, ty, tower_h * 0.5, tw, tw, tower_h, yaw, 0)
-    # Belfry stage slightly inset
-    _append_box(bm, tx, ty, tower_h + 0.55, tw * 0.92, tw * 0.92, 1.2, yaw, 0)
-    # Pyramidal spire (Heilige Geest: steep four-sided needle)
-    _append_pyramid_spire(bm, tx, ty, tower_h + 1.1, tw * 0.95, spire_h, yaw, 1)
-    # Finial / cross stub
-    _append_box(bm, tx, ty, tower_h + 1.1 + spire_h + 0.4, 0.16, 0.16, 0.9, yaw, 1)
+    # Proud porch mass
+    _append_box(
+        bm,
+        mx + nx * 0.7,
+        my + ny * 0.7,
+        portal_h * 0.5,
+        portal_w,
+        1.35,
+        portal_h,
+        yaw,
+        0,
+    )
+    # Door recess
+    _append_box(
+        bm,
+        mx + nx * 1.15,
+        my + ny * 1.15,
+        portal_h * 0.36,
+        portal_w * 0.52,
+        0.4,
+        portal_h * 0.68,
+        yaw,
+        1,
+    )
+    # Pediment / gable above the portal
+    _append_box(
+        bm,
+        mx + nx * 0.55,
+        my + ny * 0.55,
+        portal_h + 0.7,
+        portal_w * 0.9,
+        1.05,
+        1.4,
+        yaw,
+        0,
+    )
+    # Rose-window recess above the door
+    rose_z = min(nave_h * 0.72, portal_h + 3.2)
+    _append_box(
+        bm,
+        mx + nx * 0.35,
+        my + ny * 0.35,
+        rose_z,
+        portal_w * 0.42,
+        0.55,
+        portal_w * 0.42,
+        yaw,
+        2,
+    )
+    # Flanking buttress piers
+    for side in (-1.0, 1.0):
+        bx = mx + ux * side * (portal_w * 0.62) + nx * 0.45
+        by = my + uy * side * (portal_w * 0.62) + ny * 0.45
+        _append_box(bm, bx, by, nave_h * 0.42, 0.85, 1.2, nave_h * 0.84, yaw, 0)
     bm.to_mesh(mesh)
     bm.free()
     mesh.update()
-    link(bpy.data.objects.new(f"{name}_tower", mesh))
-
-    if massing == "neo_romanesque_twin" and p0 is not None:
-        # Thin stair turret on street-right, also behind the photo plane.
-        rtx = p0[0] + ux * (elen * 0.9) - nx * (tw * 0.45)
-        rty = p0[1] + uy * (elen * 0.9) - ny * (tw * 0.45)
-        rw = tw * 0.38
-        rh = nave_h * 1.05
-        mesh = bpy.data.meshes.new(f"{name}_turret")
-        mesh.materials.append(wall)
-        mesh.materials.append(spire_mat)
-        bm = bmesh.new()
-        _append_box(bm, rtx, rty, rh * 0.5, rw, rw, rh, yaw, 0)
-        _append_pyramid_spire(bm, rtx, rty, rh, rw * 1.05, rw * 1.6, yaw, 1)
-        bm.to_mesh(mesh)
-        bm.free()
-        mesh.update()
-        link(bpy.data.objects.new(f"{name}_turret", mesh))
+    link(bpy.data.objects.new(f"{name}_portal", mesh))
 
 
 def add_hospital_extras(
@@ -2008,14 +2079,13 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     landmark = bldg.get("landmark") or {}
     massing = str(landmark.get("massing") or f"{type_id}_default")
     photo_path = resolve_landmark_photo(landmark, LANDMARKS_DIR) if landmark.get("photo") else None
-    # Photo churches: street photo carries tower+spire silhouette. Do NOT extrude the
-    # whole OSM campus (often 70m+ of brown boxes) or add a second procedural tower.
-    photo_church = type_id == "church" and photo_path is not None
+    # Churches always get extruded OSM mass + hip roof + tower. Landmark photos dress
+    # the street wall only — never a free-standing silhouette billboard.
     body_h = max(2.5, eaves)
     if type_id == "church":
-        body_h = 3.6 if photo_church else min(20.0, max(12.0, eaves * 0.7))
-        shape = "flat" if photo_church else "hip"
-        roof_h = 0.35 if photo_church else max(2.4, roof_h if roof_h > 0.5 else 3.2)
+        body_h = min(20.0, max(12.0, eaves * 0.7))
+        shape = "hip"
+        roof_h = max(2.4, roof_h if roof_h > 0.5 else 3.2)
         brick = mats["wall"].get("red-brick") or mats["wall"].get("neo-flemish")
         if brick is not None:
             wall = brick
@@ -2060,47 +2130,30 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     primary = _primary_street_edge(bldg, ring, spawn_xy)
 
     if type_id in {"church", "hospital"} and detail in {"full", "simple"}:
-        if type_id == "church" and not photo_church:
+        trim = mats["trim"].get(style_name) or mats["trim"].get(type_id) or mats["trim"]["eclectic"]
+        if type_id == "church":
             add_church_tower(name, ring, body_h, massing, wall, roof, primary)
-        elif type_id == "hospital":
-            trim = mats["trim"].get(style_name) or mats["trim"].get(type_id) or mats["trim"]["eclectic"]
+            if detail == "full":
+                add_church_entrance(name, ring, body_h, wall, trim, primary)
+        else:
             add_hospital_extras(name, ring, body_h, wall, trim, primary)
-        if photo_path is not None and primary is not None and detail == "full":
+        # Hospitals may dress one street wall with a photo. Churches never get a
+        # free-standing photo plane — massing (nave + tower/spire + portal) carries
+        # recognition; arched street façades dress every edge including the front.
+        photo_on_primary = False
+        if (
+            type_id == "hospital"
+            and photo_path is not None
+            and primary is not None
+            and detail == "full"
+        ):
             i0, i1 = int(primary["i0"]), int(primary["i1"])
             p0, p1 = ring[i0], ring[i1]
             edge_len = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
             nx, ny = primary.get("outward") or [0.0, 1.0]
-            # OSM front edges are often too short for a church elevation — widen
-            # the photo plane to a plausible street front (~20–24 m for Heilige Geest).
-            # Heilige Geest façade (tower + nave + turret) is ~20–24 m on Mechelsesteenweg.
-            target_w = 22.0 if massing == "neo_romanesque_twin" else max(edge_len, 18.0)
-            if edge_len > 0.5 and target_w > edge_len * 1.05:
-                mx, my = (p0[0] + p1[0]) * 0.5, (p0[1] + p1[1]) * 0.5
-                ux = (p1[0] - p0[0]) / edge_len
-                uy = (p1[1] - p0[1]) / edge_len
-                half = target_w * 0.5
-                p0 = [mx - ux * half, my - uy * half]
-                p1 = [mx + ux * half, my + uy * half]
-                edge_len = target_w
             crop = landmark.get("crop") or [0.0, 0.0, 1.0, 1.0]
-            # Keep photo proportions (spire-inclusive crops are tall/narrow).
             aspect = _landmark_crop_aspect(crop)
-            h_cap = 55.0 if massing == "neo_romanesque_twin" else 48.0
-            facade_h = min(h_cap, max(18.0, edge_len / aspect))
-            if photo_church:
-                # Nave mass behind the photo — height stops under the spire tip.
-                nave_h = min(18.0, max(12.0, facade_h * 0.38))
-                add_photo_church_shell(
-                    name,
-                    p0,
-                    p1,
-                    [nx, ny],
-                    edge_len,
-                    nave_h,
-                    depth=14.0,
-                    wall=wall,
-                    roof=roof,
-                )
+            facade_h = min(48.0, max(body_h, edge_len / max(aspect, 0.2)))
             add_landmark_photo_quad(
                 f"{name}_landmark",
                 p0,
@@ -2109,31 +2162,12 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
                 facade_h,
                 photo_path,
                 crop,
-                proud=0.45,
+                proud=0.28,
             )
-            if not photo_church:
-                for ei, edge in enumerate(bldg.get("street_edges") or []):
-                    if edge is primary:
-                        continue
-                    i0 = int(edge["i0"])
-                    i1 = int(edge["i1"])
-                    if i0 >= len(ring) or i1 >= len(ring):
-                        continue
-                    add_street_facade(
-                        f"{name}_facade{ei}",
-                        ring[i0],
-                        ring[i1],
-                        edge.get("outward") or [0.0, 1.0],
-                        body_h,
-                        max(3, min(5, floors)),
-                        style_name,
-                        mats,
-                        detail=detail,
-                        window_kind=window_kind,
-                        near_spawn=near_spawn,
-                    )
-            return
+            photo_on_primary = True
         for ei, edge in enumerate(bldg.get("street_edges") or []):
+            if photo_on_primary and edge is primary:
+                continue
             i0 = int(edge["i0"])
             i1 = int(edge["i1"])
             if i0 >= len(ring) or i1 >= len(ring):
@@ -2144,12 +2178,13 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
                 ring[i1],
                 edge.get("outward") or [0.0, 1.0],
                 body_h,
-                floors,
+                max(3, min(5, floors)) if type_id == "church" else floors,
                 style_name,
                 mats,
                 detail=detail,
-                window_kind=window_kind,
+                window_kind="arch" if type_id == "church" else window_kind,
                 near_spawn=near_spawn,
+                prefer_procedural=(type_id == "church"),
             )
         return
     seed_id = int(bid) if str(bid).lstrip("-").isdigit() else 1
