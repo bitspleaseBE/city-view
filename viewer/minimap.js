@@ -18,8 +18,8 @@ export function createMinimap(THREE, opts = {}) {
   canvas.width = width * 2;
   canvas.height = height * 2;
   canvas.style.position = "fixed";
-  canvas.style.bottom = MARGIN + "px";
-  canvas.style.right = MARGIN + "px";
+  canvas.style.bottom = "22px";
+  canvas.style.left = "22px";
   canvas.style.width = width + "px";
   canvas.style.height = height + "px";
   canvas.style.zIndex = "500";
@@ -33,18 +33,16 @@ export function createMinimap(THREE, opts = {}) {
   // Street name label resting above the mini map
   const streetLabel = document.createElement("div");
   streetLabel.setAttribute("aria-live", "polite");
+  // GTA-style area caption: big outlined street name bottom-right, district underneath.
   streetLabel.style.cssText = [
     "position:fixed",
-    `right:${MARGIN}px`,
-    `bottom:${MARGIN + height + 8}px`,
-    "max-width:" + width + "px",
-    "padding:6px 10px",
-    "background:rgba(26,36,48,0.82)",
-    "color:#f4efe6",
-    "font:600 0.82rem/1.25 \"Iowan Old Style\",\"Palatino Linotype\",Palatino,serif",
+    "right:28px",
+    "bottom:26px",
+    "max-width:46vw",
+    "color:#fff",
+    "font:700 1.7rem/1.05 'Helvetica Neue',Arial,sans-serif",
     "letter-spacing:0.01em",
-    "border:1px solid rgba(255,255,255,0.12)",
-    "border-radius:6px",
+    "text-shadow:0 0 3px #000,0 2px 2px #000,0 0 8px rgba(0,0,0,0.6)",
     "pointer-events:none",
     "z-index:500",
     "text-align:right",
@@ -52,8 +50,6 @@ export function createMinimap(THREE, opts = {}) {
     "transform:translateY(4px)",
     "transition:opacity 280ms ease, transform 280ms ease",
     "white-space:nowrap",
-    "overflow:hidden",
-    "text-overflow:ellipsis",
   ].join(";");
   document.body.appendChild(streetLabel);
 
@@ -62,7 +58,11 @@ export function createMinimap(THREE, opts = {}) {
 
   function showStreetName(name) {
     if (!name) return;
-    streetLabel.textContent = name;
+    streetLabel.innerHTML = "";
+    const sub = document.createElement("div");
+    sub.textContent = opts.districtName || "Klein Antwerpen";
+    sub.style.cssText = "font-size:0.95rem;font-weight:600;opacity:0.85;margin-top:4px;text-transform:uppercase;letter-spacing:0.12em";
+    streetLabel.append(name, sub);
     if (streetHideTimer) clearTimeout(streetHideTimer);
     // Retrigger enter animation
     streetLabel.style.opacity = "0";
@@ -245,9 +245,169 @@ export function createMinimap(THREE, opts = {}) {
     ctx.strokeRect(0, 0, W, H);
   }
 
+  // ---- Radar (walk mode): GTA-style, heading-up, centred a little below the middle ----
+  const RW = 248;
+  const RH = 156;
+  const RADAR_PX_PER_M = 1.15; // radar shows ~215 m x 135 m
+  const radar = document.createElement("canvas");
+  radar.width = RW * 2;
+  radar.height = RH * 2;
+  radar.className = "hud-radar";
+  radar.style.cssText = `position:fixed;left:22px;bottom:22px;width:${RW}px;height:${RH}px;z-index:500;pointer-events:none;border-radius:6px;box-shadow:0 0 0 3px rgba(0,0,0,0.55),0 6px 18px rgba(0,0,0,0.35)`;
+  document.body.appendChild(radar);
+  const rctx = radar.getContext("2d");
+  const spanX = BOUNDS.maxX - BOUNDS.minX;
+  const spanZ = BOUNDS.maxZ - BOUNDS.minZ;
+  const hiScale = Math.min(3, 4096 / Math.max(spanX, spanZ)); // px per metre in the radar raster
+  const hiBg = document.createElement("canvas");
+  hiBg.width = Math.ceil(spanX * hiScale);
+  hiBg.height = Math.ceil(spanZ * hiScale);
+  const hctx = hiBg.getContext("2d");
+  const toHi = (x, z) => [(x - BOUNDS.minX) * hiScale, (z - BOUNDS.minZ) * hiScale];
+  let heading = 0;
+  let blipSource = null;
+
+  async function paintRadarBase() {
+    hctx.fillStyle = "#56645a"; // land
+    hctx.fillRect(0, 0, hiBg.width, hiBg.height);
+    try {
+      const res = await fetch("./buildings.json");
+      if (res.ok) {
+        hctx.fillStyle = "#8d978e";
+        for (const b of (await res.json()).buildings || []) {
+          const ring = b.ring || [];
+          if (ring.length < 3) continue;
+          hctx.beginPath();
+          ring.forEach((p, i) => {
+            const [u, v] = toHi(p[0], -p[1]);
+            if (i) hctx.lineTo(u, v);
+            else hctx.moveTo(u, v);
+          });
+          hctx.fill();
+        }
+      }
+    } catch {
+      /* buildings are optional on the radar */
+    }
+    try {
+      const res = await fetch(ROADS_URL);
+      if (!res.ok) return;
+      const roads = (await res.json()).roads || [];
+      hctx.lineCap = "round";
+      hctx.lineJoin = "round";
+      for (const pass of [0, 1]) {
+        for (const road of roads) {
+          const pts = road.points || [];
+          if (pts.length < 2) continue;
+          const w = (Number(road.width) || 7) * hiScale;
+          hctx.strokeStyle = pass ? "#e9ece6" : "#2e3530";
+          hctx.lineWidth = pass ? w : w + 2.5 * hiScale;
+          hctx.beginPath();
+          pts.forEach((p, i) => {
+            const [u, v] = toHi(p[0], -p[1]);
+            if (i) hctx.lineTo(u, v);
+            else hctx.moveTo(u, v);
+          });
+          hctx.stroke();
+        }
+      }
+    } catch {
+      console.warn("Minimap: radar roads unavailable");
+    }
+  }
+  paintRadarBase();
+
+  function drawRadar(playerPos, traffic, transit, micromobility) {
+    const W2 = radar.width;
+    const H2 = radar.height;
+    const k = 2 * RADAR_PX_PER_M; // canvas px per metre (canvas is 2x CSS)
+    rctx.setTransform(1, 0, 0, 1, 0, 0);
+    rctx.fillStyle = "#3c4740";
+    rctx.fillRect(0, 0, W2, H2);
+    rctx.save();
+    rctx.translate(W2 / 2, H2 * 0.6);
+    rctx.rotate(heading);
+    rctx.scale(k, k);
+    rctx.translate(-playerPos.x, -playerPos.z);
+    rctx.imageSmoothingEnabled = true;
+    rctx.drawImage(hiBg, BOUNDS.minX, BOUNDS.minZ, spanX, spanZ);
+    const box = (x, z, tx, tz, len, wid, color) => {
+      rctx.save();
+      rctx.translate(x, z);
+      rctx.rotate(Math.atan2(tz, tx));
+      rctx.fillStyle = color;
+      rctx.fillRect(-len / 2, -wid / 2, len, wid);
+      rctx.restore();
+    };
+    if (traffic && traffic.cars) for (const c of traffic.cars) if (c.pos) box(c.pos.x, c.pos.z, c.tan?.x ?? 1, c.tan?.z ?? 0, 4.4, 2, "#9aa7b4");
+    if (transit && transit.vehicles) {
+      for (const v of transit.vehicles) {
+        if (v.phase === "gone" || !v.pos) continue;
+        const tram = v.mode === "tram";
+        box(v.pos.x, v.pos.z, v.tan.x, v.tan.z, tram ? 30 : 12, 2.8, tram ? "#ffd800" : "#009fe3");
+      }
+    }
+    if (micromobility && micromobility.vehicles) {
+      for (const v of micromobility.vehicles) if (v.pos) box(v.pos.x, v.pos.z, v.tan.x, v.tan.z, 2, 1.2, "#2fbf71");
+    }
+    const blips = blipSource ? blipSource() : [];
+    for (const b of blips) {
+      rctx.fillStyle = "rgba(0,0,0,0.6)";
+      rctx.beginPath();
+      rctx.arc(b.x, b.z, 3.2, 0, Math.PI * 2);
+      rctx.fill();
+      rctx.fillStyle = b.color;
+      rctx.beginPath();
+      rctx.arc(b.x, b.z, 2.3, 0, Math.PI * 2);
+      rctx.fill();
+    }
+    rctx.restore();
+    // Player arrow (always points up: the map turns, not you).
+    rctx.save();
+    rctx.translate(W2 / 2, H2 * 0.6);
+    rctx.fillStyle = "#ffffff";
+    rctx.strokeStyle = "rgba(0,0,0,0.75)";
+    rctx.lineWidth = 3;
+    rctx.beginPath();
+    rctx.moveTo(0, -13);
+    rctx.lineTo(9, 10);
+    rctx.lineTo(0, 5);
+    rctx.lineTo(-9, 10);
+    rctx.closePath();
+    rctx.stroke();
+    rctx.fill();
+    rctx.restore();
+    // North marker on the rim.
+    const nx = Math.sin(heading);
+    const nz = -Math.cos(heading);
+    const cx = W2 / 2;
+    const cy = H2 * 0.6;
+    const t = Math.min((W2 / 2 - 16) / Math.max(1e-6, Math.abs(nx)), (nz < 0 ? cy - 16 : H2 - cy - 16) / Math.max(1e-6, Math.abs(nz)));
+    rctx.fillStyle = "rgba(0,0,0,0.7)";
+    rctx.beginPath();
+    rctx.arc(cx + nx * t, cy + nz * t, 13, 0, Math.PI * 2);
+    rctx.fill();
+    rctx.fillStyle = "#fff";
+    rctx.font = "bold 17px 'Helvetica Neue', Arial, sans-serif";
+    rctx.textAlign = "center";
+    rctx.textBaseline = "middle";
+    rctx.fillText("N", cx + nx * t, cy + nz * t + 1);
+  }
+
+  const drawFullMap = draw;
+  function drawAny(playerPos, traffic, transit, pedestrians, mode, micromobility, ...rest) {
+    const radarMode = mode === "walk";
+    if (!visible) return;
+    canvas.style.display = radarMode ? "none" : "block";
+    radar.style.display = radarMode ? "block" : "none";
+    if (radarMode) drawRadar(playerPos, traffic, transit, micromobility);
+    else drawFullMap(playerPos, traffic, transit, pedestrians, mode, micromobility, ...rest);
+  }
+
   function setVisible(v) {
     visible = v;
     canvas.style.display = v ? "block" : "none";
+    radar.style.display = v ? "block" : "none";
     streetLabel.style.display = v ? "block" : "none";
     if (!v && streetHideTimer) {
       clearTimeout(streetHideTimer);
@@ -256,5 +416,20 @@ export function createMinimap(THREE, opts = {}) {
     }
   }
 
-  return { draw, consumeTeleport, setVisible, showStreetName, canvas };
+  return {
+    draw: drawAny,
+    consumeTeleport,
+    setVisible,
+    showStreetName,
+    canvas,
+    radar,
+    /** Camera yaw (0 = looking north / −Z); the radar turns so your heading is up. */
+    setHeading(yaw) {
+      heading = yaw;
+    },
+    /** () => [{ x, z, color }] extra radar blips (rentable scooters, stations, ...). */
+    setBlips(fn) {
+      blipSource = fn;
+    },
+  };
 }

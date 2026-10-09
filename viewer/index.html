@@ -234,6 +234,108 @@
         pointer-events: none;
         white-space: nowrap;
       }
+
+      /* ---- GTA-style HUD skin (no weapons): old panels hidden, prompts as a help box ---- */
+      #hint,
+      #modes,
+      #status {
+        display: none !important;
+      }
+      #prompt {
+        top: 18px;
+        bottom: auto;
+        left: 22px;
+        transform: none;
+        max-width: 22rem;
+        white-space: normal;
+        background: rgba(10, 12, 16, 0.8);
+        color: #f2f2f2;
+        border: 0;
+        border-radius: 4px;
+        padding: 11px 14px;
+        font: 500 0.9rem/1.4 "Helvetica Neue", Arial, sans-serif;
+      }
+      body.help-on #prompt {
+        top: 196px;
+      }
+      #ride {
+        top: 18px;
+        background: rgba(10, 12, 16, 0.78);
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+      }
+      #ride .line {
+        color: #ffd800;
+        letter-spacing: 0.04em;
+      }
+      #ride .next {
+        color: #e6e6e6;
+      }
+      #hud {
+        left: 50%;
+        top: 22%;
+        bottom: auto;
+        transform: translateX(-50%);
+        max-width: none;
+        background: none;
+        border: 0;
+        text-align: center;
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        text-shadow: 0 0 3px #000, 0 2px 3px #000;
+        transition: opacity 1.2s ease;
+      }
+      #hud h1 {
+        color: #fff;
+        font-size: 2.4rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+      #hud p {
+        color: #f0f0f0;
+        font-size: 1rem;
+      }
+      #hud.gone {
+        opacity: 0;
+      }
+      #click-cue {
+        position: fixed;
+        left: 50%;
+        top: 58%;
+        transform: translate(-50%, -50%);
+        padding: 12px 22px;
+        background: rgba(10, 12, 16, 0.72);
+        color: #fff;
+        font: 700 1rem "Helvetica Neue", Arial, sans-serif;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 700;
+      }
+      body.locked #click-cue,
+      body.free-view #click-cue,
+      body.on-transit #click-cue,
+      body:has(#loading) #click-cue {
+        display: none;
+      }
+      #crosshair {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 4px;
+        height: 4px;
+        margin: -2px 0 0 -2px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.85);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+        pointer-events: none;
+        display: none;
+      }
+      body.locked #crosshair {
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -321,11 +423,11 @@
     </div>
     <div id="prompt"></div>
     <div id="hud">
-        <h1>Velo Harmonie · Klein Antwerpen · 2018</h1>
-        <p>
-          Spawn at Velo Harmonie (042). Press E for a Velo, shared scooter, or stopped tram.
-        </p>
+      <h1>Klein Antwerpen</h1>
+      <p>Velo Harmonie · grab a Velo or a scooter, hop on a tram, or just walk</p>
     </div>
+    <div id="click-cue">Click to play</div>
+    <div id="crosshair"></div>
     <script type="importmap">
       {
         "imports": {
@@ -347,6 +449,7 @@
       import { createVelo } from "./velo.js";
       import { createScooters } from "./scooters.js";
       import { createPlayerMotion } from "./player-motion.js";
+      import { createHud } from "./hud.js";
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
       import { createOutdoorsGuard } from "./outdoors.js";
@@ -360,6 +463,7 @@
       const rideLine = document.getElementById("ride-line");
       const rideNext = document.getElementById("ride-next");
       const promptEl = document.getElementById("prompt");
+      const hud = createHud({ wallet: 25 });
       const _rideCam = new THREE.Vector3();
       const _rideLook = new THREE.Vector3();
 
@@ -479,8 +583,36 @@
         const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
         return u * u * (3 - 2 * u);
       };
-      let tod = new URLSearchParams(location.search).has("night") ? 1 : 0;
+      // ---- Day-night cycle: a game clock drives `tod` and the sun's arc ----
+      // One full day takes DAY_REAL_MIN real minutes; N fast-forwards to the next dusk / dawn.
+      // ?t=21:30 starts at that time, ?night at 22:30.
+      const DAY_REAL_MIN = 24;
+      const GAME_HOURS_PER_SEC = 24 / (DAY_REAL_MIN * 60);
+      const FF_HOURS_PER_SEC = 0.9;
+      const _q = new URLSearchParams(location.search);
+      const _tq = /^(\d{1,2})(?::(\d{2}))?$/.exec(_q.get("t") || "");
+      let gameHour = _tq ? (Number(_tq[1]) % 24) + Number(_tq[2] || 0) / 60 : _q.has("night") ? 22.5 : 10.5;
+      let gameDay = 5; // Friday
+      let ffTarget = null;
+      function todFromHour(h) {
+        // 0 full day, ~0.45 dusk glow, 1 full night (the look tuned for the old toggle).
+        if (h >= 7.5 && h < 19) return 0;
+        if (h >= 19 && h < 21.5) return (h - 19) / 2.5;
+        if (h >= 21.5 || h < 5.5) return 1;
+        return 1 - (h - 5.5) / 2;
+      }
+      const sunArcPos = new THREE.Vector3(220, 320, -160);
+      function updateSunArc(h) {
+        // October in Antwerp: sunrise ~08:00 in the east-south-east, noon elevation ~30°.
+        const u = Math.min(1, Math.max(0, (h - 6.5) / 13));
+        const az = THREE.MathUtils.degToRad(100 + 160 * u);
+        const el = THREE.MathUtils.degToRad(12 + 26 * Math.sin(Math.PI * u));
+        sunArcPos.set(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)).multiplyScalar(420);
+      }
+      updateSunArc(gameHour);
+      let tod = todFromHour(gameHour);
       let todTarget = tod;
+      let todClock = 0;
       let todApplied = -1;
       let baseFogDensity = 0.00055; // retuned to the district size after the GLB loads
       let skirtMat = null;
@@ -566,7 +698,7 @@
         // One directional light plays the sun by day and the moon by night.
         sun.color.copy(SUN_COL).lerp(SUN_DUSK, dusk).lerp(MOON_COL, smooth(0.5, 0.9, t));
         sun.intensity = 1.35 * dayAmt + 0.3 * smooth(0.5, 1.0, t);
-        sun.position.lerpVectors(SUN_DAY_POS, MOON_POS, smooth(0.2, 0.8, t));
+        sun.position.lerpVectors(sunArcPos, MOON_POS, smooth(0.2, 0.8, t));
         sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
         sunHaze.position.copy(sunMesh.position);
         sunMesh.material.color.set(0xffe7a0).lerp(_tmpCol.set(0xdfe6f5), smooth(0.4, 0.9, t));
@@ -594,11 +726,34 @@
         btnNight.classList.toggle("active", isNight);
         todApplied = t;
       }
+      /** Fast-forward the clock to the next night (22:00) or morning (08:00). */
       function setTimeOfDay(night) {
-        todTarget = night ? 1 : 0;
+        ffTarget = night ? 22 : 8;
       }
       function toggleTimeOfDay() {
-        setTimeOfDay(todTarget < 0.5);
+        setTimeOfDay(todFromHour(gameHour) < 0.5);
+      }
+      function advanceClock(dt) {
+        let dh = GAME_HOURS_PER_SEC * dt;
+        if (ffTarget != null) {
+          const left = (ffTarget - gameHour + 24) % 24;
+          dh = Math.min(left, FF_HOURS_PER_SEC * dt);
+          if (left - dh < 1e-3) ffTarget = null;
+        }
+        gameHour += dh;
+        if (gameHour >= 24) {
+          gameHour -= 24;
+          gameDay = (gameDay + 1) % 7;
+        }
+        todTarget = todFromHour(gameHour);
+        todClock -= dt;
+        // Re-light a few times a second (sky texture + lights), every frame while fast-forwarding.
+        if (todClock <= 0 || ffTarget != null) {
+          todClock = 0.2;
+          tod = todTarget;
+          updateSunArc(gameHour);
+          applyTimeOfDay(tod);
+        }
       }
       btnNight.addEventListener("click", toggleTimeOfDay);
       let lampClock = 0;
@@ -845,6 +1000,7 @@
         if (scooters && scooters.isRiding()) return;
         const prevMode = mode;
         mode = next;
+        document.body.classList.toggle("free-view", mode === "free");
         btnWalk.classList.toggle("active", mode === "walk");
         btnFree.classList.toggle("active", mode === "free");
         if (mode === "walk") {
@@ -910,7 +1066,7 @@
           status.textContent = `Unlocked a ${result.brand} scooter`;
         } else if (result.action === "park") {
           rideEl.style.display = "none";
-          status.textContent = `Parked · ride €${result.cost.toFixed(2)}`;
+          hud.spend(result.cost, `${result.brand} ride`);
         } else if (result.action === "empty") {
           status.textContent = "That scooter's battery is empty";
         }
@@ -990,9 +1146,7 @@
         const p = walkControls.getObject().position;
         if (onVelo) {
           const hud = velo.getRideHud();
-          rideEl.style.display = "block";
-          rideLine.textContent = "Velo";
-          rideNext.textContent = hud.name || "city bike";
+          rideEl.style.display = "none"; // the speedometer carries the ride
           const prompt = velo.getPrompt({ x: p.x, z: p.z });
           if (prompt) {
             promptEl.style.display = "block";
@@ -1005,12 +1159,12 @@
         }
         const hud = transit.getRideHud ? transit.getRideHud() : { riding: false };
         const sHud = scooters ? scooters.getRideHud() : { riding: false };
-        if (sHud.toast) status.textContent = sHud.toast;
+        document.body.classList.toggle("on-transit", !!hud.riding);
         if (sHud.riding) {
-          rideEl.style.display = "block";
-          rideLine.textContent = `${sHud.brand} e-scooter · ${Math.round(Math.abs(playerMotion.speed) * 3.6)} km/h`;
-          rideNext.textContent = `${sHud.battery}% · ${sHud.time} · €${sHud.cost.toFixed(2)} · E to park`;
-          promptEl.style.display = "none";
+          // The speedometer carries the ride; only the park hint stays on screen.
+          rideEl.style.display = "none";
+          promptEl.style.display = "block";
+          promptEl.textContent = scooters.getPrompt({ x: 0, z: 0 });
           return;
         }
         const scooterPrompt = !hud.riding && mode === "walk" && scooters ? scooters.getPrompt({ x: p.x, z: p.z }) : null;
@@ -1055,6 +1209,16 @@
         if (e.target.closest("#modes")) return;
         if (!walkControls.isLocked) walkControls.lock();
       });
+      let helpShown = false;
+      walkControls.addEventListener("lock", () => {
+        document.body.classList.add("locked");
+        document.getElementById("hud")?.classList.add("gone");
+        if (!helpShown) {
+          helpShown = true;
+          hud.showHelp(8000);
+        }
+      });
+      walkControls.addEventListener("unlock", () => document.body.classList.remove("locked"));
       walkControls.addEventListener("lock", () => {
         hint.textContent = "WASD · mouse look · Space jump · E Velo / tram · Esc · V free · N night · M map";
       });
@@ -1070,6 +1234,16 @@
         }
         if (e.code === "KeyN") {
           toggleTimeOfDay();
+          hud.notify(todFromHour(gameHour) < 0.5 ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
+          return;
+        }
+        if (e.code === "KeyH") {
+          hud.toggleHelp();
+          return;
+        }
+        if (e.code === "F3" || e.code === "Backquote") {
+          e.preventDefault();
+          hud.toggleStats();
           return;
         }
         if (e.code === "KeyM") {
@@ -1312,6 +1486,16 @@
             width: 200,
             height: 200,
           });
+          if (minimap.setBlips) {
+            const BRAND = { Dott: "#18a6e0", Bolt: "#34d186" };
+            const stations = (velo?.stations || []).map((st) => ({ x: st.x, z: st.z, color: "#e2001a" }));
+            minimap.setBlips(() =>
+              scooters.fleet
+                .filter((s) => s.parked)
+                .map((s) => ({ x: s.mesh.position.x, z: s.mesh.position.z, color: BRAND[s.brand] || "#fff" }))
+                .concat(stations),
+            );
+          }
           streetLocator = await createStreetLocator();
           outdoors = await createOutdoorsGuard();
           if (outdoors.ready) {
@@ -1346,6 +1530,7 @@
           cityReady = true;
           prevTime = performance.now();
           window.__loading && window.__loading.done();
+          setTimeout(() => document.getElementById("hud")?.classList.add("gone"), 9000);
       }
 
       (async () => {
@@ -1499,11 +1684,7 @@
 
         const walker =
           mode === "walk" ? walkControls.getObject() : avatar.visible ? avatar : walkControls.getObject();
-        if (Math.abs(tod - todTarget) > 1e-4) {
-          const step = dt / 2.4;
-          tod = tod < todTarget ? Math.min(todTarget, tod + step) : Math.max(todTarget, tod - step);
-          applyTimeOfDay(tod);
-        }
+        advanceClock(dt);
         updateLampLights(dt, walker);
         if (stars.visible) stars.position.copy(camera.position);
         traffic.update(simDt, walker);
@@ -1539,6 +1720,7 @@
             const { street, changed } = streetLocator.update(ppos.x, ppos.z);
             if (changed && street) minimap.showStreetName(street);
           }
+          if (minimap.setHeading) minimap.setHeading(playerMotion.yaw());
           minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility, velo);
         }
 
@@ -1552,6 +1734,28 @@
         }
 
         refreshRideHud();
+        const sRide = scooters && scooters.isRiding() ? scooters.getRideHud() : null;
+        const vRide = velo && velo.isRiding && velo.isRiding() ? velo.getRideHud() : null;
+        const kmh = Math.abs(playerMotion.speed) * 3.6;
+        hud.update(rawDt, {
+          hour: gameHour,
+          dayIndex: gameDay,
+          riding: sRide
+            ? { speedKmh: kmh, battery: sRide.battery, sub: `${sRide.brand} · ${sRide.time} · €${sRide.cost.toFixed(2)}` }
+            : vRide
+              ? { speedKmh: kmh, battery: null, sub: `Velo · ${vRide.name || "city bike"}` }
+              : null,
+          stats: () => {
+            const p = walkControls.getObject().position;
+            return {
+              pos: `${p.x.toFixed(1)}, ${p.z.toFixed(1)}`,
+              speed: `${(Math.abs(playerMotion.speed) * 3.6).toFixed(1)} km/h`,
+              res: `${pixelRatio.toFixed(2)}x`,
+              calls: renderer.info.render.calls,
+              tris: renderer.info.render.triangles,
+            };
+          },
+        });
 
         renderer.render(scene, camera);
         requestAnimationFrame(tick);
