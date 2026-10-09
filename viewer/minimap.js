@@ -100,6 +100,41 @@ export function createMinimap(THREE, opts = {}) {
   bgCtx.fillRect(0, 0, W, H);
 
   let bgReady = false;
+
+  /** Stroke a Blender-XY polyline onto a 2d context via toPixel(x, z). */
+  function strokeWalk(ctx2d, points) {
+    if (!points || points.length < 2) return;
+    ctx2d.beginPath();
+    for (let k = 0; k < points.length; k++) {
+      const p = points[k];
+      const px = Array.isArray(p) ? p[0] : p.x || 0;
+      const py = Array.isArray(p) ? p[1] : p.y || 0;
+      const pix = toPixel(px, -py);
+      if (k === 0) ctx2d.moveTo(pix.u, pix.v);
+      else ctx2d.lineTo(pix.u, pix.v);
+    }
+    ctx2d.stroke();
+  }
+
+  function paintWalkLayer(ctx2d, walks) {
+    ctx2d.lineCap = "round";
+    ctx2d.lineJoin = "round";
+    ctx2d.strokeStyle = "rgba(150,205,165,0.42)";
+    ctx2d.lineWidth = 1.5;
+    for (const w of walks) {
+      if ((w.kind || "") === "crossing") continue;
+      strokeWalk(ctx2d, w.points);
+    }
+    ctx2d.strokeStyle = "rgba(235,220,140,0.55)";
+    ctx2d.lineWidth = 1.7;
+    ctx2d.setLineDash([3.5, 2.5]);
+    for (const w of walks) {
+      if ((w.kind || "") !== "crossing") continue;
+      strokeWalk(ctx2d, w.points);
+    }
+    ctx2d.setLineDash([]);
+  }
+
   async function loadRoads() {
     try {
       const res = await fetch(ROADS_URL);
@@ -124,6 +159,7 @@ export function createMinimap(THREE, opts = {}) {
         }
         bgCtx.stroke();
       }
+      paintWalkLayer(bgCtx, data.walks || []);
       // Spawn marker
       const sp = toPixel(SPAWN.x, SPAWN.z);
       bgCtx.fillStyle = "#ffd800";
@@ -292,7 +328,8 @@ export function createMinimap(THREE, opts = {}) {
     try {
       const res = await fetch(ROADS_URL);
       if (!res.ok) return;
-      const roads = (await res.json()).roads || [];
+      const data = await res.json();
+      const roads = data.roads || [];
       hctx.lineCap = "round";
       hctx.lineJoin = "round";
       for (const pass of [0, 1]) {
@@ -310,6 +347,25 @@ export function createMinimap(THREE, opts = {}) {
           });
           hctx.stroke();
         }
+      }
+      // Sidewalk ribbons + zebra links (subtle so the radar stays readable).
+      hctx.strokeStyle = "rgba(200,220,190,0.55)";
+      hctx.lineWidth = 1.4 * hiScale;
+      for (const walk of data.walks || []) {
+        const pts = walk.points || [];
+        if (pts.length < 2) continue;
+        const cross = (walk.kind || "") === "crossing";
+        hctx.strokeStyle = cross ? "rgba(230,215,150,0.7)" : "rgba(200,220,190,0.55)";
+        hctx.lineWidth = (cross ? 1.8 : 1.3) * hiScale;
+        if (cross) hctx.setLineDash([2.5 * hiScale, 1.8 * hiScale]);
+        hctx.beginPath();
+        pts.forEach((p, i) => {
+          const [u, v] = toHi(p[0], -p[1]);
+          if (i) hctx.lineTo(u, v);
+          else hctx.moveTo(u, v);
+        });
+        hctx.stroke();
+        if (cross) hctx.setLineDash([]);
       }
     } catch {
       console.warn("Minimap: radar roads unavailable");
