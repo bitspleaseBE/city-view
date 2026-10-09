@@ -247,7 +247,7 @@
         left: 22px;
         transform: none;
         max-width: 22rem;
-        white-space: normal;
+        white-space: pre-line;
         background: rgba(10, 12, 16, 0.8);
         color: #f2f2f2;
         border: 0;
@@ -448,6 +448,7 @@
       import { createMicromobility } from "./micromobility.js";
       import { createVelo } from "./velo.js";
       import { createScooters } from "./scooters.js";
+      import { createShops } from "./shops.js";
       import { createPlayerMotion } from "./player-motion.js";
       import { createHud } from "./hud.js";
       import { createMinimap } from "./minimap.js";
@@ -671,6 +672,8 @@
         get micromobility() { return micromobility; },
         get velo() { return velo; },
         get scooters() { return scooters; },
+        get shops() { return shops; },
+        get clock() { return { hour: gameHour, day: gameDay }; },
         get motion() { return playerMotion; },
         get pixelRatio() { return pixelRatio; },
       };
@@ -714,6 +717,7 @@
         for (const l of lampLights) l.intensity = LAMP_INTENSITY * glow * l.userData.on;
         traffic.setNight && traffic.setNight(glow);
         scooters && scooters.setNight(glow);
+        shops && shops.setNight(glow);
         transit.setNight && transit.setNight(glow);
 
         starMat.opacity = smooth(0.55, 1.0, t) * 0.9;
@@ -822,6 +826,7 @@
       let micromobility = null;
       let velo = null;
       let scooters = null;
+      let shops = null;
       let outdoors = null;
       const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
       /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
@@ -1196,7 +1201,10 @@
             promptEl.textContent = hud.prompt;
           } else {
             if (!transit.isRiding || !transit.isRiding()) rideEl.style.display = "none";
-            promptEl.style.display = "none";
+            const shopPrompt =
+              shops && mode === "walk" ? shops.getPrompt({ x: p.x, z: p.z, yaw: playerMotion.yaw() }, gameHour, gameDay) : null;
+            promptEl.style.display = shopPrompt ? "block" : "none";
+            if (shopPrompt) promptEl.textContent = shopPrompt;
           }
         }
       }
@@ -1479,6 +1487,11 @@
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             groundAt,
           });
+          shops = await createShops(scene, THREE, { groundAt, anisotropy: renderer.capabilities.getMaxAnisotropy() });
+          if (shops) {
+            shops.update(gameHour, gameDay);
+            shops.setNight(smooth(0.4, 0.9, tod));
+          }
           // ---- Mini map + street name locator ----
           minimap = createMinimap(THREE, {
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
@@ -1733,6 +1746,7 @@
           camera.lookAt(_rideLook);
         }
 
+        shops && shops.update(gameHour, gameDay);
         refreshRideHud();
         const sRide = scooters && scooters.isRiding() ? scooters.getRideHud() : null;
         const vRide = velo && velo.isRiding && velo.isRiding() ? velo.getRideHud() : null;

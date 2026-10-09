@@ -30,6 +30,7 @@ from cityview.benches import attach_benches, summarize as summarize_benches
 from cityview.barriers import attach_barriers, summarize as summarize_barriers
 from cityview.courtyards import attach_courtyards, summarize as summarize_courtyards
 from cityview.clutter import attach_clutter, summarize as summarize_clutter
+from cityview.shops import export_shops_for_viewer, plan_shops
 from cityview.trees import attach_trees, summarize as summarize_trees
 from cityview.velo import (
     attach_velo,
@@ -266,6 +267,10 @@ def city_command(args: argparse.Namespace) -> int:
     velo_path = VIEWER / "velo.json"
     velo_path.write_text(json.dumps(velo_payload) + "\n")
     print(f"Wrote {velo_path} ({len(velo_payload['stations'])} Velo stations)")
+    shops_payload = export_shops_for_viewer(plan_shops(osm, layout, origin), spawn)
+    shops_path = VIEWER / "shops.json"
+    shops_path.write_text(json.dumps(shops_payload) + "\n")
+    print(f"Wrote {shops_path} ({len(shops_payload['shops'])} shopfronts)")
     print(f"Outputs in {output_dir}")
     return 0
 

@@ -22,6 +22,7 @@ from cityview.gtfs_delijn import enrich_layout_transit  # noqa: E402
 from cityview.jobs import load_scene  # noqa: E402
 from cityview.osm import fetch_osm, layout_from_osm  # noqa: E402
 from cityview.paths import VELO_CACHE  # noqa: E402
+from cityview.shops import export_shops_for_viewer, plan_shops  # noqa: E402
 from cityview.streetscape import (  # noqa: E402
     export_buildings_near_spawn,
     export_roads_near_spawn,
@@ -52,6 +53,8 @@ def main() -> int:
     buildings = export_buildings_near_spawn(layout, spawn)
     transit = export_transit_near_spawn(layout, spawn)
     velo = export_velo_for_viewer(layout.get("velo_stations") or [])
+    shops = export_shops_for_viewer(plan_shops(osm, layout, origin), spawn)
+    (cli.VIEWER / "shops.json").write_text(json.dumps(shops) + "\n")
     (cli.VIEWER / "roads.json").write_text(json.dumps(roads) + "\n")
     (cli.VIEWER / "buildings.json").write_text(json.dumps(buildings) + "\n")
     (cli.VIEWER / "transit.json").write_text(json.dumps(transit) + "\n")
@@ -69,6 +72,7 @@ def main() -> int:
             f"direction={path['direction']:2d} ({path['directionSource']})"
         )
     print(f"velo.json: {len(velo['stations'])} stations")
+    print(f"shops.json: {len(shops['shops'])} shopfronts")
     if spawn:
         print(f"spawn.json: {spawn.get('label')} ({spawn['lat']:.5f}, {spawn['lon']:.5f})")
     return 0
