@@ -5,7 +5,12 @@
       "name": "Sint-Bonifaciuskerk",
       "kind": "church",
       "photo": "sint_bonifaciuskerk.jpg",
-      "crop": [0.05, 0.02, 0.95, 0.98],
+      "crop": [
+        0.05,
+        0.02,
+        0.95,
+        0.98
+      ],
       "massing": "neo_gothic_tower_left",
       "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Gr%C3%A9trystraat_-_103291_-_onroerenderfgoed.jpg",
       "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
@@ -15,7 +20,12 @@
       "name": "Heilige Geestkerk",
       "kind": "church",
       "photo": "heilige_geestkerk.jpg",
-      "crop": [0.08, 0.01, 0.78, 0.995],
+      "crop": [
+        0.08,
+        0.01,
+        0.78,
+        0.995
+      ],
       "massing": "neo_romanesque_tower_left",
       "source_url": "https://commons.wikimedia.org/wiki/File:Heilige_Geestkerk_buiten.jpg",
       "attribution": "Wikimedia Commons"
@@ -25,19 +35,14 @@
       "name": "Basiliek van het Heilig Hart",
       "kind": "church",
       "photo": "heilig_hart_basiliek.jpg",
-      "crop": [0.1, 0.02, 0.9, 0.98],
+      "crop": [
+        0.1,
+        0.02,
+        0.9,
+        0.98
+      ],
       "massing": "church_default",
       "source_url": "https://commons.wikimedia.org/wiki/File:Basiliek_van_het_Heilig_Hart_te_Berchem_(Antwerpen)_-_Gebouwd_door_Jules_Bilmeyer_en_Joseph_van_Riel_(10902).jpg",
-      "attribution": "Wikimedia Commons"
-    },
-    "9715814": {
-      "id": "9715814",
-      "name": "ZAS Vincentius",
-      "kind": "hospital",
-      "photo": "zas_vincentius.jpg",
-      "crop": [0.05, 0.05, 0.95, 0.95],
-      "massing": "hospital_historic_front",
-      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusziekenhuis1.JPG",
       "attribution": "Wikimedia Commons"
     },
     "780448684": {
@@ -45,10 +50,138 @@
       "name": "AZ Monica Antwerpen",
       "kind": "hospital",
       "photo": "az_monica.jpg",
-      "crop": [0.15, 0.1, 0.85, 0.85],
+      "crop": [
+        0.15,
+        0.1,
+        0.85,
+        0.85
+      ],
       "massing": "hospital_default",
       "source_url": "https://commons.wikimedia.org/wiki/File:Coronaspandoek_AZ_Monica,_Florent_Pauwelslei_1,_2100_Deurne,_asset_fJROMEXcufwhRMSHimnvVERN.jpg",
       "attribution": "Wikimedia Commons"
+    },
+    "7345816": {
+      "id": "7345816",
+      "name": "ZAS Vincentius (Sint-Vincentiusgasthuis)",
+      "kind": "hospital",
+      "custom": "zas_vincentius",
+      "levels": 4,
+      "height_m": 15.2,
+      "roof_height_m": 2.2,
+      "anchor": [
+        51.2058437,
+        4.4133734
+      ],
+      "inventaris": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7573",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusstraat_20_-_104484_-_onroerenderfgoed.jpg",
+      "reference_urls": [
+        "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusziekenhuis1.JPG"
+      ],
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons",
+      "params": {
+        "risalit_depth_m": 7.4
+      }
+    },
+    "231220414": {
+      "id": "231220414",
+      "name": "Feestzaal Harmonie",
+      "kind": "hall",
+      "custom": "feestzaal_harmonie",
+      "levels": 2,
+      "height_m": 8.2,
+      "roof_height_m": 6.6,
+      "anchor": [
+        51.2021066,
+        4.4112946
+      ],
+      "params": {
+        "entrance_at": [
+          51.2025585,
+          4.4118129
+        ],
+        "arm_len_m": 23.15
+      },
+      "inventaris": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7342",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Mechelsesteenweg_216_-_104227_-_onroerenderfgoed.jpg",
+      "reference_urls": [
+        "https://commons.wikimedia.org/wiki/File:Antwerpen_Mechelsesteenweg_216_-_244058_-_onroerenderfgoed.jpg"
+      ],
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
+    },
+    "501410388": {
+      "id": "501410388",
+      "name": "Mechelsesteenweg 123 (Art Deco)",
+      "kind": "apartments",
+      "custom": "art_deco_ms123",
+      "levels": 5,
+      "height_m": 17.6,
+      "roof_height_m": 0.6,
+      "anchor": [
+        51.2062472,
+        4.4101742
+      ],
+      "inventaris": "https://id.erfgoed.net/erfgoedobjecten/200909",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Mechelsesteenweg_123_-_174663_-_onroerenderfgoed.jpg",
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
+    },
+    "232921425": {
+      "id": "232921425",
+      "name": "In de Gulden Spoor",
+      "kind": "house",
+      "custom": "gulden_spoor",
+      "levels": 3,
+      "height_m": 8.6,
+      "roof_height_m": 6.8,
+      "anchor": [
+        51.2064883,
+        4.4132258
+      ],
+      "inventaris": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7571",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusstraat_12_-_104483_-_onroerenderfgoed.jpg",
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
+    },
+    "117235287": {
+      "id": "117235287",
+      "name": "Muziekkiosk Koning Albertpark",
+      "kind": "bandstand",
+      "custom": "albertpark_kiosk",
+      "levels": 1,
+      "height_m": 1.6,
+      "roof_height_m": 6.0,
+      "anchor": [
+        51.1995659,
+        4.4129211
+      ],
+      "inventaris": "https://id.erfgoed.net/erfgoedobjecten/7020",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Koning_Albertpark_Kiosk_-_103356_-_onroerenderfgoed.jpg",
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons",
+      "params": {
+        "stairs_toward_at": [
+          51.1994764,
+          4.4128209
+        ]
+      }
+    },
+    "503176291": {
+      "custom": "gulden_spoor_gate",
+      "kind": "gatehouse",
+      "name": "In de Gulden Spoor – poortgebouw",
+      "levels": 2,
+      "height_m": 8.0,
+      "roof_height_m": 6.4,
+      "anchor": [
+        51.2064466,
+        4.4139421
+      ],
+      "params": {
+        "gallery_at": [
+          51.206435,
+          4.4139204
+        ]
+      },
+      "inventaris": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7571",
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusstraat_12_-_104483_-_onroerenderfgoed.jpg",
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
     }
   },
   "by_name": {
@@ -57,7 +190,12 @@
       "name": "Sint-Bonifaciuskerk",
       "kind": "church",
       "photo": "sint_bonifaciuskerk.jpg",
-      "crop": [0.05, 0.02, 0.95, 0.98],
+      "crop": [
+        0.05,
+        0.02,
+        0.95,
+        0.98
+      ],
       "massing": "neo_gothic_tower_left",
       "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Gr%C3%A9trystraat_-_103291_-_onroerenderfgoed.jpg",
       "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
@@ -67,7 +205,12 @@
       "name": "Heilige Geestkerk",
       "kind": "church",
       "photo": "heilige_geestkerk.jpg",
-      "crop": [0.08, 0.01, 0.78, 0.995],
+      "crop": [
+        0.08,
+        0.01,
+        0.78,
+        0.995
+      ],
       "massing": "neo_romanesque_tower_left",
       "source_url": "https://commons.wikimedia.org/wiki/File:Heilige_Geestkerk_buiten.jpg",
       "attribution": "Wikimedia Commons"
@@ -77,19 +220,14 @@
       "name": "Basiliek van het Heilig Hart",
       "kind": "church",
       "photo": "heilig_hart_basiliek.jpg",
-      "crop": [0.1, 0.02, 0.9, 0.98],
+      "crop": [
+        0.1,
+        0.02,
+        0.9,
+        0.98
+      ],
       "massing": "church_default",
       "source_url": "https://commons.wikimedia.org/wiki/File:Basiliek_van_het_Heilig_Hart_te_Berchem_(Antwerpen)_-_Gebouwd_door_Jules_Bilmeyer_en_Joseph_van_Riel_(10902).jpg",
-      "attribution": "Wikimedia Commons"
-    },
-    "zas vincentius": {
-      "id": "9715814",
-      "name": "ZAS Vincentius",
-      "kind": "hospital",
-      "photo": "zas_vincentius.jpg",
-      "crop": [0.05, 0.05, 0.95, 0.95],
-      "massing": "hospital_historic_front",
-      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusziekenhuis1.JPG",
       "attribution": "Wikimedia Commons"
     },
     "az monica antwerpen": {
@@ -97,10 +235,29 @@
       "name": "AZ Monica Antwerpen",
       "kind": "hospital",
       "photo": "az_monica.jpg",
-      "crop": [0.15, 0.1, 0.85, 0.85],
+      "crop": [
+        0.15,
+        0.1,
+        0.85,
+        0.85
+      ],
       "massing": "hospital_default",
       "source_url": "https://commons.wikimedia.org/wiki/File:Coronaspandoek_AZ_Monica,_Florent_Pauwelslei_1,_2100_Deurne,_asset_fJROMEXcufwhRMSHimnvVERN.jpg",
       "attribution": "Wikimedia Commons"
+    }
+  },
+  "nodes": {
+    "2396262252": {
+      "id": "2396262252",
+      "name": "Monument Peter Benoit",
+      "kind": "memorial",
+      "custom": "benoit_monument",
+      "facing": [
+        51.2022609,
+        4.4113283
+      ],
+      "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Mechelsesteenweg_216_Monument_Peter_Benoit_-_176343_-_onroerenderfgoed.jpg",
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
     }
   }
 }

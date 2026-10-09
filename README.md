@@ -135,7 +135,7 @@ Edit `scenes/antwerp_side_street.json` for street mode. Styles for the 70s stree
 
 Historic district styles: `neoclassical`, `eclectic`, `neo-flemish`, `neo-gothic`, `art-nouveau`, `art-deco`, `international`, `modern-infill`.
 
-Special OSM uses become first-class types: `school`, `restaurant`, `supermarket` (brand fascia for Aldi/Lidl/Jumbo/Carrefour), `church`, `hospital`. Amenity/shop nodes are joined onto footprints; named churches/hospitals use exterior photos under [`assets/landmarks/`](assets/landmarks/) with photo façades and massing presets.
+Special OSM uses become first-class types: `school`, `restaurant`, `supermarket` (brand fascia for Aldi/Lidl/Jumbo/Carrefour), `church`, `hospital`. Amenity/shop nodes are joined onto footprints; named landmarks under [`assets/landmarks/`](assets/landmarks/) are mesh-only (no photo façades): churches use massing presets, and ZAS Sint-Vincentius, Feestzaal Harmonie, Mechelsesteenweg 123, In de Gulden Spoor, the Koning Albertpark bandstand and the Peter Benoit monument are hand-modelled on a shared landmark kit. OSM multipolygon relations are extruded with their courtyard holes; campus outlines (`amenity=hospital/school` without `building=*`) are not extruded.
 
 ## Blender MCP
 

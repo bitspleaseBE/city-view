@@ -95,7 +95,7 @@ class DoorStepTests(unittest.TestCase):
         for fid, (centre, width) in facade_kit.DOORS.items():
             self.assertIn(fid, facade_kit.FACADES)
             self.assertTrue(0.05 < centre < 0.95)
-            self.assertTrue(0.05 <= width <= 0.2)
+            self.assertTrue(0.05 <= width <= 0.32)  # facade_26 has a double carriage door
 
     def test_step_lands_on_the_door_and_follows_the_mapping(self):
         quads = facade_kit.plan_facade_quads(6.4, 12.0, 4, "red-brick", seed=3)
