@@ -1977,9 +1977,25 @@
               landmarkLocator && landmarkLocator.update
                 ? landmarkLocator.update(ppos.x, ppos.z)
                 : null;
-            if (lm && lm.changed && lm.landmark) {
-              minimap.showStreetName(lm.landmark.name, "Onroerend erfgoed");
-              if (lm.firstVisit && hud.notify) hud.notify(lm.landmark.name, 4800);
+            if (lm && lm.landmark) {
+              if (lm.changed) {
+                minimap.showStreetName(lm.landmark.name, "Onroerend erfgoed");
+                if (lm.firstVisit && hud.notify) hud.notify(lm.landmark.name, 4800);
+              }
+            } else if (transit && transit.locateStop) {
+              const hs = transit.locateStop(ppos.x, ppos.z);
+              if (hs.stop) {
+                if (hs.changed) {
+                  const lines = (hs.stop.lines || []).filter(Boolean).join(" · ");
+                  minimap.showStreetName(
+                    hs.stop.name,
+                    lines ? `De Lijn · lijn ${lines}` : "De Lijn halte",
+                  );
+                }
+              } else if (streetLocator) {
+                const { street, changed } = streetLocator.update(ppos.x, ppos.z);
+                if (changed && street) minimap.showStreetName(street);
+              }
             } else if (streetLocator) {
               const { street, changed } = streetLocator.update(ppos.x, ppos.z);
               if (changed && street) minimap.showStreetName(street);
