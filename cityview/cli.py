@@ -26,6 +26,7 @@ from cityview.paths import (
     VIEWER,
 )
 from cityview.benches import attach_benches, summarize as summarize_benches
+from cityview.barriers import attach_barriers, summarize as summarize_barriers
 from cityview.clutter import attach_clutter, summarize as summarize_clutter
 from cityview.trees import attach_trees, summarize as summarize_trees
 from cityview.streetscape import (
@@ -162,6 +163,9 @@ def city_command(args: argparse.Namespace) -> int:
     # OSM-mapped street clutter (bins, bike hoops, bollards, hydrants, post boxes, ...); no network.
     clutter_plan = attach_clutter(layout, osm, bbox, origin, spawn_xy)
     print("street clutter: " + summarize_clutter(clutter_plan))
+    # OSM-mapped garden walls, hedges, fences, retaining walls (courtyard / plot boundaries); no network.
+    barrier_plan = attach_barriers(layout, osm, bbox, origin, spawn_xy)
+    print("barriers: " + summarize_barriers(barrier_plan))
     edged = sum(1 for b in layout["buildings"] if b.get("street_edges"))
     type_counts: dict[str, int] = {}
     for b in layout["buildings"]:
