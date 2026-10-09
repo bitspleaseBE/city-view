@@ -1,5 +1,5 @@
 /**
- * Runtime traffic: Antwerp-weighted Kenney car GLBs (see cars.js / cars/fleet.json)
+ * Runtime traffic: Belgian 2025-26 fleet GLBs (see cars.js / cars/fleet.json)
  * follow driveable OSM centrelines with car-following, 30s lights at real
  * stop-lines, and stuck recovery. Falls back to box cars when GLBs cannot load
  * (headless Node soaks). Never uses tram/rail ways.
@@ -1521,7 +1521,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       const wheels = car.mesh.userData.wheels;
       if (wheels && wheels.length && car.velocity > 0.05) {
         const spin = (car.velocity * step) / (car.mesh.userData.wheelRadius || 0.32);
-        for (const w of wheels) w.rotation.x -= spin;
+        for (const w of wheels) w.rotation.x += spin;
       }
     }
   }
@@ -1550,6 +1550,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     parts.headMat.dispose();
     parts.tailMat.dispose();
     for (const m of parts.bodyMats) m.dispose();
+    for (const m of parts.paintMats.values()) m.dispose();
     for (const d of signalDisposables) {
       if (d && typeof d.dispose === "function") d.dispose();
     }

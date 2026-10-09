@@ -50,7 +50,7 @@ except ImportError:  # optional — Velo docks ship separately
     velo_blender = None
 try:
     import cars_blender  # noqa: E402
-except ImportError:  # optional — Kenney car GLBs; box bodies otherwise
+except ImportError:  # optional — fleet car GLBs; box bodies otherwise
     cars_blender = None
 
 # Surface rail corridors for the current build (set in build()).
@@ -3170,7 +3170,7 @@ def add_parked_cars(
     tire_mat,
     max_cars: int = 64,
 ) -> dict:
-    """Parked cars on OSM parallel kerbside parking — Kenney fleet GLBs when present.
+    """Parked cars on OSM parallel kerbside parking — fleet GLBs when present.
 
     Placement (side, spacing, clearance from the runtime traffic lane, junctions, crossings,
     signals, stops, trees) is planned by ``cityview.parking``. Meshes come from

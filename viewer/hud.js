@@ -67,7 +67,7 @@ export function createHud(opts = {}) {
   help.innerHTML = [
     "<kbd>W A S D</kbd>walk · steer when riding",
     "<kbd>Shift</kbd>jog · <kbd>Space</kbd>jump",
-    "<kbd>E</kbd>scooter · tram · bus",
+    "<kbd>E</kbd>scooter · tram · bus · car",
     "<kbd>N</kbd>fast-forward to night / day",
     "<kbd>V</kbd>map view · <kbd>M</kbd>radar",
     "<kbd>H</kbd>this card · <kbd>F3</kbd>stats",

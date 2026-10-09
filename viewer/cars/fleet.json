@@ -1,61 +1,106 @@
 {
-  "source": "Kenney Car Kit 3.1 (CC0)",
-  "url": "https://kenney.nl/assets/car-kit",
-  "note": "Archetypes weighted toward Flanders / Antwerp new-registration mix. Lengths are nudged long and widths slim so Kenney's stubby toy silhouettes read as European cars at street scale.",
+  "source": "blender/build_car_models.py (procedural, original geometry)",
+  "note": "Real-model proportions from published dimensions; weights follow the 2025-26 Belgian new-registration mix (company-car SUVs and EVs, city hatchbacks, vans). Sizes are measured bounds including mirrors.",
   "models": [
     {
-      "id": "compact_suv",
-      "file": "suv.glb",
-      "weight": 28,
-      "length": 4.55,
-      "width": 1.72,
-      "height": 1.58,
-      "inspiredBy": "BMW X1, Peugeot 2008, Renault Captur, Audi Q3"
+      "id": "model_y",
+      "file": "model_y.glb",
+      "weight": 12,
+      "length": 4.883,
+      "width": 2.18,
+      "height": 1.622,
+      "model": "Tesla Model Y",
+      "generation": "2025 'Juniper'"
     },
     {
-      "id": "crossover_ev",
-      "file": "suv-luxury.glb",
-      "weight": 18,
-      "length": 4.7,
-      "width": 1.78,
-      "height": 1.62,
-      "inspiredBy": "Audi Q4/Q6, Tesla Model Y, Mercedes EQB, VW ID.4"
+      "id": "bmw_x1",
+      "file": "bmw_x1.glb",
+      "weight": 12,
+      "length": 4.581,
+      "width": 2.105,
+      "height": 1.673,
+      "model": "BMW X1",
+      "generation": "U11 (2022-)"
     },
     {
-      "id": "hatchback",
-      "file": "hatchback-sports.glb",
-      "weight": 28,
-      "length": 4.25,
-      "width": 1.62,
-      "height": 1.42,
-      "inspiredBy": "Dacia Sandero, Citroën C3, Toyota Yaris, Renault Clio, Mini Cooper, Peugeot 208"
+      "id": "vw_tiguan",
+      "file": "vw_tiguan.glb",
+      "weight": 9,
+      "length": 4.615,
+      "width": 2.102,
+      "height": 1.69,
+      "model": "Volkswagen Tiguan",
+      "generation": "Mk3 (2024-)"
     },
     {
-      "id": "sedan",
-      "file": "sedan.glb",
-      "weight": 14,
-      "length": 4.85,
-      "width": 1.72,
-      "height": 1.42,
-      "inspiredBy": "BMW 4/5 Series and other fleet saloons"
+      "id": "peugeot_208",
+      "file": "peugeot_208.glb",
+      "weight": 10,
+      "length": 4.12,
+      "width": 2.005,
+      "height": 1.428,
+      "model": "Peugeot 208",
+      "generation": "2024 facelift"
     },
     {
-      "id": "coupe",
-      "file": "sedan-sports.glb",
-      "weight": 5,
-      "length": 4.7,
-      "width": 1.7,
-      "height": 1.35,
-      "inspiredBy": "Sportier 4-series / coupe fleet cars"
+      "id": "dacia_sandero",
+      "file": "dacia_sandero.glb",
+      "weight": 10,
+      "length": 4.158,
+      "width": 2.028,
+      "height": 1.531,
+      "model": "Dacia Sandero Stepway",
+      "generation": "2023 facelift"
     },
     {
-      "id": "van",
-      "file": "van.glb",
+      "id": "kia_ev3",
+      "file": "kia_ev3.glb",
+      "weight": 8,
+      "length": 4.36,
+      "width": 2.11,
+      "height": 1.574,
+      "model": "Kia EV3",
+      "generation": "2024-"
+    },
+    {
+      "id": "bmw_5",
+      "file": "bmw_5.glb",
+      "weight": 8,
+      "length": 5.143,
+      "width": 2.16,
+      "height": 1.537,
+      "model": "BMW 5 Series / i5",
+      "generation": "G60 (2023-)"
+    },
+    {
+      "id": "model_3",
+      "file": "model_3.glb",
+      "weight": 6,
+      "length": 4.804,
+      "width": 2.11,
+      "height": 1.439,
+      "model": "Tesla Model 3",
+      "generation": "2024 'Highland'"
+    },
+    {
+      "id": "renault_5",
+      "file": "renault_5.glb",
       "weight": 7,
-      "length": 5.1,
-      "width": 1.85,
-      "height": 1.9,
-      "inspiredBy": "City delivery / trades vans"
+      "length": 3.98,
+      "width": 2.034,
+      "height": 1.514,
+      "model": "Renault 5 E-Tech",
+      "generation": "2024-"
+    },
+    {
+      "id": "transit_custom",
+      "file": "transit_custom.glb",
+      "weight": 8,
+      "length": 5.109,
+      "width": 2.35,
+      "height": 2.023,
+      "model": "Ford Transit Custom",
+      "generation": "2023-"
     }
   ]
 }

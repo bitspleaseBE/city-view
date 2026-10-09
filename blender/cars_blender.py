@@ -1,9 +1,11 @@
-"""Parked cars from Kenney Car Kit GLBs (Antwerp-weighted fleet).
+"""Parked cars from the fleet GLBs (``blender/build_car_models.py``, Belgian 2025-26 mix).
 
 Templates: ``viewer/cars/*.glb`` + ``fleet.json``. Each bay is a linked
-duplicate (shared mesh data).
+duplicate (shared mesh data). Every import brings its own ``car_*`` materials;
+they are folded back onto one shared set so the district GLB carries six car
+materials and the viewer can repaint ``car_paint`` per car (``paintParkedCars``).
 
-Kenney cars arrive from glTF with quaternion rotation mode and length on −Y.
+Fleet cars arrive from glTF with quaternion rotation mode and the nose on −Y.
 We rewrite mesh vertices (not object euler) so local +X is forward, then size
 to fleet metres. Instances use ``rotation_mode='XYZ'`` so parking yaw survives
 glTF export (setting ``rotation_euler`` while mode is ``QUATERNION`` is a no-op
@@ -15,6 +17,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -30,6 +33,7 @@ CARS_DIR = _REPO_ROOT / "viewer" / "cars"
 FLEET_PATH = CARS_DIR / "fleet.json"
 
 _TEMPLATES: list[dict] | None = None
+_SHARED_MATS: dict[str, bpy.types.Material] = {}
 
 
 def _fleet_specs() -> list[dict]:
@@ -66,8 +70,28 @@ def _local_bounds(obj: bpy.types.Object) -> tuple[Vector, Vector]:
     return mn, mx
 
 
+def _share_car_materials(obj: bpy.types.Object) -> None:
+    """Point each import's ``car_*`` materials at the first fleet import's and drop the copies.
+
+    Keyed on the first *imported* material, not on name: build_city's box-car fallback
+    already owns a plain ``car_glass``, so the fleet one may arrive as ``car_glass.001``.
+    """
+    for slot in obj.material_slots:
+        m = slot.material
+        if m is None:
+            continue
+        base = re.sub(r"\.\d{3}$", "", m.name)
+        if not base.startswith("car_"):
+            continue
+        shared = _SHARED_MATS.setdefault(base, m)
+        if shared is not m:
+            slot.material = shared
+            if m.users == 0:
+                bpy.data.materials.remove(m)
+
+
 def _normalize_mesh(obj: bpy.types.Object, spec: dict) -> None:
-    """Bake Kenney −Y forward → +X forward, scale to fleet L/W/H, origin at ground centre.
+    """Bake fleet −Y forward → +X forward, scale to fleet L/W/H, origin at ground centre.
 
     Uses ``Mesh.transform`` so the fix cannot be lost to glTF quaternion rotation mode.
     """
@@ -81,7 +105,7 @@ def _normalize_mesh(obj: bpy.types.Object, spec: dict) -> None:
     if not me.vertices:
         return
 
-    # +90° around Z: Kenney length on ±Y → local ±X (parking forward).
+    # +90° around Z: fleet length on ±Y → local ±X (parking forward).
     me.transform(Matrix.Rotation(math.pi / 2, 4, "Z"))
     me.update()
 
@@ -130,6 +154,7 @@ def load_templates(*, force: bool = False) -> list[dict]:
         return _TEMPLATES
 
     specs = _fleet_specs()
+    _SHARED_MATS.clear()
     out: list[dict] = []
     coll = bpy.data.collections.get("CarTemplates")
     if coll is None:
@@ -150,6 +175,7 @@ def load_templates(*, force: bool = False) -> list[dict]:
         for obj in list(bpy.context.selected_objects):
             if obj != joined and obj.type != "MESH":
                 bpy.data.objects.remove(obj, do_unlink=True)
+        _share_car_materials(joined)
         tpl = _prepare_template(joined, spec, coll)
         size = tpl.get("fleet_size") or tuple(tpl.dimensions)
         print(
