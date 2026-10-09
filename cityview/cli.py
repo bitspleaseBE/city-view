@@ -249,7 +249,10 @@ def city_command(args: argparse.Namespace) -> int:
     roads_payload = export_roads_near_spawn(layout, spawn)
     roads_path = VIEWER / "roads.json"
     roads_path.write_text(json.dumps(roads_payload) + "\n")
-    print(f"Wrote {roads_path} ({len(roads_payload['roads'])} roads near spawn)")
+    print(
+        f"Wrote {roads_path} ({len(roads_payload['roads'])} roads, "
+        f"{len(roads_payload.get('walks') or [])} walks near spawn)"
+    )
     buildings_payload = export_buildings_near_spawn(layout, spawn)
     buildings_path = VIEWER / "buildings.json"
     buildings_path.write_text(json.dumps(buildings_payload) + "\n")

@@ -1,8 +1,10 @@
 import unittest
 
 from cityview.streetscape import (
+    _offset_polyline,
     export_buildings_near_spawn,
     export_roads_near_spawn,
+    export_walks_near_spawn,
     floors_from_height,
     footprint_supports_prism_roof,
     height_truth,
@@ -174,6 +176,28 @@ class MaxspeedTests(unittest.TestCase):
         self.assertEqual(by_id[1]["speedKmh"], 20.0)
         self.assertIsNone(by_id[2]["maxspeedKmh"])
         self.assertEqual(by_id[2]["speedKmh"], 50.0)
+        self.assertIn("walks", payload)
+
+
+class WalkExportTests(unittest.TestCase):
+    def test_offset_is_perpendicular(self):
+        left = _offset_polyline([[0.0, 0.0], [10.0, 0.0]], 2.0)
+        self.assertAlmostEqual(left[0][1], 2.0, places=5)
+        self.assertAlmostEqual(left[1][1], 2.0, places=5)
+
+    def test_exports_sidewalks_not_carriageway_centres(self):
+        layout = {
+            "roads": [
+                {"id": 1, "kind": "residential", "width": 6.0, "points": [[0.0, 0.0], [40.0, 0.0]]},
+                {"id": 2, "kind": "footway", "width": 2.0, "points": [[0.0, 5.0], [40.0, 5.0]]},
+            ]
+        }
+        walks = export_walks_near_spawn(layout, {"x": 20.0, "y": 0.0}, radius=50.0)
+        kinds = {w["kind"] for w in walks}
+        self.assertIn("footway", kinds)
+        self.assertIn("sidewalk", kinds)
+        sw = [w for w in walks if w["kind"] == "sidewalk"]
+        self.assertTrue(any(abs(w["points"][0][1]) > 2.5 for w in sw))
 
 
 if __name__ == "__main__":
