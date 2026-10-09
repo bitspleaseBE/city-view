@@ -264,13 +264,93 @@ def build_wall_tiles(src_dir: Path = WALLS_DIR, out_dir: Path = TEXTURES_DIR) ->
     return written
 
 
+BANDS_FILE = kit.BANDS_FILE
+_BAND_ROWS = 8  # rows compared on each side of a seam
+BAND_MAX_COST = 0.35  # worse seams than this are visible; those elevations are not stacked
+
+
+def find_storey_band(cell, windows: list[list[float]], storeys: int):
+    """Seamless repeatable storey strip of one elevation (``cell``: H x W x 3 float array).
+
+    Stacked copies of a strip ``[lo, hi]`` (fractions of the height from the ground) join
+    where row ``hi`` meets row ``lo``, so the strip repeats without a visible seam when
+    those rows match, so we look for the (lo, hi) pair above the ground floor and below
+    the top floor / cornice where they match best, with a strip about one storey tall,
+    and seams that fall between window rows (never through glass). Returns
+    ``(lo, hi, cost)``.
+    """
+    import numpy as np
+
+    h = cell.shape[0]
+    nat_h = storeys * kit.STOREY_M + kit.EXTRA_M
+    nominal = kit.STOREY_M / nat_h  # one storey as a fraction of the elevation
+    lum = cell @ np.array([0.299, 0.587, 0.114], dtype="float32")
+    best = (1e9, nominal * 1.0 + 0.3, 0.3)
+    lo_min = 3.1 / nat_h
+    lo_max = 1.0 - 6.2 / nat_h
+    for lo_px in range(int((1.0 - lo_max - nominal * 1.25) * h), int((1.0 - lo_min) * h)):
+        # lo_px: row index (from the top) of the strip's lower edge.
+        for strip_px in range(int(nominal * 0.85 * h), int(nominal * 1.2 * h) + 1, 2):
+            top_px = lo_px - strip_px  # the strip's upper edge row index
+            if top_px < int(0.10 * h) or lo_px + _BAND_ROWS >= h:
+                continue
+            lo_f = 1.0 - lo_px / h
+            hi_f = 1.0 - top_px / h
+            if not (lo_min <= lo_f <= lo_max + 1e-6):
+                continue
+            a = cell[top_px : top_px + _BAND_ROWS]
+            b = cell[lo_px : lo_px + _BAND_ROWS]
+            cost = float(np.abs(a - b).mean())
+            # Vertical gradients across the join should agree too (no step in a line).
+            cost += 0.5 * float(np.abs(lum[top_px] - lum[lo_px]).mean())
+            cost += 0.04 * abs(strip_px / (nominal * h) - 1.0)
+            for x0, x1, z0, z1 in windows:
+                for seam in (lo_f, hi_f):
+                    if z0 - 0.004 <= seam <= z1 + 0.004:
+                        cost += 0.35  # a seam through glass would show
+            if cost < best[0]:
+                best = (cost, hi_f, lo_f)
+    return best[2], best[1], best[0]
+
+
+def build_bands(atlas_path: Path | None = None, out_dir: Path = TEXTURES_DIR) -> Path:
+    """facade_bands.json: the repeatable storey strip of every elevation (see ``find_storey_band``)."""
+    _need_pillow()
+    import json
+    import numpy as np
+    from PIL import Image
+
+    atlas_path = atlas_path or (out_dir / kit.ATLAS_FILE)
+    atlas = np.asarray(Image.open(atlas_path).convert("RGB")).astype("float32") / 255.0
+    try:
+        windows = json.loads((out_dir / kit.WINDOWS_FILE).read_text())
+    except (OSError, ValueError):
+        windows = {}
+    doc = {}
+    for fid, facade in kit.FACADES.items():
+        x0, y0, x1, y1 = kit.cell_pixel_rect(fid)
+        cell = atlas[y0:y1, x0:x1]
+        lo, hi, cost = find_storey_band(cell, (windows.get(fid) or {}).get("windows", []), facade["storeys"])
+        if cost > BAND_MAX_COST:
+            continue  # no clean repeat in this picture: it keeps the single-stretch mapping
+        doc[fid] = {"lo": round(lo, 4), "hi": round(hi, 4), "cost": round(cost, 4)}
+    path = out_dir / BANDS_FILE
+    path.write_text(json.dumps(doc, indent=1) + "\n")
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--facades", default=str(FACADES_DIR))
     parser.add_argument("--walls", default=str(WALLS_DIR))
     parser.add_argument("--out", default=str(TEXTURES_DIR))
     parser.add_argument("--normal-only", action="store_true", help="only rebuild facade_normal.jpg from the committed atlas")
+    parser.add_argument("--bands", action="store_true", help="only rebuild facade_bands.json (repeatable storey strips) from the committed atlas")
     args = parser.parse_args(argv)
+    if args.bands:
+        path = build_bands(None, Path(args.out))
+        print(f"Wrote {path}")
+        return 0
     if args.normal_only:
         normal = build_normal_atlas(None, Path(args.out))
         print(f"Wrote {normal} ({normal.stat().st_size // 1024} KiB normal atlas)")

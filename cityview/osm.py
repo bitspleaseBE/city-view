@@ -8,8 +8,22 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from cityview.building_heights import (
+    FLOOR_H,
+    MAX_LEVELS,
+    parse_height_m,
+    parse_levels,
+    resolve_heights,
+)
+from cityview.directions import (
+    parse_oneway,
+    parse_oneway_bus,
+    parse_track_direction,
+    route_way_directions,
+)
 from cityview.geo import project
 from cityview.landmarks import attach_landmark, load_manifest
+from cityview.parking import parse_road_parking
 from cityview.shop_brands import normalize_shop_brand
 from cityview.streetscape import (
     annotate_layout,
@@ -718,6 +732,76 @@ def height_jitter(osm_id: int, height: float, amount: float = 0.05) -> float:
     return max(3.0, height * factor)
 
 
+# Types whose massing is a fixed landmark/institution height when OSM has no numbers.
+_TYPE_DEFAULT_BTYPES = {"church", "hospital", "school", "supermarket"}
+_TYPE_DEFAULT_KINDS = {"church", "cathedral", "basilica", "chapel", "monastery"}
+_TALL_FLAT_LEVELS = 7  # towers get flat roofs unless OSM maps a roof shape
+
+
+def finalize_building_heights(
+    buildings: list[dict[str, Any]],
+    tags_list: list[dict[str, str]],
+    style_policy: str = "default",
+) -> dict[str, Any]:
+    """Final height pass: OSM levels/height first, else a footprint/type prior.
+
+    Replaces the old "everything without levels is 12 m / 4 floors" fallback (see
+    ``cityview/building_heights.py``). Mutates ``height``, ``floors``, ``roof_height``,
+    ``roof_shape`` and adds ``height_source``. Returns audit stats for the layout.
+    """
+    for bldg, tags in zip(buildings, tags_list):
+        has_osm_numbers = bool(parse_height_m(tags) or parse_levels(tags))
+        kind = tags.get("building", "")
+        if not has_osm_numbers and (
+            bldg.get("building_type") in _TYPE_DEFAULT_BTYPES or kind in _TYPE_DEFAULT_KINDS
+        ):
+            bldg["height_source"] = "type_default"
+    counts = resolve_heights(buildings, tags_list)
+    for bldg, tags in zip(buildings, tags_list):
+        source = bldg["height_source"]
+        levels = int(bldg.pop("levels"))
+        if source == "type_default":
+            continue
+        if source in {"inferred", "photo"}:
+            eaves = levels * FLOOR_H
+            if levels >= 2:
+                eaves = height_jitter(int(bldg["id"]), eaves, amount=0.03)
+            bldg["height"] = eaves
+        elif source == "osm_height":
+            bldg["height"] = float(bldg["height"])
+        bldg["floors"] = max(1, min(MAX_LEVELS, levels))
+        btype = bldg.get("building_type") or ""
+        if levels >= 6 and btype not in {"church", "hospital", "school", "supermarket", "restaurant"}:
+            tall_tags = {**tags, "building:levels": str(levels)}
+            retyped = building_type_for(int(bldg["id"]), tall_tags, style_policy)
+            if retyped != btype:
+                bldg["building_type"] = retyped
+                bldg["style"] = retyped
+                btype = retyped
+        if not tags.get("roof:shape"):
+            shape = roof_shape_for(tags, btype, int(bldg["id"]))
+            if levels >= _TALL_FLAT_LEVELS:
+                shape = "flat"
+            bldg["roof_shape"] = safe_roof_shape(shape, bldg["ring"])
+        eaves = float(bldg["height"])
+        if bldg["roof_shape"] == "flat":
+            bldg["roof_height"] = 0.4
+        elif not (tags.get("roof:levels") or tags.get("roof:height")) and style_policy == "historic":
+            bldg["roof_height"] = min(3.8, max(1.3, eaves * 0.15))
+    return {
+        "source": counts,
+        "levels": _level_histogram(buildings),
+        "max_levels": MAX_LEVELS,
+    }
+
+
+def _level_histogram(buildings: list[dict[str, Any]]) -> dict[str, int]:
+    out: dict[int, int] = {}
+    for b in buildings:
+        out[int(b["floors"])] = out.get(int(b["floors"]), 0) + 1
+    return {str(k): out[k] for k in sorted(out)}
+
+
 def road_width(tags: dict[str, str]) -> float | None:
     highway = tags.get("highway")
     if not highway or highway in SKIP_HIGHWAYS:
@@ -773,6 +857,8 @@ def layout_from_osm(
     transit_lines: list[dict[str, Any]] = []
     transit_stops_raw: list[dict[str, Any]] = []
     way_refs = _route_refs_by_way(rels)
+    # Tram tracks carry no direction tag: it comes from the ordered route relations.
+    track_dirs = route_way_directions(rels, ways)
 
     for way in ways.values():
         tags = way.get("tags") or {}
@@ -795,6 +881,8 @@ def layout_from_osm(
                     "name": tags.get("name") or "",
                     "source": "osm",
                     "tunnel": _is_underground(tags),
+                    # 1 = vehicles drive along `points`, -1 = against, 0 = unknown / both.
+                    "direction": parse_track_direction(tags) or track_dirs.get(int(way["id"]), 0),
                 }
             )
             # Tram tracks are not roads; continue so they are not double-counted.
@@ -847,6 +935,15 @@ def layout_from_osm(
             limit = parse_maxspeed_kmh(tags)
             if limit is not None:
                 road["maxspeed_kmh"] = limit
+            # Kerbside parking exactly as mapped (parking:both / :left / :right); parked cars are
+            # only ever drawn where this is present (cityview/parking.py).
+            parking = parse_road_parking(tags)
+            if parking:
+                road["parking"] = parking
+            # Legal travel direction along `points` (1 / -1 / 0 = both ways), from the OSM
+            # oneway tags; buses may differ (oneway:bus, contraflow bus lanes).
+            road["oneway"] = parse_oneway(tags)
+            road["oneway_bus"] = parse_oneway_bus(tags)
             roads.append(road)
 
     for rel in rels.values():
@@ -903,6 +1000,7 @@ def layout_from_osm(
     join_pois_to_buildings(buildings, pois)
     manifest = load_manifest()
     finalized: list[dict[str, Any]] = []
+    final_tags: list[dict[str, str]] = []
     for bldg in buildings:
         tags = dict(bldg.pop("_tags", None) or {})
         if tags:
@@ -950,6 +1048,9 @@ def layout_from_osm(
                 )
         attach_landmark(bldg, manifest)
         finalized.append(bldg)
+        final_tags.append(tags)
+
+    height_stats = finalize_building_heights(finalized, final_tags, style_policy)
 
     layout = {
         "origin": list(origin),
@@ -961,5 +1062,6 @@ def layout_from_osm(
         "crossings": crossings,
         "transit_lines": transit_lines,
         "transit_stops": _dedupe_stops(transit_stops_raw),
+        "height_stats": height_stats,
     }
     return annotate_layout(layout)

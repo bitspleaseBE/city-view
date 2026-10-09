@@ -14,6 +14,13 @@ Each source is an orthographic, upright, symmetric-perspective-free elevation of
 ONE townhouse. They are mapped **unmirrored**: a long edge becomes a terrace of
 different houses side by side, never a mirrored/kaleidoscope repeat, and the image
 is stretched vertically just enough to meet the building's eaves.
+
+Buildings much taller (or shorter) than one source elevation are not stretched into
+a kaleidoscope: ``assets/textures/facade_bands.json`` (``python -m
+cityview.facade_textures --bands``) records a seamless "typical storey" strip per
+elevation, found where the picture repeats itself vertically. Tall houses stack that
+strip (ground floor below, cornice above), low ones drop it, so the windows keep
+their real proportions from 2 up to 20 levels.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ ATLAS_FILE = "facade_atlas.jpg"
 NORMAL_FILE = "facade_normal.jpg"  # tangent-space relief aligned 1:1 with the atlas
 EMISSIVE_FILE = "facade_emissive.jpg"  # night glow of lit windows, aligned 1:1 with the atlas
 WINDOWS_FILE = "facade_windows.json"  # detected glass / shop glazing per elevation
+BANDS_FILE = "facade_bands.json"  # seamless repeatable storey strip per elevation
 TEXTURES_DIRNAME = "textures"
 FACADE_SRC_DIR = "generated/facades"
 WALL_SRC_DIR = "generated/walls"
@@ -187,6 +195,10 @@ SHOPS: dict[str, tuple[float, float, float]] = {
 
 # Terrace width target: a long edge is cut into houses about this wide.
 TARGET_HOUSE_M = 6.4
+# Towers (>= TOWER_LEVELS storeys) are wider, so cut them into fewer, wider elevations
+# instead of a row of 6 m "townhouses" side by side.
+TOWER_LEVELS = 7
+TOWER_HOUSE_M = 9.0
 MIN_CROP_FRAC = 0.5
 
 
@@ -257,7 +269,14 @@ def facade_score(
     """Lower is better: storey mismatch + horizontal stretch - type bonus + jitter."""
     f = FACADES[fid]
     base = type_id.split("__v")[0]
-    storey_pen = 0.55 * abs(f["storeys"] - max(2, min(5, floors)))
+    # With a repeatable storey strip the elevation can grow / shrink by whole storeys, so
+    # its own storey count matters much less than its type and plan width.
+    banded = fid in band_layout()
+    storey_pen = (0.3 if banded else 0.55) * abs(f["storeys"] - max(2, min(5, floors)))
+    if not banded:
+        # Without a strip the picture is stretched to the eaves: punish big stretches.
+        want_m = max(1, floors) * 3.15
+        storey_pen += 2.5 * max(0.0, abs(math.log(want_m / f["height_m"])) - 0.25)
     stretch = abs(math.log(max(0.2, rep_len) / f["width_m"]))
     bonus = -0.7 if base in f["types"] else 0.0
     return storey_pen + 1.1 * stretch + bonus + 0.9 * _unit(f"{seed_key}:{fid}")
@@ -282,6 +301,70 @@ def pick_cell(type_id: str, seed: int, types_doc: dict | None = None, floors: in
     return pick_facade(type_id, floors, TARGET_HOUSE_M, f"{seed}:{type_id}")
 
 
+_BAND_DOC: dict[str, Any] | None = None
+
+
+def band_layout() -> dict[str, Any]:
+    """Repeatable storey strip per elevation (``assets/textures/facade_bands.json``), cached.
+
+    ``{facade_id: {"lo": f, "hi": f}}`` where ``lo`` / ``hi`` are heights above the
+    elevation's ground as fractions of its height. Rows ``lo`` and ``hi`` of the picture
+    match, so the strip can be repeated (or dropped) without a visible seam. Empty when
+    the file is missing: the builder then stretches one elevation as before.
+    """
+    global _BAND_DOC
+    if _BAND_DOC is None:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parent.parent / "assets" / TEXTURES_DIRNAME / BANDS_FILE
+        try:
+            _BAND_DOC = json.loads(path.read_text())
+        except (OSError, ValueError):
+            _BAND_DOC = {}
+    return _BAND_DOC
+
+
+def plan_house_bands(fid: str, eaves_z: float) -> list[dict[str, Any]]:
+    """Vertical pieces of ONE house elevation, ground to ``eaves_z``.
+
+    Each piece: ``z0, z1`` (metres), ``v0, v1`` (atlas UV, v up), ``vz`` = the slice of
+    the elevation it shows as (from, to) fractions of its height, ``band`` in
+    ``ground`` / ``mid`` / ``top``. A single full-height piece (``vz == (0, 1)``) is
+    the classic stretch; otherwise ground floor + ``k`` copies of the storey strip +
+    top floor and cornice, scaled uniformly so the stack meets the eaves exactly.
+    """
+    _u0, vb, _u1, vt = cell_uv_rect(fid)
+    dv = vt - vb
+    whole = {"z0": 0.0, "z1": eaves_z, "v0": vb, "v1": vt, "vz": (0.0, 1.0), "band": "ground"}
+    band = band_layout().get(fid)
+    if not band:
+        return [whole]
+    lo, hi = float(band["lo"]), float(band["hi"])
+    nat_h = FACADES[fid]["height_m"]
+    strip_m = (hi - lo) * nat_h
+    if strip_m < 1.2 or not (0.05 < lo < hi < 0.97):
+        return [whole]
+    k = max(0, int(round((eaves_z - nat_h + strip_m) / strip_m)))
+    if k == 1:
+        return [whole]
+    scale = eaves_z / (nat_h + (k - 1) * strip_m)
+
+    def piece(z0: float, z1: float, f0: float, f1: float, name: str) -> dict[str, Any]:
+        return {
+            "z0": z0, "z1": z1, "v0": vb + f0 * dv, "v1": vb + f1 * dv, "vz": (f0, f1), "band": name,
+        }
+
+    out = [piece(0.0, lo * nat_h * scale, 0.0, lo, "ground")]
+    z = out[0]["z1"]
+    for _ in range(k):
+        out.append(piece(z, z + strip_m * scale, lo, hi, "mid"))
+        z += strip_m * scale
+    out.append(piece(z, eaves_z, hi, 1.0, "top"))
+    out[-1]["z0"] = z
+    return out
+
+
 def plan_facade_quads(
     length: float,
     eaves_z: float,
@@ -289,14 +372,18 @@ def plan_facade_quads(
     type_id: str,
     seed: int = 0,
 ) -> list[dict[str, Any]]:
-    """Cut one street edge into houses; each house = one straight, unmirrored quad.
+    """Cut one street edge into houses; each house = one straight, unmirrored column.
 
     Quad keys: ``a0, a1`` (metres along the edge from its start), ``z0, z1``
     (metres above ground), ``uv`` = (u0, v0, u1, v1) in atlas UV space (u0 < u1
-    always: **no mirroring**), ``cell`` = façade id. The whole elevation spans
-    ground to eaves in one piece, so windows stay level with each other.
+    always: **no mirroring**), ``cell`` = façade id, ``vz`` / ``band`` = which
+    vertical slice of the elevation this quad shows (see ``plan_house_bands``).
+    A house is one quad from ground to eaves, or (for storey counts far from the
+    elevation's own) a ground piece + repeated storey strips + a top piece, so
+    windows stay level with each other and keep their proportions.
     """
-    reps = max(1, int(round(length / TARGET_HOUSE_M)))
+    target = TARGET_HOUSE_M if floors < TOWER_LEVELS else TOWER_HOUSE_M
+    reps = max(1, int(round(length / target)))
     rep_len = length / reps
     quads: list[dict[str, Any]] = []
     used: list[str] = []
@@ -305,7 +392,7 @@ def plan_facade_quads(
             type_id, floors, rep_len, f"{seed}:{type_id}:{ri}", avoid=tuple(used[-2:])
         )
         used.append(fid)
-        u0, v0, u1, v1 = cell_uv_rect(fid)
+        u0, _v0, u1, _v1 = cell_uv_rect(fid)
         width_m = FACADES[fid]["width_m"]
         # Narrow edge: show a slice of the house instead of squeezing it.
         if reps == 1 and rep_len < width_m * 0.75:
@@ -315,18 +402,26 @@ def plan_facade_quads(
                 u1 = u0 + span
             else:
                 u0 = u1 - span
-        quads.append(
-            {
-                "a0": ri * rep_len,
-                "a1": (ri + 1) * rep_len,
-                "z0": 0.0,
-                "z1": eaves_z,
-                "uv": (u0, v0, u1, v1),
-                "cell": fid,
-                "flip": False,
-            }
-        )
+        for piece in plan_house_bands(fid, eaves_z):
+            quads.append(
+                {
+                    "a0": ri * rep_len,
+                    "a1": (ri + 1) * rep_len,
+                    "z0": piece["z0"],
+                    "z1": piece["z1"],
+                    "uv": (u0, piece["v0"], u1, piece["v1"]),
+                    "cell": fid,
+                    "flip": False,
+                    "vz": piece["vz"],
+                    "band": piece["band"],
+                }
+            )
     return quads
+
+
+def ground_quads(quads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One quad per house, the one touching the pavement (doors, awnings, party walls)."""
+    return [q for q in quads if q.get("band", "ground") == "ground"]
 
 
 def door_steps(
@@ -341,7 +436,7 @@ def door_steps(
     narrow edges.
     """
     out: list[dict[str, float]] = []
-    for q in quads:
+    for q in ground_quads(quads):
         door = DOORS.get(q["cell"])
         if not door:
             continue
@@ -418,7 +513,8 @@ def shop_awnings(
     """
     out: list[dict[str, float]] = []
     doc = window_layout()
-    for q in quads:
+    for q in ground_quads(quads):
+        vf0, vf1 = q.get("vz", (0.0, 1.0))
         shops: list[tuple[float, float, float]] = []
         if q["cell"] in SHOPS:
             shops.append(SHOPS[q["cell"]])
@@ -429,11 +525,13 @@ def shop_awnings(
             if placed is None or placed[1] < min_width_m:
                 continue
             a, width_m = placed
+            if top > vf1:
+                continue  # lintel lies above the ground piece of a stacked tower
             out.append(
                 {
                     "a": a,
                     "w": width_m,
-                    "z": top * (q["z1"] - q["z0"]) + q["z0"],
+                    "z": (top - vf0) / (vf1 - vf0) * (q["z1"] - q["z0"]) + q["z0"],
                     "side": float(_stable(f"{q['cell']}:awn:{q['a0']:.2f}:{sx0:.2f}") % 2),
                 }
             )
@@ -456,7 +554,8 @@ def downpipes(
     clear = keep_clear or []
     out: list[dict[str, float]] = []
     last = -1e9
-    for left, right in zip(quads, quads[1:]):
+    ground = ground_quads(quads)
+    for left, right in zip(ground, ground[1:]):
         a = 0.5 * (left["a1"] + right["a0"])
         if a - last < min_gap_m:
             continue
@@ -479,6 +578,7 @@ def window_reveals(
     doc = window_layout()
     for q in quads:
         height = q["z1"] - q["z0"]
+        vf0, vf1 = q.get("vz", (0.0, 1.0))
         cu0, _cv0, cu1, _cv1 = cell_uv_rect(q["cell"])
         u0, _v0, u1, _v1 = q["uv"]
         span = cu1 - cu0
@@ -491,8 +591,16 @@ def window_reveals(
             placed = _span_on_quad(q, x0, x1, rightwards)
             if placed is None or placed[1] < min_width_m:
                 continue
+            if z0 < vf0 - 1e-6 or z1 > vf1 + 1e-6:
+                continue  # glass belongs to another piece of the stack (or straddles a seam)
+            span_z = max(1e-6, vf1 - vf0)
             out.append(
-                {"a": placed[0], "w": placed[1], "z0": q["z0"] + z0 * height, "z1": q["z0"] + z1 * height}
+                {
+                    "a": placed[0],
+                    "w": placed[1],
+                    "z0": q["z0"] + (z0 - vf0) / span_z * height,
+                    "z1": q["z0"] + (z1 - vf0) / span_z * height,
+                }
             )
     return out
 

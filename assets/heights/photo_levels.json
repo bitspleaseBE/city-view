@@ -1,0 +1,13 @@
+{
+  "_about": "Surveyed storey counts from street photos, used ONLY where OpenStreetMap has no building:levels / height (OSM always wins). Keys are OSM way ids. Hard cap: 20 levels.",
+  "buildings": {
+    "449843110": {
+      "levels": 7,
+      "source": "Gounodstraat reference photo 3 (2026-10): rounded-corner brick mid-rise, Mechelsesteenweg 128-138 (apartments, curved footprint), ~7 storeys"
+    },
+    "449843112": {
+      "levels": 7,
+      "source": "Gounodstraat reference photo 3: same complex as 449843110 (Mechelsesteenweg 128-138, second footprint)"
+    }
+  }
+}

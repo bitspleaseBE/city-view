@@ -19,6 +19,11 @@ Only when a park polygon holds *few* real trees for its size is a Poisson-disc
 fill added (never a straight line); real parks keep exactly their surveyed
 trees. Nothing is placed inside buildings, on carriageways or on a tram bed
 (``cityview.railclear``).
+
+Hard rule: no trunk stands on the drawn asphalt (or on its kerb). A surveyed tree whose
+point lands in a carriageway - the survey is metre-accurate, OSM's road width nominal - is
+snapped to the nearest legal pavement / verge / park spot (``cityview.roadclear``), or
+dropped when there is none within a few metres. It is never left in a lane.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from typing import Any, Iterable
 from cityview.geo import project
 from cityview.paths import TREES_CACHE
 from cityview.railclear import BED_HALF_SUBWAY, CLEAR_FURNITURE, CLEAR_TREE, RailIndex
+from cityview.roadclear import TRUNK_MARGIN, RoadIndex, snap_off_carriageway
 
 ANTWERP_TREE_LAYER = (
     "https://geodata.antwerpen.be/arcgissql/rest/services/"
@@ -78,7 +84,8 @@ COLUMNAR_MARKS = ("fastigiata", "columnaris", "pyramidalis", "fontaine", "erecta
 # overhang the track (trams are ~3.5 m tall, branches start above that). Invented
 # fill trees keep the full canopy clearance.
 CLEAR_REAL_TRUNK = max(CLEAR_FURNITURE, BED_HALF_SUBWAY + 0.7)
-ROAD_TOLERANCE_REAL = -1.0  # trunks may stand this far inside OSM's nominal road width
+# Real trunks must clear the drawn asphalt + kerb by roadclear.TRUNK_MARGIN (no tolerance
+# inside the lane any more); offenders are snapped onto the pavement or dropped.
 DEDUPE_M = 1.8  # two survey points closer than this are the same tree
 BUILDING_MARGIN_REAL = 0.3  # real trunks may stand against a façade, not in it
 BUILDING_MARGIN_FILL = 3.2
@@ -364,6 +371,7 @@ class _Obstacles:
                     for cy in range(int(math.floor(min(ay, by) / self.CELL)), int(math.floor(max(ay, by) / self.CELL)) + 1):
                         self._sgrid.setdefault((cx, cy), []).append(idx)
         self.rails = RailIndex.from_layout(layout)
+        self.roads = RoadIndex.from_layout(layout)
 
     def in_building(self, x: float, y: float, margin: float = 0.0) -> bool:
         cx, cy = int(math.floor(x / self.CELL)), int(math.floor(y / self.CELL))
@@ -572,6 +580,7 @@ def plan_trees(
         "dropped_duplicate": 0,
         "dropped_building": 0,
         "dropped_road": 0,
+        "relocated_road": 0,
         "dropped_rail": 0,
         "dropped_outside": 0,
         "bushes": 0,
@@ -594,10 +603,24 @@ def plan_trees(
         if obstacles.in_building(x, y, BUILDING_MARGIN_REAL):
             stats["dropped_building"] += 1
             continue
-        # Carriageway only: kerb-side tree pits sit just inside OSM's nominal width.
-        if obstacles.road_clearance(x, y, driveable_only=True) < ROAD_TOLERANCE_REAL:
-            stats["dropped_road"] += 1
-            continue
+        # HARD RULE: a trunk never stands on the carriageway (or its kerb). Snap it onto
+        # the nearest legal ground instead of leaving it in the lane; drop if none close by.
+        if obstacles.roads.on_carriageway(x, y, TRUNK_MARGIN):
+            spot = snap_off_carriageway(
+                x,
+                y,
+                obstacles.roads,
+                lambda px, py: (
+                    not obstacles.on_rails(px, py, CLEAR_REAL_TRUNK)
+                    and not obstacles.in_building(px, py, BUILDING_MARGIN_REAL)
+                    and not grid.near(px, py, DEDUPE_M)
+                ),
+            )
+            if spot is None:
+                stats["dropped_road"] += 1
+                continue
+            x, y = spot
+            stats["relocated_road"] += 1
         grid.add(x, y)
         tree = {"x": round(x, 2), "y": round(y, 2), "source": src}
         tree.update(tree_traits(cand["rec"], x, y))
@@ -615,7 +638,10 @@ def plan_trees(
     def clear_of_world(x: float, y: float, building_margin: float) -> bool:
         if obstacles.on_rails(x, y) or obstacles.in_building(x, y, building_margin):
             return False
-        return obstacles.road_clearance(x, y) >= ROAD_EDGE_FILL
+        return (
+            obstacles.road_clearance(x, y) >= ROAD_EDGE_FILL
+            and not obstacles.roads.on_carriageway(x, y, TRUNK_MARGIN)
+        )
 
     for park in layout.get("parks") or []:
         ring = park.get("ring") or []
@@ -711,7 +737,8 @@ def summarize(stats: dict[str, int]) -> str:
         f"{stats.get('osm_row', 0)} OSM tree_row samples, {stats.get('fill', 0)} fallback fill in "
         f"{stats.get('parks_filled', 0)} sparse parks), {stats.get('bushes', 0)} bushes; dropped "
         f"{stats.get('dropped_duplicate', 0)} dup / {stats.get('dropped_building', 0)} building / "
-        f"{stats.get('dropped_road', 0)} road / {stats.get('dropped_rail', 0)} tram-bed"
+        f"{stats.get('dropped_road', 0)} road / {stats.get('dropped_rail', 0)} tram-bed; "
+        f"{stats.get('relocated_road', 0)} snapped off the carriageway onto the pavement"
     )
 
 
