@@ -19,6 +19,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from cityview import facade_kit, surface_kit  # noqa: E402
 from cityview import climbers, kerbs, railclear, rooftop  # noqa: E402
+from cityview import parking as parking_plan  # noqa: E402
 from cityview.landmarks import LANDMARKS_DIR, resolve_landmark_photo  # noqa: E402
 from cityview.railclear import RailIndex  # noqa: E402
 from cityview.shop_brands import fascia_for_brand  # noqa: E402
@@ -2253,64 +2254,42 @@ def add_sidewalks_and_curbs(
 
 
 def add_parked_cars(
-    roads: list,
+    layout: dict,
     spawn_xy: tuple[float, float],
     body_mats: list,
     glass_mat,
     tire_mat,
-    max_cars: int = 48,
-) -> int:
-    """GTA3-simple parked cars along both kerbs near spawn."""
-    placed = 0
-    for ri, road in enumerate(roads):
-        kind = road.get("kind") or "residential"
-        if kind not in {"residential", "living_street", "tertiary", "unclassified", "secondary"}:
-            continue
-        pts = road.get("points") or []
-        if len(pts) < 2:
-            continue
-        half = float(road.get("width") or 6.0) * 0.5
-        for side, sign in (("R", -1.0), ("L", 1.0)):
-            kerb = offset_polyline(pts, sign * (half - 1.15))
-            for i in range(len(kerb) - 1):
-                x0, y0 = kerb[i]
-                x1, y1 = kerb[i + 1]
-                seg = math.hypot(x1 - x0, y1 - y0)
-                yaw = math.atan2(y1 - y0, x1 - x0)
-                t = 4.0 if side == "L" else 0.0
-                while t < seg:
-                    if placed >= max_cars:
-                        return placed
-                    x = x0 + (x1 - x0) * (t / seg if seg else 0)
-                    y = y0 + (y1 - y0) * (t / seg if seg else 0)
-                    if math.hypot(x - spawn_xy[0], y - spawn_xy[1]) > 150.0:
-                        t += 18.0
-                        continue
-                    if RAILS.within(x, y, railclear.CLEAR_PARKED_CAR):
-                        t += 6.0
-                        continue
-                    slot = placed + ri + (0 if side == "R" else 7)
-                    if slot % 4 == 0:
-                        t += 8.0
-                        continue
-                    body = add_box(f"car_{placed}", (4.2, 1.75, 1.35), (x, y, 0.75), yaw)
-                    assign(body, body_mats[placed % len(body_mats)])
-                    cabin = add_box(
-                        f"car_g_{placed}",
-                        (2.0, 1.55, 0.65),
-                        (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 1.45),
-                        yaw,
-                    )
-                    assign(cabin, glass_mat)
-                    # Four stub wheels — reads as a car from street POV.
-                    for wx, wy in ((1.35, 0.85), (1.35, -0.85), (-1.35, 0.85), (-1.35, -0.85)):
-                        lx = x + math.cos(yaw) * wx - math.sin(yaw) * wy
-                        ly = y + math.sin(yaw) * wx + math.cos(yaw) * wy
-                        wheel = add_box(f"car_w_{placed}_{wx}_{wy}", (0.55, 0.22, 0.55), (lx, ly, 0.28), yaw)
-                        assign(wheel, tire_mat)
-                    placed += 1
-                    t += 13.0 + (slot % 5) * 0.9
-    return placed
+    max_cars: int = 64,
+) -> dict:
+    """GTA3-simple parked cars, only where OSM maps parallel kerbside parking.
+
+    Placement (side, spacing, clearance from the runtime traffic lane, junctions, crossings,
+    signals, stops, trees) is planned by ``cityview.parking``; this just builds the boxes.
+    """
+    plan = parking_plan.plan_parked_cars(
+        layout,
+        spawn_xy,
+        max_cars=max_cars,
+        blocked=lambda x, y: RAILS.within(x, y, railclear.CLEAR_PARKED_CAR),
+    )
+    for placed, car in enumerate(plan):
+        x, y, yaw, lift = car["x"], car["y"], car["yaw"], car.get("lift", 0.0)
+        body = add_box(f"car_{placed}", (4.2, 1.75, 1.35), (x, y, 0.75 + lift), yaw)
+        assign(body, body_mats[placed % len(body_mats)])
+        cabin = add_box(
+            f"car_g_{placed}",
+            (2.0, 1.55, 0.65),
+            (x + math.cos(yaw) * 0.15, y + math.sin(yaw) * 0.15, 1.45 + lift),
+            yaw,
+        )
+        assign(cabin, glass_mat)
+        # Four stub wheels — reads as a car from street POV.
+        for wx, wy in ((1.35, 0.85), (1.35, -0.85), (-1.35, 0.85), (-1.35, -0.85)):
+            lx = x + math.cos(yaw) * wx - math.sin(yaw) * wy
+            ly = y + math.sin(yaw) * wx + math.cos(yaw) * wy
+            wheel = add_box(f"car_w_{placed}_{wx}_{wy}", (0.55, 0.22, 0.55), (lx, ly, 0.28 + lift), yaw)
+            assign(wheel, tire_mat)
+    return {"cars": len(plan), "summary": parking_plan.summarize(plan)}
 
 
 def bounds(layout: dict) -> tuple[float, float, float, float]:
@@ -3382,10 +3361,8 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
             principled("road_iron_worn", (0.20, 0.19, 0.17, 1.0), 0.45, metallic=0.6),
         )
         print(f"Road ironwork (manholes, gully grates): {ironwork}")
-        cars = add_parked_cars(
-            layout.get("roads") or [], spawn_xy, car_mats, car_glass, tire_mat, max_cars=48
-        )
-        print(f"Parked cars near spawn: {cars}")
+        cars = add_parked_cars(layout, spawn_xy, car_mats, car_glass, tire_mat, max_cars=64)
+        print(f"Parked cars near spawn (OSM parking:* only): {cars['summary']}")
         furniture = add_street_furniture(
             layout.get("roads") or [],
             spawn_xy,

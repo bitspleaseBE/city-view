@@ -10,6 +10,7 @@ from typing import Any
 
 from cityview.geo import project
 from cityview.landmarks import attach_landmark, load_manifest
+from cityview.parking import parse_road_parking
 from cityview.shop_brands import normalize_shop_brand
 from cityview.streetscape import (
     annotate_layout,
@@ -847,6 +848,11 @@ def layout_from_osm(
             limit = parse_maxspeed_kmh(tags)
             if limit is not None:
                 road["maxspeed_kmh"] = limit
+            # Kerbside parking exactly as mapped (parking:both / :left / :right); parked cars are
+            # only ever drawn where this is present (cityview/parking.py).
+            parking = parse_road_parking(tags)
+            if parking:
+                road["parking"] = parking
             roads.append(road)
 
     for rel in rels.values():
