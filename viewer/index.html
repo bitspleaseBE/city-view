@@ -8,7 +8,7 @@
       :root {
         --ink: #1a2430;
         --muted: #3d4a5c;
-        --panel: rgba(255, 255, 255, 0.72);
+        --panel: rgba(255, 255, 255, 0.82); /* opaque-ish: no backdrop-filter over the live canvas */
       }
       html,
       body {
@@ -22,6 +22,119 @@
       canvas {
         display: block;
       }
+
+      /* ---- Loading screen: sunny Antwerp sky, gabled skyline, tram-yellow progress ---- */
+      #loading {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        background:
+          radial-gradient(circle 42vmin at 78% 20%, rgba(255, 231, 160, 0.95) 0, rgba(255, 231, 160, 0.4) 18%, rgba(255, 231, 160, 0) 100%),
+          linear-gradient(180deg, #4aa0ff 0%, #6eb6ff 38%, #a8d4ff 72%, #d8e8f4 100%);
+        transition: opacity 0.7s ease, visibility 0s linear 0.7s;
+      }
+      #loading.done {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      #loading .ld-skyline {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: 34vh;
+        min-height: 150px;
+        pointer-events: none;
+      }
+      #loading .ld-card {
+        position: relative;
+        margin-top: -12vh;
+        padding: 0 24px;
+        text-align: center;
+        width: min(30rem, 100%);
+        box-sizing: border-box;
+      }
+      #loading .ld-kicker {
+        margin: 0 0 10px;
+        font-size: 0.78rem;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgba(26, 36, 48, 0.62);
+      }
+      #loading h2 {
+        margin: 0 0 22px;
+        font-size: clamp(2rem, 7vw, 3.4rem);
+        font-weight: 600;
+        line-height: 1.05;
+        letter-spacing: 0.005em;
+        color: var(--ink);
+        text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+      }
+      #loading .ld-dots i {
+        font-style: normal;
+        opacity: 0.25;
+        animation: ld-dot 1.2s infinite;
+      }
+      #loading .ld-dots i:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      #loading .ld-dots i:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+      @keyframes ld-dot {
+        0%, 70%, 100% { opacity: 0.25; }
+        30% { opacity: 1; }
+      }
+      #loading .ld-track {
+        height: 8px;
+        border-radius: 4px;
+        background: rgba(26, 36, 48, 0.18);
+        overflow: hidden;
+        box-shadow: inset 0 0 0 1px rgba(26, 36, 48, 0.12);
+      }
+      #loading .ld-fill {
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(90deg, #f2b630, #ffd35c);
+        transform-origin: left center;
+        transform: scaleX(0.03);
+        transition: transform 0.35s ease-out;
+      }
+      #loading.indet .ld-fill {
+        animation: ld-pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes ld-pulse {
+        0%, 100% { opacity: 0.55; }
+        50% { opacity: 1; }
+      }
+      #loading .ld-sub {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 10px;
+        font-size: 0.85rem;
+        color: rgba(26, 36, 48, 0.75);
+      }
+      #loading.failed .ld-fill {
+        background: #b5483a;
+        transform: scaleX(1);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #loading,
+        #loading .ld-fill {
+          transition: none;
+        }
+        #loading .ld-dots i,
+        #loading.indet .ld-fill {
+          animation: none;
+          opacity: 1;
+        }
+      }
       #hud {
         position: fixed;
         left: 20px;
@@ -30,7 +143,6 @@
         padding: 14px 16px;
         background: var(--panel);
         border: 1px solid rgba(20, 40, 60, 0.12);
-        backdrop-filter: blur(10px);
         pointer-events: none;
       }
       h1 {
@@ -94,7 +206,6 @@
         padding: 12px 18px;
         background: var(--panel);
         border: 1px solid rgba(20, 40, 60, 0.14);
-        backdrop-filter: blur(10px);
         text-align: center;
         display: none;
         pointer-events: none;
@@ -126,6 +237,77 @@
     </style>
   </head>
   <body>
+    <div id="loading" class="indet" role="status" aria-live="polite">
+      <svg class="ld-skyline" viewBox="0 0 1200 160" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+        <path fill="#8fa3bd" opacity="0.5" d="M0 160 L0 120 L90 120 L90 104 L170 104 L170 126 L260 126 L260 98 L330 98 L330 118 L430 118 L430 90 L500 90 L500 112 L610 112 L610 100 L700 100 L700 84 L742 84 L752 40 L758 6 L762 40 L772 84 L800 84 L800 96 L840 96 L840 70 L880 70 L880 106 L980 106 L980 92 L1060 92 L1060 122 L1140 122 L1140 108 L1200 108 L1200 160 Z" />
+        <path fill="#7a4e3c" d="M0 160 L0 96 L14 96 L14 88 L28 88 L28 80 L42 80 L42 72 L56 80 L56 88 L70 88 L70 96 L84 96 L84 160 L84 122 L92 122 L92 114 L99 114 L99 106 L106 106 L106 98 L114 98 L114 90 L122 98 L122 106 L129 106 L129 114 L136 114 L136 122 L144 122 L144 160 L144 88 L152 88 L152 80 L159 80 L159 72 L166 72 L166 64 L174 64 L174 56 L182 64 L182 72 L189 72 L189 80 L196 80 L196 88 L204 88 L204 160 L204 88 L219 88 L219 80 L234 80 L234 72 L249 80 L249 88 L264 88 L264 160 L264 64 L274 64 L274 56 L284 56 L284 48 L294 48 L294 40 L304 48 L304 56 L314 56 L314 64 L324 64 L324 160 L324 88 L339 88 L339 80 L354 80 L354 72 L369 80 L369 88 L384 88 L384 160 L384 122 L396 122 L396 114 L408 114 L408 106 L420 106 L420 98 L432 98 L432 90 L444 98 L444 106 L456 106 L456 114 L468 114 L468 122 L480 122 L480 160 L480 104 L488 104 L488 96 L495 96 L495 88 L502 88 L502 80 L510 80 L510 72 L518 80 L518 88 L525 88 L525 96 L532 96 L532 104 L540 104 L540 160 L540 56 L555 56 L555 48 L570 48 L570 40 L585 48 L585 56 L600 56 L600 160 L600 122 L609 122 L609 114 L618 114 L618 106 L627 106 L627 98 L636 98 L636 90 L645 98 L645 106 L654 106 L654 114 L663 114 L663 122 L672 122 L672 160 L672 80 L684 80 L684 72 L696 72 L696 64 L708 64 L708 56 L720 64 L720 72 L732 72 L732 80 L744 80 L744 160 L744 122 L753 122 L753 114 L762 114 L762 106 L771 106 L771 98 L780 98 L780 90 L789 98 L789 106 L798 106 L798 114 L807 114 L807 122 L816 122 L816 160 L816 88 L837 88 L837 80 L858 80 L858 72 L879 80 L879 88 L900 88 L900 160 L900 72 L918 72 L918 64 L936 64 L936 56 L954 64 L954 72 L972 72 L972 160 L972 122 L980 122 L980 114 L987 114 L987 106 L994 106 L994 98 L1002 98 L1002 90 L1010 98 L1010 106 L1017 106 L1017 114 L1024 114 L1024 122 L1032 122 L1032 160 L1032 72 L1041 72 L1041 64 L1050 64 L1050 56 L1059 56 L1059 48 L1068 48 L1068 40 L1077 48 L1077 56 L1086 56 L1086 64 L1095 64 L1095 72 L1104 72 L1104 160 L1104 80 L1120 80 L1120 72 L1136 72 L1136 64 L1152 64 L1152 56 L1168 64 L1168 72 L1184 72 L1184 80 L1200 80 L1200 160 Z" />
+        <rect x="0" y="152" width="1200" height="8" fill="#c4b59a" />
+      </svg>
+      <div class="ld-card">
+        <p class="ld-kicker">Klein Antwerpen · Gounod</p>
+        <h2>Antwerp is loading<span class="ld-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></h2>
+        <div class="ld-track"><div class="ld-fill" id="ld-fill"></div></div>
+        <p class="ld-sub"><span id="ld-stage">Fetching the streets</span><span id="ld-pct"></span></p>
+      </div>
+    </div>
+    <script>
+      // Loading screen + GLB download. Runs before the (CDN-hosted) three.js module so the
+      // 60 MB district download overlaps with the engine download instead of waiting for it.
+      (() => {
+        const root = document.getElementById("loading");
+        const fill = document.getElementById("ld-fill");
+        const stage = document.getElementById("ld-stage");
+        const pct = document.getElementById("ld-pct");
+        let shown = 0;
+        window.__loading = {
+          set(frac, label) {
+            shown = Math.max(shown, Math.min(1, frac));
+            root.classList.remove("indet");
+            fill.style.transform = "scaleX(" + Math.max(0.03, shown).toFixed(3) + ")";
+            pct.textContent = Math.round(shown * 100) + "%";
+            if (label) stage.textContent = label;
+          },
+          done() {
+            this.set(1, "Ready");
+            root.classList.add("done");
+            setTimeout(() => root.remove(), 1000);
+          },
+          fail(msg) {
+            root.classList.remove("indet");
+            root.classList.add("failed");
+            stage.textContent = msg;
+            pct.textContent = "";
+          },
+        };
+        window.__glbPromise = (async () => {
+          const res = await fetch("./klein_antwerpen.glb");
+          if (!res.ok) throw new Error("GLB HTTP " + res.status);
+          if (!res.body) return res.arrayBuffer();
+          // Content-Length can be the compressed size while we count decoded bytes, so only
+          // trust it while got <= total; otherwise fall back to an asymptotic estimate.
+          const total = +res.headers.get("Content-Length") || 0;
+          const reader = res.body.getReader();
+          const chunks = [];
+          let got = 0;
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            got += value.length;
+            const f = total && got <= total ? got / total : 1 - Math.exp(-got / 55e6);
+            window.__loading.set(f * 0.8, "Fetching the streets");
+          }
+          const buf = new Uint8Array(got);
+          let off = 0;
+          for (const c of chunks) {
+            buf.set(c, off);
+            off += c.length;
+          }
+          return buf.buffer;
+        })();
+        window.__glbPromise.catch(() => {}); // surfaced by the viewer module
+      })();
+    </script>
     <div id="hint">Walk: click + WASD · Shift sprint · E tram · V free · N day/night</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Walk</button>
@@ -157,6 +339,7 @@
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
       import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+      import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
       import { createTraffic } from "./traffic.js";
       import { createTransit } from "./transit.js";
 
@@ -217,8 +400,19 @@
       );
       camera.position.set(-218.5, 1.7, -432.1);
 
-      const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
+      // Opaque canvas with no stencil: cheaper framebuffer + no alpha compositing with the page.
+      const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: false,
+        stencil: false,
+        powerPreference: "high-performance",
+      });
+      // Render-resolution cap (deliberately below devicePixelRatio ≤ 2): the adaptive scaler in
+      // tick() trims it further only when frame time says the GPU can't keep up.
+      const PR_MAX = Math.min(window.devicePixelRatio || 1, 1.2);
+      const PR_MIN = Math.min(0.75, PR_MAX);
+      let pixelRatio = PR_MAX;
+      renderer.setPixelRatio(pixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setClearColor(SKY, 1);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -228,7 +422,9 @@
 
       // Cheap IBL so glass/metal catch sky instead of looking like flat stickers.
       const pmrem = new THREE.PMREMGenerator(renderer);
-      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      const roomEnv = new RoomEnvironment();
+      scene.environment = pmrem.fromScene(roomEnv, 0.04).texture;
+      roomEnv.dispose(); // the studio scene is only needed to bake the cube map
       pmrem.dispose();
 
       const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85);
@@ -283,10 +479,13 @@
       const glowMats = []; // { mat, scale }: emissive intensity = scale * glow(t)
       const lampHeads = []; // world positions of street-lamp heads
       const LAMP_LIGHTS = 4;
+      const LAMP_INTENSITY = 38;
       const lampLights = [];
+      let lampGlow = 0;
       for (let i = 0; i < LAMP_LIGHTS; i++) {
         const l = new THREE.PointLight(0xffc27a, 0, 24, 1.6);
         l.visible = false;
+        l.userData.on = 0; // 1 when this light is parked on a lamp near the walker
         scene.add(l);
         lampLights.push(l);
       }
@@ -321,7 +520,14 @@
       scene.add(stars);
 
       // Debug / screenshot hook (no behaviour): window.__cityview.setNight(true), .camera, .walk
-      window.__cityview = { camera, setNight: setTimeOfDay, get tod() { return tod; }, get walk() { return walkControls; } };
+      window.__cityview = {
+        camera,
+        renderer,
+        setNight: setTimeOfDay,
+        get tod() { return tod; },
+        get walk() { return walkControls; },
+        get pixelRatio() { return pixelRatio; },
+      };
 
       function applyTimeOfDay(t) {
         const night = smooth(0.35, 0.95, t); // lights come on a little after the sun is down
@@ -358,7 +564,8 @@
         // Façade windows + lamp heads glow; cars and trams follow.
         const glow = smooth(0.4, 0.9, t);
         for (const g of glowMats) g.mat.emissiveIntensity = g.scale * glow;
-        for (const l of lampLights) l.intensity = 38 * glow;
+        lampGlow = glow;
+        for (const l of lampLights) l.intensity = LAMP_INTENSITY * glow * l.userData.on;
         traffic.setNight && traffic.setNight(glow);
         transit.setNight && transit.setNight(glow);
 
@@ -379,26 +586,55 @@
         setTimeOfDay(todTarget < 0.5);
       }
       btnNight.addEventListener("click", toggleTimeOfDay);
-      const _lampSort = new THREE.Vector3();
       let lampClock = 0;
+      let lampsLit = false;
+      const _lampD = new Float32Array(LAMP_LIGHTS);
+      const _lampI = new Int32Array(LAMP_LIGHTS);
+      function setLampLightsVisible(v) {
+        // Toggling `visible` changes the light count baked into every lit shader, so it only
+        // happens at the day/night boundary (both variants are pre-compiled during loading).
+        if (lampsLit === v) return;
+        lampsLit = v;
+        for (const l of lampLights) l.visible = v;
+      }
       function updateLampLights(dt, walker) {
         if (todApplied < 0.4 || !lampHeads.length) {
-          for (const l of lampLights) l.visible = false;
+          setLampLightsVisible(false);
           return;
         }
+        setLampLightsVisible(true);
         lampClock -= dt;
         if (lampClock > 0) return;
         lampClock = 0.35;
-        const p = walker.position;
-        // Nearest lamps to the walker get the real light; the rest stay glowing heads.
-        const near = lampHeads
-          .map((h) => ({ h, d: (h.x - p.x) ** 2 + (h.z - p.z) ** 2 }))
-          .sort((a, b) => a.d - b.d)
-          .slice(0, LAMP_LIGHTS);
+        const px = walker.position.x;
+        const pz = walker.position.z;
+        // Allocation-free top-N nearest lamps (insertion into a tiny sorted buffer).
+        _lampD.fill(Infinity);
+        _lampI.fill(-1);
+        for (let i = 0; i < lampHeads.length; i++) {
+          const h = lampHeads[i];
+          const d = (h.x - px) ** 2 + (h.z - pz) ** 2;
+          if (d >= _lampD[LAMP_LIGHTS - 1]) continue;
+          let k = LAMP_LIGHTS - 1;
+          while (k > 0 && _lampD[k - 1] > d) {
+            _lampD[k] = _lampD[k - 1];
+            _lampI[k] = _lampI[k - 1];
+            k--;
+          }
+          _lampD[k] = d;
+          _lampI[k] = i;
+        }
+        // The nearest lamps get the real light; the rest stay glowing heads. Lights stay
+        // "visible" at night (constant shader variant) and just fade to 0 when unused.
         lampLights.forEach((l, i) => {
-          const n = near[i];
-          l.visible = !!n && n.d < 70 * 70;
-          if (n) l.position.set(n.h.x, n.h.y - 0.25, n.h.z);
+          const idx = _lampI[i];
+          const on = idx >= 0 && _lampD[i] < 70 * 70 ? 1 : 0;
+          l.userData.on = on;
+          l.intensity = LAMP_INTENSITY * lampGlow * on;
+          if (on) {
+            const h = lampHeads[idx];
+            l.position.set(h.x, h.y - 0.25, h.z);
+          }
         });
       }
 
@@ -708,9 +944,84 @@
       }
 
       const loader = new GLTFLoader();
-      loader.load(
-        "./klein_antwerpen.glb",
-        async (gltf) => {
+      const nextFrame = () => new Promise((r) => requestAnimationFrame(() => r()));
+      const setLoad = (f, label) => window.__loading && window.__loading.set(f, label);
+      let cityReady = false;
+
+      // Merge static city meshes that share a material into ~128 m tiles. The GLB ships ~12k
+      // meshes (one draw call each); after this it is a few hundred, while per-tile frustum
+      // culling still drops everything behind/beside the camera. Geometry is baked in root
+      // space, so materials, polygon-offset layers and look are untouched.
+      function mergeStaticMeshes(root, tile = 128) {
+        const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+        const rel = new THREE.Matrix4();
+        const centre = new THREE.Vector3();
+        const buckets = new Map();
+        root.traverse((obj) => {
+          if (!obj.isMesh || obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return;
+          if (obj.children.length) return; // would orphan child nodes
+          const g = obj.geometry;
+          const pos = g && g.attributes.position;
+          if (!pos || !(pos.array instanceof Float32Array) || pos.isInterleavedBufferAttribute) return;
+          if (!g.boundingBox) g.computeBoundingBox();
+          rel.multiplyMatrices(inv, obj.matrixWorld);
+          g.boundingBox.getCenter(centre).applyMatrix4(rel);
+          // Huge meshes (ground, long roads) stay as-is: merging them would bloat tile bounds.
+          const ext = g.boundingBox.getSize(_clampTmp);
+          if (Math.max(ext.x, ext.z) > tile * 1.5) return;
+          const sig = Object.keys(g.attributes).sort().join(",") + (g.index ? "|i" : "|n");
+          const key = `${obj.material.uuid}|${sig}|${Math.floor(centre.x / tile)}|${Math.floor(centre.z / tile)}`;
+          let b = buckets.get(key);
+          if (!b) buckets.set(key, (b = { material: obj.material, meshes: [], mats: [] }));
+          b.meshes.push(obj);
+          b.mats.push(rel.clone());
+        });
+        let before = 0;
+        let after = 0;
+        for (const b of buckets.values()) {
+          if (b.meshes.length < 2) continue;
+          const geoms = b.meshes.map((m, i) => {
+            const g = m.geometry.clone();
+            g.applyMatrix4(b.mats[i]);
+            return g;
+          });
+          const merged = mergeGeometries(geoms, false);
+          for (const g of geoms) g.dispose();
+          if (!merged) continue; // incompatible attributes: leave the originals alone
+          merged.computeBoundingSphere();
+          const mesh = new THREE.Mesh(merged, b.material);
+          mesh.name = `merged_${b.meshes[0].name || "mesh"}`;
+          mesh.castShadow = false;
+          mesh.receiveShadow = false;
+          mesh.frustumCulled = true;
+          mesh.matrixAutoUpdate = false;
+          mesh.updateMatrix();
+          root.add(mesh);
+          for (const m of b.meshes) {
+            m.geometry.dispose();
+            m.removeFromParent();
+          }
+          before += b.meshes.length;
+          after++;
+        }
+        return { before, after };
+      }
+
+      // Pre-compile every shader variant (day, and night with the pooled lamp lights) while
+      // the loading screen is still up, then upload geometry with one throw-away frame.
+      async function warmUpRenderer() {
+        const wasLit = lampsLit;
+        for (const l of lampLights) l.visible = true;
+        try {
+          await renderer.compileAsync(scene, camera);
+        } catch (e) {
+          console.warn("shader pre-compile skipped", e);
+        }
+        for (const l of lampLights) l.visible = wasLit;
+        renderer.render(scene, camera);
+      }
+
+      async function onCityLoaded(gltf) {
           cityRoot = gltf.scene;
           // Cheap: disable expensive features for FPS; freeze static transforms.
           // Coplanar street layers: bias is monotone with the Blender height stack
@@ -777,11 +1088,22 @@
               lampHeads.push(new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld));
             }
           });
+          setLoad(0.9, "Building the streets");
+          await nextFrame();
+          if (new URLSearchParams(location.search).get("merge") !== "0") {
+            const m = mergeStaticMeshes(cityRoot);
+            console.info(`[cityview] merged ${m.before} meshes into ${m.after} tile batches`);
+          }
+          // Static after the merge: skip per-frame matrix traversal of the (now small) tree.
+          cityRoot.updateMatrixWorld(true); // bake world matrices of the merged tiles once
+          cityRoot.traverse((obj) => (obj.matrixWorldAutoUpdate = false));
           const spawnNode = cityRoot.getObjectByName("HumanSpawn");
           const spawnJson = await loadSpawnJson();
           if (spawnNode) applySpawnFromNode(spawnNode);
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
+          setLoad(0.94, "Starting traffic and trams");
+          await nextFrame();
           traffic = await createTraffic(scene, THREE);
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
           // Cars give way to trams/buses instead of driving through them.
@@ -797,13 +1119,28 @@
               : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
-        },
-        undefined,
-        (err) => {
+          setLoad(0.97, "Warming up the lights");
+          await nextFrame();
+          await warmUpRenderer();
+          cityReady = true;
+          prevTime = performance.now();
+          window.__loading && window.__loading.done();
+      }
+
+      (async () => {
+        try {
+          setLoad(0, "Fetching the streets");
+          const buf = await window.__glbPromise;
+          setLoad(0.82, "Unpacking the streets");
+          await nextFrame();
+          const gltf = await loader.parseAsync(buf, "./");
+          await onCityLoaded(gltf);
+        } catch (err) {
           status.textContent = "Missing GLB — CI/build pending";
+          window.__loading && window.__loading.fail("Couldn’t load Antwerp — check your connection and reload");
           console.error(err);
-        },
-      );
+        }
+      })();
 
       window.addEventListener("resize", () => {
         camera.aspect = window.innerWidth / window.innerHeight;
@@ -811,14 +1148,63 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
       });
 
+      // Adaptive render resolution: step the pixel ratio down only when the GPU is clearly
+      // struggling (avg > 27 ms/frame), and probe back up occasionally. A level that failed
+      // right after a probe becomes the new ceiling so it never oscillates.
+      let adaptFrames = 0;
+      let adaptTime = 0;
+      let adaptSettle = 120; // frames to ignore after any change / load
+      let adaptCeil = PR_MAX;
+      let adaptProbed = false;
+      let adaptGood = 0;
+      function adaptResolution(rawDt) {
+        if (adaptSettle > 0) {
+          adaptSettle--;
+          return;
+        }
+        if (rawDt > 0.25 || document.hidden) return; // tab switch / hitch, not GPU load
+        adaptTime += rawDt;
+        if (++adaptFrames < 90) return;
+        const avg = adaptTime / adaptFrames;
+        adaptFrames = 0;
+        adaptTime = 0;
+        let next = pixelRatio;
+        if (avg > 0.027 && pixelRatio > PR_MIN) {
+          if (adaptProbed) adaptCeil = Math.max(PR_MIN, pixelRatio - 0.1);
+          next = Math.max(PR_MIN, pixelRatio - 0.15);
+          adaptGood = 0;
+          adaptProbed = false;
+        } else if (avg < 0.0185 && pixelRatio < adaptCeil) {
+          if (++adaptGood >= 4) {
+            next = Math.min(adaptCeil, pixelRatio + 0.1);
+            adaptProbed = true;
+            adaptGood = 0;
+          }
+        } else {
+          adaptProbed = false;
+          adaptGood = 0;
+        }
+        if (Math.abs(next - pixelRatio) > 1e-3) {
+          pixelRatio = next;
+          renderer.setPixelRatio(pixelRatio);
+          adaptSettle = 90;
+        }
+      }
+
       function tick() {
         const time = performance.now();
-        const frameSec = (time - prevTime) / 1000;
-        const dt = Math.min(0.05, frameSec);
+        const rawDt = (time - prevTime) / 1000;
+        const dt = Math.min(0.05, rawDt);
         // Traffic and transit integrate real elapsed time themselves (sub-stepped), so a slow
         // frame does not put the whole street in slow motion. Walking/camera keep the 50 ms cap.
-        const simDt = Math.min(0.25, frameSec);
+        const simDt = Math.min(0.25, rawDt);
         prevTime = time;
+        if (!cityReady) {
+          // Loading screen is up: don't burn GPU/CPU on an empty scene.
+          requestAnimationFrame(tick);
+          return;
+        }
+        adaptResolution(rawDt);
 
         const riding = transit.isRiding && transit.isRiding();
 
