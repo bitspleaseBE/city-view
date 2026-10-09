@@ -5,7 +5,8 @@
  * footways, and short crossing links at zebras). People follow a path, continue
  * onto a connected walk at junctions, and only reverse on a dead end. They spawn
  * on safe walks and only use ``crossing`` links when the graph offers no other
- * forward option. Lateral offset stays on the pavement.
+ * forward option. At signalised crossings they wait on the kerb until
+ * ``setCrossingGate`` says the ped light is green. Lateral offset stays on the pavement.
  */
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
@@ -37,6 +38,8 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const graph = buildGraph(walkRoutes);
   const templates = await loadCharacterTemplates(THREE);
   const useMixamo = templates.length > 0;
+  /** `(routeId) => boolean` — false means wait at the kerb (red ped light). */
+  let crossingOk = () => true;
 
   const PROFILES = [
     {
@@ -222,16 +225,30 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       const isCross = dest.kind === "crossing";
       const isSafe = dest.safe !== false && SAFE_KINDS.has(dest.kind);
       const pingPong = recent.has(c.routeIdx) ? 1 : 0;
-      // Prefer forward, safe, long paths; crossings only when needed.
-      const score = align * 3 + (isSafe ? 1.2 : 0) - (isCross ? 1.5 : 0) - pingPong * 2 + Math.min(2, dest.length / 40);
-      return { c, align, score, isCross };
+      // Prefer forward, safe, long paths; crossings only when needed / when green.
+      const redCross = isCross && !crossingOk(dest.id);
+      const score =
+        align * 3 +
+        (isSafe ? 1.2 : 0) -
+        (isCross ? 1.5 : 0) -
+        (redCross ? 2.5 : 0) -
+        pingPong * 2 +
+        Math.min(2, dest.length / 40);
+      return { c, align, score, isCross, redCross };
     });
     scored.sort((a, b) => b.score - a.score);
 
     // Prefer forward non-crossing options; fall back to any forward; then any.
     const forwardSafe = scored.filter((s) => s.align > 0.2 && !s.isCross);
+    const forwardGreen = scored.filter((s) => s.align > 0.15 && !s.redCross);
     const forward = scored.filter((s) => s.align > 0.15);
-    const pool = forwardSafe.length ? forwardSafe : forward.length ? forward : scored;
+    const pool = forwardSafe.length
+      ? forwardSafe
+      : forwardGreen.length
+        ? forwardGreen
+        : forward.length
+          ? forward
+          : scored;
     return pool[(Math.random() * Math.min(3, pool.length)) | 0].c;
   }
 
@@ -310,7 +327,17 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const spawnPool = spawnRoutes();
   if (!spawnPool.length) {
     console.warn("[cityview] pedestrians: no walk routes — crowd disabled");
-    return { update() {}, dispose() {}, groups, mixamo: useMixamo, hitTest() { return 0; }, setBlocker() {} };
+    return {
+      update() {},
+      dispose() {},
+      groups,
+      mixamo: useMixamo,
+      hitTest() {
+        return 0;
+      },
+      setBlocker() {},
+      setCrossingGate() {},
+    };
   }
   for (let i = 0; i < COUNT; i++) {
     const g = spawnGroup(PROFILES, spawnPool);
@@ -450,6 +477,18 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     return true;
   }
 
+  function setWalkAnim(m, moving) {
+    const action = m.mesh.userData.action;
+    if (action) action.setEffectiveTimeScale(moving ? m.speed / WALK_SPEED : 0);
+  }
+
+  /** Still on the kerb of a crossing (not committed mid-road). */
+  function waitingAtCrossing(m, route, rLen) {
+    if (route.kind !== "crossing") return false;
+    if (crossingOk(route.id)) return false;
+    return m.dir > 0 ? m.s < 1.4 : m.s > rLen - 1.4;
+  }
+
   function update(dt) {
     if (!(dt > 0)) return;
     for (const g of groups) {
@@ -458,6 +497,16 @@ export async function createPedestrians(scene, THREE, opts = {}) {
 
         const route = walkRoutes[m.routeIdx];
         const rLen = routeLength(route);
+        if (waitingAtCrossing(m, route, rLen)) {
+          setWalkAnim(m, false);
+          placeMember(m);
+          if (m.mesh.userData.mixer) {
+            m.mesh.userData.mixer.update(dt);
+            m.mesh.position.y = m.mesh.userData.baseY || 0;
+          }
+          continue;
+        }
+        setWalkAnim(m, true);
         m.s += m.speed * m.dir * dt;
         if (m.s >= rLen || m.s < 0) {
           advanceEnd(m);
@@ -510,6 +559,9 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     hitTest,
     setBlocker(fn) {
       blocked = fn;
+    },
+    setCrossingGate(fn) {
+      crossingOk = typeof fn === "function" ? fn : () => true;
     },
   };
 }

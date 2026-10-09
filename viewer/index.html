@@ -1518,6 +1518,9 @@
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
           });
+          if (pedestrians.setCrossingGate && traffic.pedMayCross) {
+            pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
+          }
           micromobility = await createMicromobility(scene, THREE, { count: 28 });
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
