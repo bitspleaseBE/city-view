@@ -37,6 +37,7 @@ async function run(seed) {
   const scene = new Obj();
   const traffic = await createTraffic(scene, THREE, carCount ? { count: carCount } : {});
   const transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
+  traffic.setObstacles && traffic.setObstacles(() => transit.vehicles || []); // as index.html wires it
   const roads = JSON.parse(readFileSync(join(viewerRoot, "roads.json"), "utf8")).roads;
   const tagged = roads.filter((r) => r.maxspeedKmh).length;
   const cars = traffic.cars;
@@ -49,7 +50,9 @@ async function run(seed) {
   ];
   const state = fleet.map((f) => ({ ...f, still: 0, jamRun: 0, lastPos: f.v.pos.clone(), jumps: 0, over: 0, since: 99, path: f.v.pathIndex }));
   const player = new Obj(); player.position.set(1e4, 0, 1e4);
+  if (flags.player === "spawn") player.position.set(-98.2, 1.7, -428.26);
 
+  const hidden = (s) => s.kind !== "car" && (s.v.phase === "gone" || s.v.mesh.visible === false); // off-map, waiting for a gate
   const legit = (s) => {
     const v = s.v;
     if (s.kind === "car") return v.wait === "red" || v.wait === "queue" || v.wait === "player";
@@ -59,11 +62,12 @@ async function run(seed) {
 
   let nextCp = 0;
   let movingSum = 0, movingSamples = 0, speedOver = 0;
+  const presence = { tram: 0, bus: 0, n: 0 };
   const total = Math.round(minutes * 60 / dt);
   const report = (t) => {
     const row = {};
     for (const kind of ["car", "tram", "bus"]) {
-      const group = state.filter((s) => s.kind === kind);
+      const group = state.filter((s) => s.kind === kind && !hidden(s));
       if (!group.length) continue;
       const still10 = group.filter((s) => s.still > 10);
       const still30 = group.filter((s) => s.still > 30);
@@ -73,13 +77,14 @@ async function run(seed) {
       const jam10 = group.filter((s) => s.jamRun > 10);
       const moving = group.filter((s) => speedOf(s) > 0.5).length;
       row[kind] = {
-        n: group.length, moving, still10: still10.length, still30: still30.length,
+        n: group.length,
+        of: state.filter((s) => s.kind === kind).length, moving, still10: still10.length, still30: still30.length,
         jam10: jam10.length, jam30: jam30.length,
         longest: Math.max(...group.map((s) => s.jamRun)),
       };
     }
     const fmt = Object.entries(row).map(([k, r]) =>
-      `${k} ${r.moving}/${r.n} moving, >10s still ${r.still10} (jam ${r.jam10}), >30s ${r.still30} (jam ${r.jam30}), longest ${r.longest.toFixed(0)}s jammed`).join(" | ");
+      `${k} ${r.moving}/${r.n} moving (${r.n}/${r.of} on the street), >10s still ${r.still10} (jam ${r.jam10}), >30s ${r.still30} (jam ${r.jam30}), longest ${r.longest.toFixed(0)}s jammed`).join(" | ");
     console.log(`  t=${String(t).padStart(4)}s  ${fmt}`);
   };
 
@@ -93,6 +98,7 @@ async function run(seed) {
     transit.update(dt, player);
     for (const s of state) {
       const v = s.v;
+      if (hidden(s)) { s.still = 0; s.jamRun = 0; s.lastPos.copy(v.pos); continue; }
       if (s.kind === "car" && v.pos.distanceTo(s.lastPos) > 15) carJumps++;
       s.lastPos.copy(v.pos);
       s.still = speedOf(s) < STILL ? s.still + dt : 0;
@@ -107,9 +113,20 @@ async function run(seed) {
     if (n % 30 === 0) {
       const m = cars.filter((c) => c.velocity > 0.5).length / cars.length;
       movingSum += m; movingSamples++;
+      if (t >= 60) {
+        presence.n++;
+        presence.tram += state.filter((x) => x.kind === "tram" && !hidden(x)).length;
+        presence.bus += state.filter((x) => x.kind === "bus" && !hidden(x)).length;
+      }
     }
   }
   console.log(`  worst non-legit stop: car ${worst.car.toFixed(0)}s  tram ${worst.tram.toFixed(0)}s  bus ${worst.bus.toFixed(0)}s | car respawn-jumps ${carJumps} | car speed>106%limit frames ${speedOver} | car avg moving ${pct(movingSum, movingSamples)}`);
+  const nTram = state.filter((x) => x.kind === "tram").length, nBus = state.filter((x) => x.kind === "bus").length;
+  const avgTram = presence.tram / Math.max(1, presence.n), avgBus = presence.bus / Math.max(1, presence.n);
+  console.log(`  on the street (after 60 s): trams ${avgTram.toFixed(1)}/${nTram}, buses ${avgBus.toFixed(1)}/${nBus}`);
+  // Regression guard for the recycle bug: the fleet must stay in the district, not vanish.
+  if (minutes >= 3 && nTram && avgTram < nTram * 0.5) failures.push(`seed ${seed}: only ${avgTram.toFixed(1)}/${nTram} trams on the street on average`);
+  if (minutes >= 3 && nBus && avgBus < nBus * 0.5) failures.push(`seed ${seed}: only ${avgBus.toFixed(1)}/${nBus} buses on the street on average`);
   if (worst.car > 45) failures.push(`seed ${seed}: car stopped ${worst.car.toFixed(0)}s with no legit reason`);
   if (worst.tram > 45) failures.push(`seed ${seed}: tram stopped ${worst.tram.toFixed(0)}s with no legit reason`);
   if (worst.bus > 45) failures.push(`seed ${seed}: bus stopped ${worst.bus.toFixed(0)}s with no legit reason`);

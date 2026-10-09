@@ -12,6 +12,8 @@
  * road instead of sliding through its blocker and leaving a ghost behind.
  */
 
+import { shared } from "./lanes.js";
+
 const KMH = 1 / 3.6;
 const DEFAULT_SPEED_KMH = {
   motorway: 70,
@@ -45,6 +47,7 @@ const BLOCK_RESPAWN_SEC = 8; // blocked this long by a car / crossing car -> des
 const RESPAWN_CLEARANCE = 14; // m of free space required around a respawn point
 const HALF_L = CAR_LEN * 0.5;
 const HALF_W = 0.875;
+const OBSTACLE_ZONE = HALF_W + 0.05; // a tram / bus in the neighbouring lane is not in our way
 const ZONE_HALF_W = HALF_W + 0.3; // swept corridor ahead of a car (oncoming lane stays clear of it)
 const NEXT_LOOKAHEAD = 34; // m before a junction: pick the next road early and check it is free
 const FUTURE_T = [0, 0.5, 1.0, 1.5]; // s: horizons for predicted footprint overlap
@@ -57,6 +60,8 @@ const PLAYER_STOP_DIST = 4;
 const SNAP_M = 11;
 const LANE_OFFSET = 1.15;
 const STUCK_SEC = 6;
+const MAX_STEP = 0.05; // s: largest integration step (kinematics tuned and soaked at <= 20 Hz)
+const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame
 const CYCLE_SEC = 30;
 const METERS_PER_CAR = 480;
 const MIN_CARS = 8;
@@ -484,6 +489,7 @@ function createCar(paths, THREE, parts) {
     holdEntry: false, // waiting at the end of the road for the next road's entry to clear
     ignoreSignalsUntil: 0,
     wait: "",
+    evict: false, // set by transit.js when this car keeps a tram / bus from moving
   };
 }
 
@@ -548,6 +554,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
   const parts = makeSharedParts(THREE);
 
   const cars = [];
+  shared.cars = cars;
   for (let i = 0; i < count; i++) {
     const car = createCar(paths, THREE, parts);
     let tries = 0;
@@ -569,6 +576,46 @@ export async function createTraffic(scene, THREE, opts = {}) {
 
   const playerPos = new THREE.Vector3();
   let simTime = Math.random() * cycleSec;
+
+  /** Lane centre for a vehicle heading (tx, tz) on the car road nearest (x, z); see lanes.js. */
+  function laneAt(x, z, tx, tz, out) {
+    let bestD = 4.5;
+    let found = false;
+    for (let i = 0; i < paths.length; i++) {
+      const path = paths[i];
+      const pts = path.points;
+      for (let k = 0; k < pts.length - 1; k++) {
+        const a = pts[k];
+        const b = pts[k + 1];
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const l2 = dx * dx + dz * dz;
+        if (l2 < 1e-6) continue;
+        const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2));
+        const px = a.x + dx * t;
+        const pz = a.z + dz * t;
+        const d = Math.hypot(x - px, z - pz);
+        if (d >= bestD) continue;
+        const len = Math.sqrt(l2);
+        let ux = dx / len;
+        let uz = dz / len;
+        const dot = ux * tx + uz * tz;
+        if (Math.abs(dot) < 0.7) continue;
+        if (dot < 0) {
+          ux = -ux;
+          uz = -uz;
+        }
+        const lane = path.laneOffset ?? LANE_OFFSET;
+        bestD = d;
+        out.x = px - uz * lane;
+        out.z = pz + ux * lane;
+        found = true;
+      }
+    }
+    return found;
+  }
+  shared.laneAt = laneAt;
+
   // Trams / buses are drawn by transit.js; cars give way to them via this provider.
   let obstacleProvider = null;
   const obstacleCache = [];
@@ -577,16 +624,16 @@ export async function createTraffic(scene, THREE, opts = {}) {
     const src = obstacleProvider ? obstacleProvider() : null;
     if (src) {
       for (const v of src) {
-        if (!v || !v.pos || !v.tan) continue;
+        if (!v || !v.pos || !v.tan || v.phase === "gone") continue;
         const tram = v.mode === "tram";
-        obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: v.velocity || 0, hl: tram ? 5.4 : 4.6, hw: 1.4 });
+        obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: v.velocity || 0, hl: tram ? 5.4 : 4.6, hw: tram ? 1.2 : 1.25 });
       }
     }
     return obstacleCache;
   }
 
   /** Is `o` (centre/tangent/half extents) intersecting the corridor `car` sweeps ahead? */
-  function inCorridor(car, lookahead, o) {
+  function inCorridor(car, lookahead, o, zone = ZONE_HALF_W) {
     const dx = o.pos.x - car.pos.x;
     const dz = o.pos.z - car.pos.z;
     const ahead = dx * car.tan.x + dz * car.tan.z;
@@ -598,7 +645,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     const extSide = o.hl * Math.abs(sn) + o.hw * Math.abs(c);
     if (ahead <= 0.3) return null; // beside / behind: their problem, not ours
     if (ahead - extAhead > HALF_L + lookahead) return null;
-    if (Math.abs(side) - extSide > ZONE_HALF_W) return null;
+    if (Math.abs(side) - extSide > zone) return null;
     return { gap: ahead - extAhead - HALF_L };
   }
 
@@ -773,6 +820,11 @@ export async function createTraffic(scene, THREE, opts = {}) {
     }
     for (const o of obstacleList()) {
       if (boxesOverlap(_fa.x, _fa.z, _fa.tan, HALF_L, HALF_W, o.pos.x, o.pos.z, o.tan, o.hl, o.hw, 0.1)) return o;
+      // A tram / bus rolling toward the drop point (it will be there in a second or two).
+      if (o.velocity > 0.5) {
+        const reach = o.velocity * 1.8 + 1.5;
+        if (boxesOverlap(_fa.x, _fa.z, _fa.tan, HALF_L, HALF_W, o.pos.x + o.tan.x * reach * 0.5, o.pos.z + o.tan.z * reach * 0.5, o.tan, o.hl + reach * 0.5, o.hw, 0.3)) return o;
+      }
     }
     return null;
   }
@@ -827,19 +879,37 @@ export async function createTraffic(scene, THREE, opts = {}) {
    * leader's speed so the gap re-opens instead of persisting (or shrinking) forever.
    */
   function followSpeed(leaderV, gap) {
-    return Math.max(0, leaderV * 0.95 + (gap >= 0 ? stopSpeed(gap) : gap * 1.5));
+    // Plan for the leader to brake harder than we comfortably can (a car ahead stopping for a
+    // tram / bus drops from cruise to 0 in ~1 s), so a queue forming at a halt never concertinas.
+    return Math.max(0, leaderV * 0.95 + (gap >= 0 ? Math.sqrt(2 * BRAKE * 0.65 * gap) : gap * 1.5));
   }
 
+  /**
+   * Advance by `dt` wall-clock seconds in sub-steps of at most MAX_STEP. The old update()
+   * clamped one big step to 0.05 s, so on a 10-15 fps machine the whole street (lights, queues,
+   * pulling away) ran at 40-75% speed and read as "standing still".
+   */
   function update(dt, walkObject) {
-    if (dt <= 0) return;
-    const step = Math.min(dt, 0.05);
-    simTime += step;
+    if (!(dt > 0)) return;
     if (walkObject) {
       playerPos.set(walkObject.position.x, 0, walkObject.position.z);
     }
+    const total = Math.min(dt, MAX_FRAME);
+    const n = Math.max(1, Math.ceil(total / MAX_STEP));
+    const h = total / n;
+    for (let i = 0; i < n; i++) stepSim(h, walkObject);
+  }
+
+  function stepSim(step, walkObject) {
+    simTime += step;
 
     for (let i = 0; i < cars.length; i++) {
       const car = cars[i];
+      // A tram / bus has been held up by this car for too long: it is dead weight, clear it.
+      if (car.evict) {
+        car.evict = false;
+        if (respawnCar(car, "evict")) continue;
+      }
       const roadPath = paths[car.pathIndex];
       placeCar(car, paths, THREE);
 
@@ -1010,7 +1080,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
           let hit;
           if (same) {
             // Same way: follow it like a leader.
-            hit = inCorridor(car, lookahead + 8, ob);
+            hit = inCorridor(car, lookahead + 8, ob, OBSTACLE_ZONE);
             if (!hit) continue;
             const safe = followSpeed(ob.velocity * 0.95, hit.gap - STANDSTILL_GAP);
             if (safe < desire) {
@@ -1027,7 +1097,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
             hl: ob.hl + reach * 0.5,
             hw: ob.hw,
           };
-          hit = inCorridor(car, lookahead + 2, swept);
+          hit = inCorridor(car, lookahead + 2, swept, OBSTACLE_ZONE);
           if (!hit) continue;
           const safe = stopSpeed(hit.gap - 1.5);
           if (safe < desire) {
