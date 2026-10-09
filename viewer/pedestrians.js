@@ -122,8 +122,12 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     return group;
   }
 
-  function makeMixamoHumanoid(profile, groupId, memberIdx) {
-    const tmpl = templates[(Math.random() * templates.length) | 0];
+  function makeMixamoHumanoid(profile, groupId, memberIdx, preferIdx) {
+    // Prefer a distinct character per group member so couples don't look like ghosts.
+    const tmpl =
+      templates.length > 1 && preferIdx != null
+        ? templates[preferIdx % templates.length]
+        : templates[(Math.random() * templates.length) | 0];
     const root = cloneSkeleton(tmpl.scene);
     root.traverse((o) => {
       if (o.isMesh) {
@@ -160,7 +164,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   }
 
   function makeHumanoid(profile, groupId, memberIdx) {
-    if (useMixamo) return makeMixamoHumanoid(profile, groupId, memberIdx);
+    if (useMixamo) return makeMixamoHumanoid(profile, groupId, memberIdx, groupId * 3 + memberIdx);
     return makeProceduralHumanoid(profile, groupId, memberIdx);
   }
 
@@ -263,14 +267,17 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     const rLen = routeLength(route);
     const startS = Math.random() * Math.max(1, rLen - 4);
     const dir = Math.random() < 0.5 ? 1 : -1;
-    // Small lateral offset on the pavement (not into the carriageway).
-    const side = (Math.random() < 0.5 ? -1 : 1) * (0.1 + Math.random() * LATERAL_M);
+    // Pavement lane: group centre, then fan members slightly so they don't stack.
+    const side0 = (Math.random() < 0.5 ? -1 : 1) * (0.1 + Math.random() * LATERAL_M);
+    const nMem = prof.members.length;
 
     const members = [];
-    for (let mi = 0; mi < prof.members.length; mi++) {
+    for (let mi = 0; mi < nMem; mi++) {
       const mProf = prof.members[mi];
       const mesh = makeHumanoid(mProf, groups.length, mi);
-      const offset = (mi * prof.spread) / (prof.members.length - 1 || 1) - prof.spread * 0.5;
+      // ``spread`` is metres of path separation (was wrongly scaled by 0.12 → ghost stacks).
+      const along = nMem > 1 ? (mi * prof.spread) / (nMem - 1) - prof.spread * 0.5 : 0;
+      const side = side0 + (nMem > 1 ? (mi - (nMem - 1) * 0.5) * 0.22 : 0);
       const speed = WALK_SPEED * (0.85 + Math.random() * 0.3);
       if (mesh.userData.action) {
         mesh.userData.action.setEffectiveTimeScale(speed / WALK_SPEED);
@@ -278,9 +285,9 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       members.push({
         mesh,
         routeIdx: routes.indexOf(route) >= 0 ? walkRoutes.indexOf(route) : 0,
-        s: startS + offset * 0.12,
+        s: startS + along,
         dir,
-        side,
+        side: Math.max(-0.55, Math.min(0.55, side)),
         phase: Math.random() * Math.PI * 2,
         speed,
         prof: mProf,
