@@ -458,6 +458,30 @@ export async function createShops(scene, THREE, opts = {}) {
 
   let glow = 0;
   let lastKey = "";
+  let captionId = null;
+
+  /** Nearest named shopfront for GTA-style captions (no facing required). */
+  function locateShop(x, z, hour, day) {
+    let best = null;
+    let bestD = REACH;
+    for (const r of records) {
+      if (!r.name) continue;
+      const d = Math.hypot(r.fx - x, r.fz - z);
+      if (d > bestD) continue;
+      best = r;
+      bestD = d;
+    }
+    const id = best ? best.id : null;
+    const changed = id !== captionId;
+    captionId = id;
+    return {
+      shop: best,
+      changed,
+      subtitle: best
+        ? `${prettyKind(best.kind)} · ${hoursLine(best.hours, day, hour)}`
+        : "",
+    };
+  }
 
   function refresh(day, hour) {
     let changed = false;
@@ -502,6 +526,7 @@ export async function createShops(scene, THREE, opts = {}) {
       fMat.emissiveIntensity = 0.12 + 0.95 * g;
       paintPools();
     },
+    locateShop,
     /** Name + open state for the shopfront the player is facing, or null. */
     getPrompt(p, hour, day) {
       let best = null;
