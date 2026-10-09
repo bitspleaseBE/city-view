@@ -9,6 +9,7 @@ export function createMinimap(THREE, opts = {}) {
   const BOUNDS = opts.playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 };
   const SPAWN = opts.spawnCenter || { x: -218.5, z: -432.1 };
   const ROADS_URL = opts.roadsUrl || "./roads.json";
+  const TRANSIT_URL = opts.transitUrl || "./transit.json";
 
   const width = opts.width || SIZE;
   const height = opts.height || SIZE;
@@ -135,6 +136,51 @@ export function createMinimap(THREE, opts = {}) {
     ctx2d.setLineDash([]);
   }
 
+  /** De Lijn tram (yellow) / bus (blue) routes + halt dots from transit.json. */
+  async function paintTransitLayer(ctx2d, mapPoint, opts = {}) {
+    const tramW = opts.tramW ?? 2.2;
+    const busW = opts.busW ?? 1.4;
+    const stopR = opts.stopR ?? 3;
+    try {
+      const res = await fetch(TRANSIT_URL);
+      if (!res.ok) return;
+      const data = await res.json();
+      ctx2d.lineCap = "round";
+      ctx2d.lineJoin = "round";
+      for (const path of data.paths || []) {
+        const pts = path.points || [];
+        if (pts.length < 2) continue;
+        const tram = (path.mode || "") === "tram";
+        ctx2d.strokeStyle = tram ? "rgba(255,216,0,0.55)" : "rgba(0,159,227,0.4)";
+        ctx2d.lineWidth = tram ? tramW : busW;
+        ctx2d.beginPath();
+        for (let k = 0; k < pts.length; k++) {
+          const p = pts[k];
+          const px = Array.isArray(p) ? p[0] : p.x || 0;
+          const py = Array.isArray(p) ? p[1] : p.y || 0;
+          const pix = mapPoint(px, -py);
+          if (k === 0) ctx2d.moveTo(pix.u, pix.v);
+          else ctx2d.lineTo(pix.u, pix.v);
+        }
+        ctx2d.stroke();
+      }
+      for (const st of data.stops || []) {
+        if (!Number.isFinite(st.x) || !Number.isFinite(st.y)) continue;
+        const pix = mapPoint(st.x, -st.y);
+        const tram = (st.mode || "") === "tram";
+        ctx2d.fillStyle = tram ? "#ffd800" : "#009fe3";
+        ctx2d.beginPath();
+        ctx2d.arc(pix.u, pix.v, stopR, 0, Math.PI * 2);
+        ctx2d.fill();
+        ctx2d.strokeStyle = "rgba(0,0,0,0.35)";
+        ctx2d.lineWidth = 1;
+        ctx2d.stroke();
+      }
+    } catch {
+      console.warn("Minimap: transit layer unavailable");
+    }
+  }
+
   async function loadRoads() {
     try {
       const res = await fetch(ROADS_URL);
@@ -160,12 +206,16 @@ export function createMinimap(THREE, opts = {}) {
         bgCtx.stroke();
       }
       paintWalkLayer(bgCtx, data.walks || []);
-      // Spawn marker
+      await paintTransitLayer(bgCtx, (x, z) => toPixel(x, z));
+      // Spawn marker (white ring so it doesn't read as a tram halt)
       const sp = toPixel(SPAWN.x, SPAWN.z);
-      bgCtx.fillStyle = "#ffd800";
+      bgCtx.fillStyle = "#ffffff";
       bgCtx.beginPath();
-      bgCtx.arc(sp.u, sp.v, 4, 0, Math.PI * 2);
+      bgCtx.arc(sp.u, sp.v, 4.5, 0, Math.PI * 2);
       bgCtx.fill();
+      bgCtx.strokeStyle = "#1a1a1a";
+      bgCtx.lineWidth = 1.5;
+      bgCtx.stroke();
       bgReady = true;
     } catch (e) {
       console.warn("Minimap: could not load roads");
@@ -367,6 +417,14 @@ export function createMinimap(THREE, opts = {}) {
         hctx.stroke();
         if (cross) hctx.setLineDash([]);
       }
+      await paintTransitLayer(
+        hctx,
+        (x, z) => {
+          const [u, v] = toHi(x, z);
+          return { u, v };
+        },
+        { tramW: 2.4 * hiScale, busW: 1.5 * hiScale, stopR: 2.2 * hiScale },
+      );
     } catch {
       console.warn("Minimap: radar roads unavailable");
     }
