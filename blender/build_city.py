@@ -1565,6 +1565,13 @@ def add_street_facade(
             openings,
         )
 
+    # Tile brick/stone/plaster — without UVs textured walls read as flat muddy colour.
+    bm.normal_update()
+    uv_layer = bm.loops.layers.uv.verify()
+    _base = style_name.split("__v")[0]
+    tile_m = float(facade_kit.WALL_TILES[facade_kit.wall_tile_for_type(_base, TYPES_DOC)]["tile_m"])
+    apply_planar_uvs(list(bm.faces), uv_layer, tile_m)
+
     bm.to_mesh(mesh)
     bm.free()
     mesh.update()
@@ -1698,7 +1705,7 @@ def add_landmark_photo_quad(
     crop: list[float],
     proud: float = 0.35,
 ) -> None:
-    """Thin photo plane on one street wall (hospitals). Prefer ``add_church_photo_face`` for churches."""
+    """Thin photo plane on one street wall (hospitals only — churches never use photos)."""
     x0, y0 = p0
     x1, y1 = p1
     length = math.hypot(x1 - x0, y1 - y0)
@@ -1734,18 +1741,16 @@ def add_landmark_photo_quad(
     link(bpy.data.objects.new(name, mesh))
 
 
-def add_church_photo_face(
+def add_church_west_front(
     name: str,
     p0: list[float],
     p1: list[float],
     outward: list[float],
     facade_h: float,
-    photo_path: Path,
-    crop: list[float],
     church_mats: dict,
-    thickness: float = 0.95,
+    thickness: float = 1.15,
 ) -> None:
-    """Thick street elevation: photo on the front face, brick/stone on the volume sides."""
+    """Mesh-only street elevation (Heilige Geest west front) — brick/stone/glass, no photo."""
     x0, y0 = p0
     x1, y1 = p1
     length = math.hypot(x1 - x0, y1 - y0)
@@ -1757,81 +1762,107 @@ def add_church_photo_face(
     yaw = math.atan2(y1 - y0, x1 - x0)
     ux, uy = math.cos(yaw), math.sin(yaw)
     mx, my = (x0 + x1) * 0.5, (y0 + y1) * 0.5
-    # Centre of the slab sits half-thickness proud of the extruded ring face.
-    cx = mx + nx * (thickness * 0.5 + 0.08)
-    cy = my + ny * (thickness * 0.5 + 0.08)
-    photo = photo_material_cropped(f"{name}_photo", photo_path, crop)
-    brick = church_mats["brick"]
-    stone = church_mats["stone"]
+    cx = mx + nx * (thickness * 0.5 + 0.06)
+    cy = my + ny * (thickness * 0.5 + 0.06)
     mesh = bpy.data.meshes.new(name)
-    mesh.materials.append(photo)   # 0
-    mesh.materials.append(brick)   # 1
-    mesh.materials.append(stone)   # 2
+    mesh.materials.append(church_mats["brick"])   # 0
+    mesh.materials.append(church_mats["stone"])   # 1
+    mesh.materials.append(church_mats["glass"])   # 2
+    mesh.materials.append(church_mats["portal"])  # 3
     bm = bmesh.new()
-    uv_layer = bm.loops.layers.uv.verify()
-    half = length * 0.985 * 0.5
-    rightwards = (uy * nx - ux * ny) > 0
-    # Solid mass so sides/top read as brick depth next to townhouses.
-    _append_box(bm, cx, cy, facade_h * 0.5, length * 0.985, thickness, facade_h, yaw, 1)
-    # Stone plinth along the street face
+    # Main brick wall mass (proud of the extruded ring).
+    _append_box(bm, cx, cy, facade_h * 0.5, length * 0.985, thickness, facade_h, yaw, 0)
+    # Stone plinth
+    _append_box(
+        bm,
+        mx + nx * (thickness * 0.55 + 0.06),
+        my + ny * (thickness * 0.55 + 0.06),
+        0.7,
+        length * 0.99,
+        thickness * 0.75,
+        1.4,
+        yaw,
+        1,
+    )
+    # Horizontal stone string courses
+    for zf in (0.32, 0.58, 0.82):
+        _append_box(
+            bm,
+            mx + nx * (thickness * 0.55 + 0.08),
+            my + ny * (thickness * 0.55 + 0.08),
+            facade_h * zf,
+            length * 0.98,
+            0.22,
+            0.2,
+            yaw,
+            1,
+        )
+    # Shoulder gable over the central bay
+    gable_w = min(length * 0.52, max(5.5, length * 0.4))
+    gable_h = min(5.8, max(3.4, facade_h * 0.26))
+    gx = mx + nx * (thickness * 0.48 + 0.05)
+    gy = my + ny * (thickness * 0.48 + 0.05)
+    _append_box(bm, gx, gy, facade_h + gable_h * 0.42, gable_w, thickness * 0.9, gable_h, yaw, 0)
+    # Stone coping + peak cross stub
     _append_box(
         bm,
         mx + nx * (thickness * 0.55 + 0.08),
         my + ny * (thickness * 0.55 + 0.08),
-        0.55,
-        length * 0.99,
-        thickness * 0.7,
-        1.1,
-        yaw,
-        2,
-    )
-    # Photo sits on the street face of that slab.
-    ox, oy = mx + nx * (thickness + 0.1), my + ny * (thickness + 0.1)
-
-    def corner(a, z):
-        return (ox + ux * a, oy + uy * a, z)
-
-    pts = [corner(-half, 0.04), corner(half, 0.04), corner(half, facade_h), corner(-half, facade_h)]
-    uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
-    if not rightwards:
-        pts = [pts[1], pts[0], pts[3], pts[2]]
-        uvs = [(1.0, 0.0), (0.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
-    _append_photo_quad(bm, uv_layer, pts, uvs, 0)
-    # Shoulder gable peak so the west front reads as a church, not a flat box.
-    gable_w = min(length * 0.55, max(6.0, length * 0.42))
-    gable_h = min(5.5, max(3.2, facade_h * 0.22))
-    _append_box(
-        bm,
-        mx + nx * (thickness * 0.45 + 0.05),
-        my + ny * (thickness * 0.45 + 0.05),
-        facade_h + gable_h * 0.45,
-        gable_w,
-        thickness * 0.85,
-        gable_h,
+        facade_h + gable_h + 0.12,
+        gable_w * 1.06,
+        0.32,
+        0.26,
         yaw,
         1,
     )
-    # Stone coping on the gable
     _append_box(
         bm,
-        mx + nx * (thickness * 0.5 + 0.08),
-        my + ny * (thickness * 0.5 + 0.08),
-        facade_h + gable_h + 0.15,
-        gable_w * 1.05,
-        0.35,
-        0.28,
+        mx + nx * (thickness * 0.5),
+        my + ny * (thickness * 0.5),
+        facade_h + gable_h + 0.85,
+        0.22,
+        0.22,
+        1.1,
         yaw,
-        2,
+        1,
     )
-    bm.normal_update()
-    apply_planar_uvs(
-        [f for f in bm.faces if f.material_index != 0],
-        uv_layer,
-        float(church_mats["brick_tile_m"]),
-    )
+    # Corbel-table frieze under the gable (row of small stone arches)
+    fringe_z = facade_h - 0.35
+    n_corbels = max(5, int(gable_w / 0.85))
+    for i in range(n_corbels):
+        t = (i + 0.5) / n_corbels - 0.5
+        _append_box(
+            bm,
+            mx + ux * t * gable_w + nx * (thickness * 0.62),
+            my + uy * t * gable_w + ny * (thickness * 0.62),
+            fringe_z,
+            0.55,
+            0.28,
+            0.45,
+            yaw,
+            1,
+        )
+    # Triple arched window bank (central taller) — neo-Romanesque west front
+    win_z = facade_h * 0.55
+    for side, scale in ((-1.0, 0.85), (0.0, 1.0), (1.0, 0.85)):
+        ww = length * 0.09 * scale
+        wh = facade_h * 0.28 * scale
+        wx = mx + ux * side * length * 0.14 + nx * (thickness * 0.55 + 0.12)
+        wy = my + uy * side * length * 0.14 + ny * (thickness * 0.55 + 0.12)
+        # Stone surround
+        _append_box(bm, wx - nx * 0.08, wy - ny * 0.08, win_z, ww * 1.35, 0.35, wh * 1.2, yaw, 1)
+        # Glass recess
+        _append_box(bm, wx + nx * 0.05, wy + ny * 0.05, win_z, ww, 0.22, wh, yaw, 2)
+        # Mullion
+        _append_box(bm, wx + nx * 0.08, wy + ny * 0.08, win_z, 0.1, 0.12, wh * 0.92, yaw, 3)
+    # Small oculi in the gable
+    for side in (-1.0, 1.0):
+        ox = mx + ux * side * gable_w * 0.22 + nx * (thickness * 0.55)
+        oy = my + uy * side * gable_w * 0.22 + ny * (thickness * 0.55)
+        _append_box(bm, ox, oy, facade_h + gable_h * 0.45, 0.7, 0.25, 0.7, yaw, 2)
     bm.to_mesh(mesh)
     bm.free()
-    mesh.update()
+    _uv_mesh_faces(mesh, float(church_mats["brick_tile_m"]))
     link(bpy.data.objects.new(name, mesh))
 
 
@@ -2150,7 +2181,7 @@ def add_church_tower(
     cy = sum(p[1] for p in ring) / len(ring)
     along = 0.14 if tower_left else 0.5
     if p0 is not None:
-        # Sit the shaft just inside the extruded footprint (behind the photo face).
+        # Sit the shaft just inside the extruded footprint / west-front mass.
         tx = p0[0] + ux * (elen * along) - nx * (tw * 0.42)
         ty = p0[1] + uy * (elen * along) - ny * (tw * 0.42)
     else:
@@ -2418,8 +2449,8 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     landmark = bldg.get("landmark") or {}
     massing = str(landmark.get("massing") or f"{type_id}_default")
     photo_path = resolve_landmark_photo(landmark, LANDMARKS_DIR) if landmark.get("photo") else None
-    # Churches: extruded OSM mass + pitched roof + tower/turret. Landmark photos dress a
-    # thick street-elevation face — never a free-standing silhouette billboard.
+    # Churches: extruded OSM mass + pitched roof + tower/turret + mesh west front.
+    # No facade photographs — recognition comes from geometry + tiling brick/stone/slate.
     body_h = max(2.5, eaves)
     church_mats = mats.get("church") or {}
     if type_id == "church":
@@ -2474,8 +2505,8 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
             detail = "simple"
     primary = _primary_street_edge(bldg, ring, spawn_xy)
 
-    # Landmark churches/hospitals keep tower + photo elevation even when far — the
-    # skyline and street recognition matter more than LOD savings on a handful of sites.
+    # Landmark churches/hospitals keep tower + street detail even when far — skyline
+    # recognition matters more than LOD savings on a handful of sites.
     if type_id in {"church", "hospital"}:
         if detail not in {"full", "simple"}:
             detail = "simple"
@@ -2486,6 +2517,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
 
     if type_id in {"church", "hospital"} and detail in {"full", "simple"}:
         trim = mats["trim"].get(style_name) or mats["trim"].get(type_id) or mats["trim"]["eclectic"]
+        skip_primary_facade = False
         if type_id == "church":
             cm = church_mats or {
                 "brick": wall,
@@ -2500,35 +2532,33 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
                 "slate_tile_m": 1.8,
             }
             add_church_tower(name, ring, body_h, massing, cm, primary)
-            if detail == "full":
-                add_church_entrance(name, ring, body_h, cm, primary)
-        else:
-            add_hospital_extras(name, ring, body_h, wall, trim, primary)
-        # Photo dresses a thick street face (churches + hospitals). Never a free-standing
-        # silhouette billboard taller than the extruded mass.
-        photo_on_primary = False
-        if photo_path is not None and primary is not None and detail == "full":
-            i0, i1 = int(primary["i0"]), int(primary["i1"])
-            p0, p1 = ring[i0], ring[i1]
-            edge_len = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
-            nx, ny = primary.get("outward") or [0.0, 1.0]
-            crop = landmark.get("crop") or [0.0, 0.0, 1.0, 1.0]
-            aspect = _landmark_crop_aspect(crop)
-            if type_id == "church":
-                # Clamp to nave height so the spire stays real 3D geometry above.
-                facade_h = min(body_h * 1.08, max(body_h, edge_len / max(aspect, 0.35) * 0.55))
-                add_church_photo_face(
-                    f"{name}_landmark",
+            # Portal + west front always — churches are landmarks, not LOD1 boxes.
+            add_church_entrance(name, ring, body_h, cm, primary)
+            # Mesh-only west front (brick / stone / glass) — NEVER a facade photograph.
+            if primary is not None:
+                i0, i1 = int(primary["i0"]), int(primary["i1"])
+                p0, p1 = ring[i0], ring[i1]
+                nx, ny = primary.get("outward") or [0.0, 1.0]
+                add_church_west_front(
+                    f"{name}_front",
                     p0,
                     p1,
                     [nx, ny],
-                    facade_h,
-                    photo_path,
-                    crop,
+                    body_h,
                     cm,
-                    thickness=1.05,
+                    thickness=1.15,
                 )
-            else:
+                skip_primary_facade = True
+        else:
+            add_hospital_extras(name, ring, body_h, wall, trim, primary)
+            # Hospitals may still dress one street wall with a photo.
+            if photo_path is not None and primary is not None and detail == "full":
+                i0, i1 = int(primary["i0"]), int(primary["i1"])
+                p0, p1 = ring[i0], ring[i1]
+                edge_len = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+                nx, ny = primary.get("outward") or [0.0, 1.0]
+                crop = landmark.get("crop") or [0.0, 0.0, 1.0, 1.0]
+                aspect = _landmark_crop_aspect(crop)
                 facade_h = min(48.0, max(body_h, edge_len / max(aspect, 0.2)))
                 add_landmark_photo_quad(
                     f"{name}_landmark",
@@ -2540,14 +2570,16 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
                     crop,
                     proud=0.28,
                 )
-            photo_on_primary = True
+                skip_primary_facade = True
         for ei, edge in enumerate(bldg.get("street_edges") or []):
-            if photo_on_primary and edge is primary:
+            if skip_primary_facade and edge is primary:
                 continue
             i0 = int(edge["i0"])
             i1 = int(edge["i1"])
             if i0 >= len(ring) or i1 >= len(ring):
                 continue
+            # Churches force the textured church brick wall mat on procedural sides.
+            side_style = "church" if type_id == "church" and "church" in mats["wall"] else style_name
             add_street_facade(
                 f"{name}_facade{ei}",
                 ring[i0],
@@ -2555,7 +2587,7 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
                 edge.get("outward") or [0.0, 1.0],
                 body_h,
                 max(3, min(5, floors)) if type_id == "church" else floors,
-                style_name,
+                side_style,
                 mats,
                 detail=detail,
                 window_kind="arch" if type_id == "church" else window_kind,
