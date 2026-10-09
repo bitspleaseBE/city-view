@@ -396,7 +396,8 @@
             if (done) break;
             chunks.push(value);
             got += value.length;
-            const f = total && got <= total ? got / total : 1 - Math.exp(-got / 55e6);
+            // ~36 MB Meshopt city; asymptotic fallback when Content-Length is missing/wrong.
+            const f = total && got <= total ? got / total : 1 - Math.exp(-got / 36e6);
             window.__loading.set(f * 0.8, "Fetching the streets");
           }
           const buf = new Uint8Array(got);
@@ -439,6 +440,7 @@
     <script type="module">
       import * as THREE from "three";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
       import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
       import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
       import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
@@ -446,6 +448,7 @@
       import { createTransit } from "./transit.js";
       import { createPedestrians } from "./pedestrians.js";
       import { createMicromobility } from "./micromobility.js";
+      import { preloadCharacters, onCharacterProgress } from "./characters.js";
       import { createVelo } from "./velo.js";
       import { createScooters } from "./scooters.js";
       import { createShops } from "./shops.js";
@@ -1357,6 +1360,8 @@
       }
 
       const loader = new GLTFLoader();
+      // City GLB is Meshopt-compressed (scripts/compress_glb.mjs); decoder is WASM.
+      loader.setMeshoptDecoder(MeshoptDecoder);
       // Hidden tabs never fire rAF; the timeout keeps loading moving in the background.
       const nextFrame = () =>
         new Promise((r) => {
@@ -1540,6 +1545,7 @@
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
           setLoad(0.94, "Starting traffic and trams");
+          const stopCharProgress = onCharacterProgress((f) => setLoad(0.94 + 0.03 * f, "Bringing people outside"));
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
@@ -1553,6 +1559,7 @@
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
           micromobility = await createMicromobility(scene, THREE, { count: 28 });
+          stopCharProgress();
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
@@ -1626,8 +1633,11 @@
         try {
           setLoad(0, "Fetching the streets");
           const buf = await window.__glbPromise;
+          // Not earlier: during the city download the characters would only steal its bandwidth.
+          preloadCharacters();
           setLoad(0.82, "Unpacking the streets");
           await nextFrame();
+          await MeshoptDecoder.ready;
           const gltf = await loader.parseAsync(buf, "./");
           await onCityLoaded(gltf);
         } catch (err) {

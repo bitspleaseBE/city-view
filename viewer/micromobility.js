@@ -3,8 +3,8 @@
  * Ride kerb-side on driveable OSM roads (cycleway export not required).
  * Procedural vehicle meshes + Mixamo riders (Riding / Scooter clips).
  */
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
+import { loadCharacterTemplates } from "./characters.js";
 
 const KMH = 1 / 3.6;
 const SNAP_M = 14;
@@ -46,22 +46,6 @@ function addBikeLights(THREE, g, frontZ, rearZ, y = 0.55) {
   back.position.set(0, y - 0.05, rearZ);
   g.add(head, back);
 }
-
-const RIDING_FILES = [
-  "Remy_Riding.glb",
-  "Amy_Riding.glb",
-  "James_Riding.glb",
-  "Michelle_Riding.glb",
-  "Aj_Riding.glb",
-];
-
-const SCOOTER_FILES = [
-  "Remy_Scooter.glb",
-  "Amy_Scooter.glb",
-  "James_Scooter.glb",
-  "Michelle_Scooter.glb",
-  "Aj_Scooter.glb",
-];
 
 const DRIVEABLE = new Set([
   "motorway",
@@ -407,29 +391,6 @@ function buildHandoffs(paths, THREE) {
   return links;
 }
 
-async function loadRiderTemplates(files) {
-  const loader = new GLTFLoader();
-  const base = new URL("./characters/", import.meta.url);
-  const out = [];
-  await Promise.all(
-    files.map(async (file) => {
-      try {
-        const url = new URL(file, base).href;
-        const gltf = await loader.loadAsync(url);
-        gltf.scene.traverse((o) => {
-          if (o.isMesh) {
-            o.castShadow = true;
-            o.receiveShadow = true;
-          }
-        });
-        out.push({ name: file, scene: gltf.scene, clips: gltf.animations || [] });
-      } catch (err) {
-        console.warn(`[cityview] rider load failed: ${file}`, err);
-      }
-    })
-  );
-  return out;
-}
 
 export async function createMicromobility(scene, THREE, opts = {}) {
   const COUNT = opts.count ?? 28;
@@ -453,8 +414,8 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   }
 
   const [rideTemplates, scooterTemplates] = await Promise.all([
-    loadRiderTemplates(RIDING_FILES),
-    loadRiderTemplates(SCOOTER_FILES),
+    loadCharacterTemplates("Riding"),
+    loadCharacterTemplates("Scooter"),
   ]);
 
   const handoffs = buildHandoffs(paths, THREE);

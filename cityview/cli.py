@@ -53,6 +53,26 @@ def blender_bin() -> Path:
     return DEFAULT_BLENDER
 
 
+
+def compress_viewer_glb(path: Path) -> None:
+    """Meshopt-compress a GLB in place for faster Pages downloads (no-op if Node missing)."""
+    if not path.exists():
+        return
+    if os.environ.get("CITYVIEW_SKIP_COMPRESS", "").strip() in {"1", "true", "yes"}:
+        print(f"Skipping Meshopt compress ({path.name}): CITYVIEW_SKIP_COMPRESS set")
+        return
+    script = ROOT / "scripts" / "compress_glb.mjs"
+    if not script.exists():
+        print(f"Skipping Meshopt compress: missing {script}")
+        return
+    node = shutil.which("node")
+    if not node:
+        print(f"Skipping Meshopt compress ({path.name}): node not on PATH")
+        return
+    print(f"Compressing {path} …")
+    subprocess.run([node, str(script), str(path)], check=True, cwd=ROOT)
+
+
 def run_blender(job_path: Path, script: Path) -> None:
     binary = blender_bin()
     if not binary.exists():
@@ -103,6 +123,7 @@ def build_command(args: argparse.Namespace) -> int:
         dest = VIEWER / "antwerp_street.glb"
         shutil.copy2(glb, dest)
         print(f"Copied {glb} -> {dest}")
+        compress_viewer_glb(dest)
     print(f"Outputs in {output_dir}")
     return 0
 
@@ -242,6 +263,9 @@ def city_command(args: argparse.Namespace) -> int:
             hero = VIEWER / "klein_antwerpen.glb"
             shutil.copy2(glb, hero)
             print(f"Copied {glb} -> {hero}")
+        compress_viewer_glb(VIEWER / viewer_glb)
+        if viewer_glb != "klein_antwerpen.glb" and style_policy == "historic":
+            compress_viewer_glb(VIEWER / "klein_antwerpen.glb")
     if spawn:
         spawn_path = VIEWER / "spawn.json"
         spawn_path.write_text(json.dumps(spawn, indent=2) + "\n")

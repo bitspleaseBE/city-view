@@ -49,16 +49,40 @@ jobs:
           /opt/blender/blender --version
 
       - name: Build Klein Antwerpen district
+        env:
+          # Compress in the next step so the log shows before/after sizes clearly.
+          CITYVIEW_SKIP_COMPRESS: "1"
         run: |
           test -f assets/osm/harmonie.json
           python3 -m cityview city --place klein-antwerpen --no-render
           test -f viewer/klein_antwerpen.glb
           ls -lh viewer/klein_antwerpen.glb output/antwerp_harmonie.glb
 
+      - name: Meshopt-compress city GLB
+        run: |
+          ls -lh viewer/klein_antwerpen.glb
+          node scripts/compress_glb.mjs viewer/klein_antwerpen.glb
+          ls -lh viewer/klein_antwerpen.glb
+          python3 - <<'PY'
+          import json, struct
+          from pathlib import Path
+          p = Path("viewer/klein_antwerpen.glb")
+          d = p.read_bytes()
+          l = struct.unpack("<I", d[12:16])[0]
+          j = json.loads(d[20 : 20 + l])
+          assert "EXT_meshopt_compression" in (j.get("extensionsUsed") or []), j.get("extensionsUsed")
+          assert any(n.get("name") == "HumanSpawn" for n in j["nodes"]), "HumanSpawn missing after compress"
+          print("meshopt ok; HumanSpawn present; lamps",
+                sum(1 for n in j["nodes"] if (n.get("name") or "").startswith("lamp_h_")))
+          PY
+
       - name: Verify façade photo textures are inside the GLB
         run: |
           test -f assets/textures/facade_atlas.jpg
           python3 scripts/inspect_glb_textures.py viewer/klein_antwerpen.glb
+
+      - name: Extract rider animation clips
+        run: python3 scripts/extract_anim_clips.py
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

@@ -8,9 +8,13 @@ dist/
 build/
 output/
 viewer/*.glb
+viewer/*.premeshopt.glb
 !viewer/characters/
 !viewer/characters/*.glb
+!viewer/characters/clips/
+!viewer/characters/clips/*.glb
 viewer/characters/*.fbx
+scripts/node_modules/
 # Cache most OSM downloads; commit Harmonie for reproducible Pages builds.
 assets/osm/*
 !assets/osm/harmonie.json
