@@ -7,6 +7,7 @@
 
 const VELO_URL = "./velo.json";
 const BOARD_DIST = 4.0; // m to the rail (not only the centre point)
+const CAPTION_DIST = 6.0; // slightly wider for GTA-style area captions
 const BIKE_SPEED = 8.6; // ~31 km/h cruise (MOVE.velo.speed); the viewer owns acceleration
 const FRAME_RED = 0xc41e3a;
 const MUDGUARD = 0xf5f2ec;
@@ -232,13 +233,24 @@ export async function createVelo(scene, THREE) {
   let toast = "";
   let toastT = 0;
 
-  function nearestStation(px, pz) {
+  function nearestStation(px, pz, reach = BOARD_DIST) {
     let best = null;
     for (const st of stations) {
       const d = distToRail(st, px, pz);
-      if (d <= BOARD_DIST && (best == null || d < best.d)) best = { st, d };
+      if (d <= reach && (best == null || d < best.d)) best = { st, d };
     }
     return best;
+  }
+
+  let captionId = null;
+  /** Nearest dock for area captions; `{ station, changed }`. */
+  function locateStation(px, pz) {
+    const hit = nearestStation(px, pz, CAPTION_DIST);
+    const st = hit?.st ?? null;
+    const id = st ? st.id : null;
+    const changed = id !== captionId;
+    captionId = id;
+    return { station: st, changed };
   }
 
   function nearestParked(px, pz, reach = 2.8) {
@@ -446,6 +458,7 @@ export async function createVelo(scene, THREE) {
     tryInteract,
     getRideHud,
     getPrompt,
+    locateStation,
     update,
     setNight,
     dispose,
