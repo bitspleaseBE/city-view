@@ -8,20 +8,25 @@ const REACH_M = 28;
 
 export async function createLandmarkLocator(opts = {}) {
   const reach = opts.reach ?? REACH_M;
-  const reach2 = reach * reach;
   let pois = [];
   try {
     const res = await fetch(LANDMARKS_URL);
     if (res.ok) {
       const data = await res.json();
-      pois = (data.landmarks || []).map((p) => ({
-        id: String(p.id),
-        name: p.name,
-        kind: p.kind || "landmark",
-        x: Number(p.x),
-        z: -Number(p.y),
-        r2: reach2,
-      })).filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z) && p.name);
+      pois = (data.landmarks || [])
+        .map((p) => {
+          const r = Number(p.reach);
+          const rr = Number.isFinite(r) && r > 0 ? r : reach;
+          return {
+            id: String(p.id),
+            name: p.name,
+            kind: p.kind || "landmark",
+            x: Number(p.x),
+            z: -Number(p.y),
+            r2: rr * rr,
+          };
+        })
+        .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z) && p.name);
     }
   } catch {
     console.warn("[cityview] landmarks: could not load landmarks.json");

@@ -52,6 +52,14 @@
       "kind": "memorial",
       "x": -5.0,
       "y": 62.0
+    },
+    {
+      "id": "501410385",
+      "name": "Heilige Geestkerk",
+      "kind": "church",
+      "x": -45.45,
+      "y": 450.89,
+      "reach": 60
     }
   ]
 }
