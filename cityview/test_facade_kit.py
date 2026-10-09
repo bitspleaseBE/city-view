@@ -57,6 +57,35 @@ class FacadeKitTests(unittest.TestCase):
         self.assertGreaterEqual(q["uv"][0], full[0] - 1e-9)
         self.assertLessEqual(q["uv"][2], full[2] + 1e-9)
 
+    def test_narrow_crop_does_not_bisect_doors(self):
+        """Gounodstraat townhouses often have 3–5 m street edges; a random left/right
+        crop used to cut facade_26's arched door (and its left window bay) in half."""
+        for seed in range(40):
+            for length in (3.0, 3.8, 5.0, 5.5):
+                for type_id in ("neoclassical", "art-nouveau", "eclectic"):
+                    quads = kit.plan_facade_quads(length, 9.6, 3, type_id, seed=seed)
+                    for q in kit.ground_quads(quads):
+                        cu0, _cv0, cu1, _cv1 = kit.cell_uv_rect(q["cell"])
+                        u0, _v0, u1, _v1 = q["uv"]
+                        span = cu1 - cu0
+                        f0, f1 = (u0 - cu0) / span, (u1 - cu0) / span
+                        for lo, hi in kit._door_spans(q["cell"]):
+                            self.assertFalse(
+                                kit._edge_cuts(f0, lo, hi) or kit._edge_cuts(f1, lo, hi),
+                                (q["cell"], seed, length, (f0, f1), (lo, hi)),
+                            )
+
+    def test_gounod_tan_arch_facade_keeps_door_whole_on_narrow_edge(self):
+        # facade_26 is the tan stone elevation with the left arched door seen on Gounod.
+        f0, f1 = kit.choose_crop_span("facade_26", 0.64, "gounod:facade_26")
+        door_c, door_w = kit.DOORS["facade_26"]
+        door_lo, door_hi = door_c - door_w * 0.5, door_c + door_w * 0.5
+        self.assertFalse(kit._edge_cuts(f0, door_lo, door_hi))
+        self.assertFalse(kit._edge_cuts(f1, door_lo, door_hi))
+        # Whole arch in frame (preferred) — the slice starts at the door's left.
+        self.assertLessEqual(f0, door_lo + 1e-6)
+        self.assertGreaterEqual(f1, door_hi - 1e-6)
+
     def test_pick_prefers_matching_storeys(self):
         for floors in (3, 4, 5):
             picks = Counter(
