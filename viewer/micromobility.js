@@ -565,7 +565,15 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       gap = Math.min(gap, lat > LANE_HALF + hw * 0.85 ? Math.max(0.2, nose) : nose);
       if (ob.hard) hardBlock = true;
     };
-    for (const o of vehicles) if (o !== v && !o.crash) consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
+    for (const o of vehicles) {
+      if (o === v) continue;
+      // Tipped wrecks are static debris in the lane — brake for them, do not ride through.
+      if (o.crash) {
+        consider(o.pos.x, o.pos.z, 0, 0, 0.85);
+        continue;
+      }
+      consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
+    }
     for (const ob of obstacles) {
       if (ob.hl != null) considerBox(ob);
       else consider(ob.x, ob.z, 0, 0, ob.r ?? 0.4);
