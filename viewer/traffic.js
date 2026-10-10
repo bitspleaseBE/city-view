@@ -48,7 +48,7 @@ const STOP_LINE_SETBACK = CAR_LEN * 0.5 + 0.4;
 const TURN_SPEED = 5.0; // m/s through sharp junction turns
 const TRANSIT_PATIENCE_SEC = 100; // longer than any halt dwell
 const ROADS_URL = "./roads.json";
-const PLAYER_PATIENCE_SEC = 15; // a player standing in the lane: wait, then clear the car
+const PLAYER_PATIENCE_SEC = 15; // player or pedestrian in the lane: wait, then clear the car
 const HEAD_ON_DOT = -0.5; // oncoming-ish headings share the braking distance
 const HEAD_ON_RESPAWN_SEC = 3; // the lower-priority car of a nose-to-nose deadlock is cleared quickly
 const BLOCK_RESPAWN_SEC = 8; // blocked this long by a car / crossing car -> despawn + respawn
@@ -1574,15 +1574,16 @@ export async function createTraffic(scene, THREE, opts = {}) {
         if (car.blocked > TRANSIT_PATIENCE_SEC && respawnCar(car, "transit")) {
           continue;
         }
-      } else if (crawling && (reason === "car" || reason === "cross" || reason === "player")) {
+      } else if (crawling && (reason === "car" || reason === "cross" || reason === "player" || reason === "ped")) {
         car.redWait = 0;
         car.blocked += step;
         // Truly dead (gridlock / blocked far longer than any light or dwell): despawn
         // it onto a free road. Never slide through the blocker and leave a ghost.
+        // Waiting for a walker is legitimate — same patience as waiting for the player.
         const limit =
           car.headOnLoser && reason === "cross"
             ? HEAD_ON_RESPAWN_SEC
-            : reason === "player"
+            : reason === "player" || reason === "ped"
               ? PLAYER_PATIENCE_SEC
               : BLOCK_RESPAWN_SEC;
         if (car.blocked > limit && respawnCar(car, `${reason}${limit === HEAD_ON_RESPAWN_SEC ? "-headon" : ""}${car.holdEntry ? "-hold" : ""}`)) {
