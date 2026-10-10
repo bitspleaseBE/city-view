@@ -1913,11 +1913,19 @@
           });
           if (minimap.setBlips) {
             const BRAND = { Dott: "#18a6e0", Bolt: "#34d186" };
+            const WRECK = "#c45a3a"; // match tipped micromobility hazards on the radar
             const stations = (velo?.stations || []).map((st) => ({ x: st.x, z: st.z, color: "#e2001a" }));
             minimap.setBlips(() =>
               scooters.fleet
                 .filter((s) => s.parked)
-                .map((s) => ({ x: s.mesh.position.x, z: s.mesh.position.z, color: BRAND[s.brand] || "#fff" }))
+                .map((s) => {
+                  const tipped = !!(s.fall || Math.abs(s.mesh.rotation.z) > 0.4);
+                  return {
+                    x: s.mesh.position.x,
+                    z: s.mesh.position.z,
+                    color: tipped ? WRECK : BRAND[s.brand] || "#fff",
+                  };
+                })
                 .concat(stations),
             );
           }
