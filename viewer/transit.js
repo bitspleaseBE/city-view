@@ -1516,6 +1516,31 @@ export async function createTransit(scene, THREE, opts = {}) {
       v.carBlockT = Math.max(0, v.carBlockT - dt * 2);
     }
 
+    // Bikes / scooters in our lane: brake (never evict — micromobility clears itself on overlap).
+    const bikes = shared.bikes;
+    if (bikes && !ghosting) {
+      const half = (BODY_LEN[v.mode] || BODY_LEN.bus) * 0.5;
+      const hw = v.mode === "tram" ? 1.35 : 1.3;
+      for (let j = 0; j < bikes.length; j++) {
+        const b = bikes[j];
+        if (!b?.pos || !b.tan) continue;
+        const dx = b.pos.x - v.pos.x;
+        const dz = b.pos.z - v.pos.z;
+        if (dx * dx + dz * dz > 28 * 28) continue;
+        const ahead = dx * v.tan.x + dz * v.tan.z;
+        if (ahead < 0.4 || ahead > half + 10 + (v.velocity * v.velocity) / (2 * HARD_BRAKE)) continue;
+        const side = Math.abs(dx * v.tan.z - dz * v.tan.x);
+        if (side > hw + 0.55) continue;
+        const gap = ahead - half * 0.4 - 0.9;
+        const lead = (b.cur || 0) * 0.9;
+        const safe = lead + Math.sqrt(2 * COMFORT_BRAKE * Math.max(0, gap));
+        if (safe < desire) {
+          desire = Math.max(0, safe);
+          limitedBy = "bike";
+        }
+      }
+    }
+
     if (walkObject && !(ride && ride.vehicle === v)) {
       const dx = playerPos.x - v.pos.x;
       const dz = playerPos.z - v.pos.z;
@@ -1581,7 +1606,13 @@ export async function createTransit(scene, THREE, opts = {}) {
 
     // Recovery: a bus held too long (leader jam, bad geometry) slides through at a crawl.
     // Trams stay put — cars blocking them are evicted; people on the track get hit or wait.
-    if (v.mode !== "tram" && v.velocity < 0.3 && limitedBy !== "player" && limitedBy !== "ped") {
+    if (
+      v.mode !== "tram" &&
+      v.velocity < 0.3 &&
+      limitedBy !== "player" &&
+      limitedBy !== "ped" &&
+      limitedBy !== "bike"
+    ) {
       v.stuckT += dt;
       const limit =
         limitedBy === "queue" || limitedBy === "car"
@@ -1600,8 +1631,14 @@ export async function createTransit(scene, THREE, opts = {}) {
       v.stuckT = Math.max(0, v.stuckT - dt * 2);
     }
     v.wait = v.velocity < 0.3 && v.phase !== "dwell" ? limitedBy : "";
-    // Creep past stuck cars / leaders only — cancelled above when a person is in the way.
-    if (v.mode !== "tram" && simTime < v.ghostUntil && limitedBy !== "player" && limitedBy !== "ped") {
+    // Creep past stuck cars / leaders only — never through people or bikes.
+    if (
+      v.mode !== "tram" &&
+      simTime < v.ghostUntil &&
+      limitedBy !== "player" &&
+      limitedBy !== "ped" &&
+      limitedBy !== "bike"
+    ) {
       desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
     }
 
