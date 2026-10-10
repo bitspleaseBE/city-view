@@ -974,6 +974,7 @@
       import { createOutdoorsGuard } from "./outdoors.js";
       import { paintParkedCars, wireParkedCarLamps } from "./cars.js";
       import { createTouchControls, wantsTouchControls } from "./touch-controls.js";
+      import { LOAD_M, createLandmarkStream } from "./landmark-stream.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
@@ -2091,6 +2092,7 @@
         });
       const setLoad = (f, label) => window.__loading && window.__loading.set(f, label);
       let cityReady = false;
+      let landmarkStream = null;
 
       // Merge static city meshes that share a material into ~128 m tiles. The GLB ships ~12k
       // meshes (one draw call each); after this it is a few hundred, while per-tile frustum
@@ -2103,6 +2105,15 @@
         const buckets = new Map();
         root.traverse((obj) => {
           if (!obj.isMesh || obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return;
+          // Landmark stand-ins are swapped for streamed GLBs; merging them into a
+          // tile would leave a beige slab that can no longer be hidden.
+          const meshName = obj.name || "";
+          if (/^(?:lmbase_|lmhold_)/.test(meshName)) return;
+          let holdParent = obj.parent;
+          while (holdParent) {
+            if (/^(?:lmbase_|lmhold_)/.test(holdParent.name || "")) return;
+            holdParent = holdParent.parent;
+          }
           if (obj.children.length) return; // would orphan child nodes
           const g = obj.geometry;
           const pos = g && g.attributes.position;
@@ -2356,6 +2367,25 @@
                 "<kbd>Night</kbd>day/night · <kbd>Help</kbd>this card",
               ].join("<br>");
             }
+          }
+          setLoad(0.98, "Placing landmarks");
+          await nextFrame();
+          try {
+            const lmRes = await fetch("./landmarks.json");
+            if (lmRes.ok) {
+              const catalog = await lmRes.json();
+              landmarkStream = createLandmarkStream({ scene, loader, cityRoot, catalog });
+              const here = walkControls.getObject().position;
+              await landmarkStream.prime(here.x, here.z);
+              const near = landmarkStream.items.filter(
+                (item) => Math.hypot(item.x - here.x, item.z - here.z) <= LOAD_M,
+              ).length;
+              console.info(
+                `[metropolis] landmarks: ${landmarkStream.items.length} catalog, ${near} within ${LOAD_M} m of spawn`,
+              );
+            }
+          } catch (err) {
+            console.warn("[metropolis] landmarks failed", err);
           }
           cityReady = true;
           prevTime = performance.now();
@@ -2633,6 +2663,10 @@
           camera.lookAt(_rideLook);
         }
 
+        if (landmarkStream) {
+          const camH = mode === "free" ? freeCam.height : camera.position.y;
+          landmarkStream.update(camera.position.x, camera.position.z, mode, camH);
+        }
         shops && shops.update(gameHour, gameDay);
         terraces && terraces.update();
         refreshRideHud();
