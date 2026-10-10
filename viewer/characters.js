@@ -8,6 +8,8 @@
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 export const CHARACTERS = ["Remy", "Amy", "James", "Michelle"];
+/** Smallest walking mesh in the rider cast. Remy and James start after the city is visible. */
+export const STARTER = "Amy";
 
 const base = new URL("./characters/", import.meta.url);
 const loader = new GLTFLoader();
@@ -34,14 +36,21 @@ const clipFile = (name, kind) => load(`clips/${name}_${kind}.glb`);
 
 /**
  * Start character downloads now; resolves when all have settled. By default only the
- * Walking GLBs (mesh + walk clip) are fetched; pass `{ clips: true }` to also prefetch
- * Riding / Scooter clips. Otherwise those load on demand (and are cached) when
- * `loadCharacterTemplates("Riding" | "Scooter")` is called.
+ * starter Walking GLB is fetched. Pass `{ names: CHARACTERS }` for the whole cast, and
+ * `{ clips: true }` to also prefetch Riding / Scooter clips.
  */
-export function preloadCharacters({ clips = false } = {}) {
+export function preloadCharacters({ clips = false, names = [STARTER] } = {}) {
   return Promise.allSettled(
-    CHARACTERS.flatMap((n) => (clips ? [walking(n), clipFile(n, "Riding"), clipFile(n, "Scooter")] : [walking(n)])),
+    names.flatMap((n) => (clips ? [walking(n), clipFile(n, "Riding"), clipFile(n, "Scooter")] : [walking(n)])),
   );
+}
+
+const restNames = () => CHARACTERS.filter((n) => n !== STARTER);
+
+async function templateFor(name, kind) {
+  const gltf = await walking(name);
+  const clips = kind === "Walking" ? gltf.animations : (await clipFile(name, kind)).animations;
+  return { name: `${name}_${kind}`, scene: gltf.scene, clips: clips || [] };
 }
 
 /** fn(fraction of started character files that have finished). Returns an unsubscribe. */
@@ -55,13 +64,11 @@ export function onCharacterProgress(fn) {
  * "Walking" (clips from the mesh file) or "Riding" / "Scooter" (clips from clips/).
  * The scene is shared between callers; clone it (SkeletonUtils) and never mutate it.
  */
-export async function loadCharacterTemplates(kind) {
+export async function loadCharacterTemplates(kind, names = CHARACTERS) {
   const out = await Promise.all(
-    CHARACTERS.map(async (name) => {
+    names.map(async (name) => {
       try {
-        const gltf = await walking(name);
-        const clips = kind === "Walking" ? gltf.animations : (await clipFile(name, kind)).animations;
-        return { name: `${name}_${kind}`, scene: gltf.scene, clips: clips || [] };
+        return await templateFor(name, kind);
       } catch (err) {
         console.warn(`[cityview] character load failed: ${name} ${kind}`, err);
         return null;
@@ -69,4 +76,20 @@ export async function loadCharacterTemplates(kind) {
     }),
   );
   return out.filter(Boolean);
+}
+
+/** Hand each template to `onOne` as that file finishes. Default is everyone except the starter. */
+export function streamCharacterTemplates(kind, onOne, names = restNames()) {
+  return Promise.allSettled(
+    names.map(async (name) => {
+      try {
+        const tmpl = await templateFor(name, kind);
+        onOne(tmpl);
+        return tmpl;
+      } catch (err) {
+        console.warn(`[cityview] character load failed: ${name} ${kind}`, err);
+        return null;
+      }
+    }),
+  );
 }

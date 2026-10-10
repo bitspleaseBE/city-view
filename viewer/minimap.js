@@ -255,7 +255,6 @@ export function createMinimap(THREE, opts = {}) {
       console.warn("Minimap: could not load roads");
     }
   }
-  loadRoads();
 
   function consumeTeleport() {
     const t = teleportTarget;
@@ -392,6 +391,8 @@ export function createMinimap(THREE, opts = {}) {
   hiBg.width = Math.ceil(spanX * hiScale);
   hiBg.height = Math.ceil(spanZ * hiScale);
   const hctx = hiBg.getContext("2d");
+  hctx.fillStyle = "#56645a";
+  hctx.fillRect(0, 0, hiBg.width, hiBg.height);
   const toHi = (x, z) => [(x - BOUNDS.minX) * hiScale, (z - BOUNDS.minZ) * hiScale];
   let heading = 0;
   let blipSource = null;
@@ -480,7 +481,14 @@ export function createMinimap(THREE, opts = {}) {
       console.warn("Minimap: radar roads unavailable");
     }
   }
-  paintRadarBase();
+
+  let baseWarmed = false;
+  function warmBase() {
+    if (baseWarmed) return;
+    baseWarmed = true;
+    loadRoads();
+    paintRadarBase();
+  }
 
   function drawRadar(playerPos, traffic, transit, micromobility) {
     const W2 = radar.width;
@@ -632,5 +640,6 @@ export function createMinimap(THREE, opts = {}) {
     setBlips(fn) {
       blipSource = fn;
     },
+    warmBase,
   };
 }
