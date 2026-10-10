@@ -2232,7 +2232,22 @@
               hard: true,
             });
           }
+          // Walkers in the lane: riders slow for them (same real-world avoid instinct as cars).
+          if (pedestrians && pedestrians.roadPeople) {
+            const peds = pedestrians.roadPeople();
+            for (let i = 0; i < peds.length; i++) {
+              const p = peds[i];
+              _riderObstacles.push({ x: p.x, z: p.z, r: (p.r || 0.35) + 0.2 });
+            }
+          }
           micromobility.update(simDt, _riderObstacles);
+          // A rider that still clips a pedestrian knocks them down.
+          if (pedestrians && pedestrians.hitTest) {
+            for (const v of micromobility.vehicles || []) {
+              if (!v?.pos || v.cur < 1.8) continue;
+              pedestrians.hitTest(v.pos.x, v.pos.z, v.tan.x * v.cur, v.tan.z * v.cur, 0.45);
+            }
+          }
         }
 
         // ---- Mini map (free mode teleport via click) ----
