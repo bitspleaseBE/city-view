@@ -2228,11 +2228,11 @@
           stats: () => {
             const p = walkControls.getObject().position;
             return {
-              pos: `${p.x.toFixed(1)}, ${p.z.toFixed(1)}`,
-              speed: `${(Math.abs(playerMotion.speed) * 3.6).toFixed(1)} km/u`,
-              res: `${pixelRatio.toFixed(2)}x`,
-              calls: renderer.info.render.calls,
-              tris: renderer.info.render.triangles,
+              positie: `${p.x.toFixed(1)}, ${p.z.toFixed(1)}`,
+              snelheid: `${(Math.abs(playerMotion.speed) * 3.6).toFixed(1)} km/u`,
+              resolutie: `${pixelRatio.toFixed(2)}x`,
+              draws: renderer.info.render.calls,
+              driehoeken: renderer.info.render.triangles,
             };
           },
         });

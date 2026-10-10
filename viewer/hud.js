@@ -77,7 +77,7 @@ export function createHud(opts = {}) {
     "<kbd>E</kbd>step · tram · bus · Velo",
     "<kbd>N</kbd>naar avond / ochtend",
     "<kbd>V</kbd>kaart · <kbd>M</kbd>radar",
-    "<kbd>H</kbd>dit overzicht · <kbd>F3</kbd>stats",
+    "<kbd>H</kbd>dit overzicht · <kbd>F3</kbd>tech",
   ].join("<br>");
   const stats = el("div", "hud-stats");
 
