@@ -525,6 +525,7 @@
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
       import { createLandmarkLocator } from "./landmarks.js";
+      import { createLandmarkStream } from "./landmark-stream.js";
       import { createOutdoorsGuard } from "./outdoors.js";
       import { paintParkedCars, wireParkedCarLamps } from "./cars.js";
       import { createTouchControls, wantsTouchControls } from "./touch-controls.js";
@@ -1091,6 +1092,7 @@
       let minimap = null;
       let streetLocator = null;
       let landmarkLocator = null;
+      let landmarkStream = { update() {}, prime: async () => {} };
       // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
       let playBounds = null;
       const _clampTmp = new THREE.Vector3();
@@ -1813,6 +1815,7 @@
         root.traverse((obj) => {
           if (!obj.isMesh) return;
           meshCount++;
+          if ((obj.name || "").startsWith("lmhold_")) return void skipped.special++;
           if (obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return void skipped.special++;
           if (obj.children.length) return void skipped.hasChildren++; // would orphan child nodes
           const g = obj.geometry;
@@ -2031,6 +2034,16 @@
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             groundAt,
           });
+          setLoad(0.91, "Placing nearby landmarks");
+          await nextFrame();
+          try {
+            const catalogRes = await fetch("./landmarks.json");
+            const catalog = catalogRes.ok ? await catalogRes.json() : { landmarks: [] };
+            landmarkStream = createLandmarkStream({ scene, loader, cityRoot, catalog });
+            await landmarkStream.prime(spawnPos.x, spawnPos.z);
+          } catch (err) {
+            console.warn("[cityview] landmark stream", err);
+          }
           setLoad(0.92, "Opening the shops");
           shops = await createShops(scene, THREE, { groundAt, anisotropy: renderer.capabilities.getMaxAnisotropy() });
           if (shops) {
@@ -2264,6 +2277,7 @@
 
       function tickFrame(rawDt, dt, simDt) {
         adaptResolution(rawDt);
+        landmarkStream.update(camera.position.x, camera.position.z, mode, freeCam.height);
 
         const ridingTram = transit.isRiding && transit.isRiding();
         const ridingVelo = velo && velo.isRiding && velo.isRiding();

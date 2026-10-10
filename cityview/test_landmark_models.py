@@ -50,6 +50,23 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue(15.0 < tops["gulden_spoor"] < 18.5)  # steep slate roof + stair-tower spire
         self.assertTrue(10.0 < tops["gulden_spoor_gate"] < 16.0)
         self.assertTrue(8.0 < tops["albertpark_kiosk"] < 10.5)  # lyre finial
+        self.assertTrue(9.0 < tops["harmonie_koetshuis"] < 13.0)  # mosaic pediment, not a tower
+        self.assertTrue(13.5 < tops["benoit_34"] < 17.0)
+        self.assertTrue(13.5 < tops["benoit_38"] < 17.5)  # pointed dormer
+        self.assertTrue(13.5 < tops["benoit_40"] < 17.0)
+        self.assertTrue(22.0 < tops["bonifacius"] < 26.0)  # flat tower + pinnacles, no spire
+        self.assertTrue(20.0 < tops["heilig_hart"] < 30.0)  # bell-cote, not a west tower
+        self.assertLess(tops["heilig_hart_klooster"], 18.0)
+        self.assertLess(tops["heilig_hart_klooster"], tops["heilig_hart"])
+        self.assertIn("glass_amber", _built("harmonie_koetshuis").materials_used())
+        self.assertIn("glass_green", _built("harmonie_koetshuis").materials_used())
+        cream, yellow, shop = _built("benoit_34"), _built("benoit_38"), _built("benoit_40")
+        self.assertIn("brick_yellow", yellow.materials_used())
+        self.assertNotIn("brick_yellow", cream.materials_used())
+        self.assertNotIn("brick", cream.materials_used())
+        self.assertIn("brick", shop.materials_used())
+        self.assertIn("glass_blue", shop.materials_used())
+        self.assertLess(tops["heilig_hart_klooster"], 16.2)
 
     def test_zas_keeps_courtyards_open(self):
         m = _built("zas_vincentius")

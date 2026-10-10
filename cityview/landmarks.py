@@ -153,6 +153,8 @@ def attach_custom_landmark(
         "anchor_xy": _anchor_xy(entry, origin),
         "params": _project_params(entry.get("params") or {}, origin),
     }
+    if entry.get("stream"):
+        bldg["landmark"]["stream"] = True
     for key in ("levels", "height_m", "roof_height_m", "roof_shape"):
         if key in entry:
             bldg["landmark"][key] = entry[key]
@@ -212,4 +214,53 @@ def attach_landmark(
         "kind": entry.get("kind") or btype,
         "source_url": entry.get("source_url") or "",
     }
+    if entry.get("stream"):
+        bldg["landmark"]["stream"] = True
     return bldg
+
+
+def _ring_centroid(ring: list) -> tuple[float, float]:
+    n = max(1, len(ring))
+    return sum(float(p[0]) for p in ring) / n, sum(float(p[1]) for p in ring) / n
+
+
+def viewer_landmark_index(layout: dict[str, Any]) -> dict[str, Any]:
+    """POIs for captions/minimap plus the GLB each one-off mesh streams from.
+
+    Coordinates are Blender metres (east, north). The viewer maps them to Three.js
+    with z = −y.
+    """
+    items: list[dict[str, Any]] = []
+    for bldg in layout.get("buildings") or []:
+        lm = bldg.get("landmark") or {}
+        if not (lm.get("custom") or lm.get("stream")):
+            continue
+        ring = bldg.get("ring") or []
+        if len(ring) < 3:
+            continue
+        x, y = _ring_centroid(ring)
+        kind = str(lm.get("kind") or bldg.get("building_type") or "")
+        item: dict[str, Any] = {
+            "id": str(bldg.get("id")),
+            "name": lm.get("name") or bldg.get("name") or "",
+            "kind": kind,
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "file": f"landmarks/{bldg.get('id')}.glb",
+        }
+        if kind == "church":
+            item["reach"] = 60
+        items.append(item)
+    for node in layout.get("landmark_nodes") or []:
+        items.append(
+            {
+                "id": str(node.get("id")),
+                "name": node.get("name") or "",
+                "kind": "memorial",
+                "x": round(float(node["x"]), 2),
+                "y": round(float(node["y"]), 2),
+                "file": f"landmarks/{node.get('id')}.glb",
+            }
+        )
+    origin = layout.get("origin") or [51.2017, 4.4114]
+    return {"origin": list(origin), "landmarks": items}
