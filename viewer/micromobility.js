@@ -565,7 +565,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       gap = Math.min(gap, lat > LANE_HALF + hw * 0.85 ? Math.max(0.2, nose) : nose);
       if (ob.hard) hardBlock = true;
     };
-    for (const o of vehicles) if (o !== v) consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
+    for (const o of vehicles) if (o !== v && !o.crash) consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
     for (const ob of obstacles) {
       if (ob.hl != null) considerBox(ob);
       else consider(ob.x, ob.z, 0, 0, ob.r ?? 0.4);
@@ -681,7 +681,13 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     const dz = v.pos.z - ob.z;
     let nx = dx - (dx * otx + dz * otz) * otx;
     let nz = dz - (dx * otx + dz * otz) * otz;
-    const nl = Math.hypot(nx, nz) || 1;
+    let nl = Math.hypot(nx, nz);
+    if (nl < 0.05) {
+      // Dead-centre hit: shove sideways off the track instead of nowhere.
+      nx = -otz;
+      nz = otx;
+      nl = 1;
+    }
     nx /= nl;
     nz /= nl;
     const speed = Math.max(v.cur, 0);
