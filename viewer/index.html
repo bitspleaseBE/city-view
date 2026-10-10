@@ -1067,11 +1067,11 @@
         const res = scooters.crash({ x: w.position.x, z: w.position.z, yaw, speed });
         rideEl.style.display = "none";
         promptEl.style.display = "none";
-        if (res) hud.spend(res.cost, `${res.brand} ride`);
+        if (res) hud.spend(res.cost, `${res.brand}-rit`);
         const dmg = playerCrash.start(w.position, yaw, speed);
         playerMotion.stop();
         keys.space = false;
-        hud.notify(`You came off the scooter at ${Math.round(speed * 3.6)} km/h · −${dmg} health`, 5000);
+        hud.notify(`Van de step gevallen bij ${Math.round(speed * 3.6)} km/u · −${dmg} gezondheid`, 5000);
       }
       // Simple humanoid capsule so Free view can frame the walker.
       const avatar = new THREE.Group();
@@ -1239,15 +1239,15 @@
         const result = scooters.tryInteract({ x: p.x, z: p.z, yaw: playerMotion.yaw() });
         if (result.action === "take") {
           rideEl.style.display = "block";
-          rideLine.textContent = `${result.brand} e-scooter`;
-          rideNext.textContent = `${result.battery}% battery`;
+          rideLine.textContent = `${result.brand}-step`;
+          rideNext.textContent = `${result.battery}% batterij`;
           promptEl.style.display = "none";
-          status.textContent = `Unlocked a ${result.brand} scooter`;
+          status.textContent = `${result.brand}-step ontgrendeld`;
         } else if (result.action === "park") {
           rideEl.style.display = "none";
-          hud.spend(result.cost, `${result.brand} ride`);
+          hud.spend(result.cost, `${result.brand}-rit`);
         } else if (result.action === "empty") {
-          status.textContent = "That scooter's battery is empty";
+          status.textContent = "Batterij van die step is leeg";
         }
         return result.action !== "none";
       }
@@ -2219,7 +2219,7 @@
           riding: sRide
             ? { speedKmh: kmh, battery: sRide.battery, sub: `${sRide.brand} · ${sRide.time} · €${sRide.cost.toFixed(2)}` }
             : vRide
-              ? { speedKmh: kmh, battery: null, sub: `Velo · ${vRide.name || "city bike"}` }
+              ? { speedKmh: kmh, battery: null, sub: `Velo · ${vRide.name || "stadsfiets"}` }
               : null,
           stats: () => {
             const p = walkControls.getObject().position;
