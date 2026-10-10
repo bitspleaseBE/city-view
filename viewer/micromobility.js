@@ -131,7 +131,7 @@ function buildPaths(roads, THREE) {
     }
     if (len < 8) continue;
     // Skip dual-carriageway link stubs / alley scraps — not rideable streets.
-    if ((kind === "residential" || kind === "living_street") && len < 35) continue;
+    if ((kind === "residential" || kind === "living_street" || kind === "unclassified") && len < 35) continue;
     const carLane = Number.isFinite(road.laneOffset) ? road.laneOffset : 1.15;
     const width = road.width || 6;
     // Sit between the car lane and the kerb (Belgian right-hand cycling).
