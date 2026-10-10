@@ -431,7 +431,7 @@
         window.__glbPromise.catch(() => {}); // surfaced by the viewer module
       })();
     </script>
-    <div id="hint">Lopen: klik + WASD · Shift sprint · Spatie spring · E Velo / scooter / tram · V kaart · N dag/nacht</div>
+    <div id="hint">Lopen: klik + WASD · Shift sprint · Spatie spring · E Velo / step / tram · V kaart · N dag/nacht</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Lopen</button>
       <button type="button" id="btn-free">Kaart</button>
@@ -488,10 +488,10 @@
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
       const HINT = {
-        walk: "Lopen: klik + WASD · Shift sprint · Spatie spring · E Velo / tram · Esc · V kaart · N nacht · M radar",
-        walkShort: "Lopen: klik + WASD · E Velo / tram · Esc · V kaart · N nacht",
-        walkCue: "Lopen: klik + WASD · E Velo / tram · V kaart · N nacht · M radar",
-        walkLocked: "WASD · muis kijken · Spatie spring · E Velo / tram · Esc · V kaart · N nacht · M radar",
+        walk: "Lopen: klik + WASD · Shift sprint · Spatie spring · E Velo / step / tram · Esc · V kaart · N nacht · M radar",
+        walkShort: "Lopen: klik + WASD · E Velo / step / tram · Esc · V kaart · N nacht",
+        walkCue: "Lopen: klik + WASD · E Velo / step / tram · V kaart · N nacht · M radar",
+        walkLocked: "WASD · muis kijken · Spatie spring · E Velo / step / tram · Esc · V kaart · N nacht · M radar",
         walkTouch: "Lopen: stick bewegen · sleep kijken · Ga interactie · Sprint / Spring",
         map: "Kaart (bovenaanzicht): WASD pan · Shift snel · scroll zoom · klik radar teleporteren · V lopen · N nacht",
         mapTouch: "Kaart: sleep pan · knijp zoom · tik radar om te teleporteren",
@@ -1544,8 +1544,9 @@
           return;
         }
         if (e.code === "KeyN") {
+          const toNight = todFromHour(gameHour) < 0.5;
           toggleTimeOfDay();
-          hud.notify(todFromHour(gameHour) < 0.5 ? "Doorspoelen naar nacht…" : "Doorspoelen naar ochtend…", 2500);
+          hud.notify(toNight ? "Doorspoelen naar nacht…" : "Doorspoelen naar ochtend…", 2500);
           return;
         }
         if (e.code === "KeyH") {
