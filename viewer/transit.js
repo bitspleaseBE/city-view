@@ -37,7 +37,6 @@ const FIRST_TRAM_DWELL_S = 30; // waiting tram at the spawn halt
 const MAX_STEP = 1 / 30; // s: the sim never integrates a bigger step (stable at any frame rate)
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame (tab switch, hitch)
 const HARD_BRAKE = 3.0; // m/s^2 a tram / bus can shed speed when a car is right in front
-const PLAYER_PATIENCE_SEC = 6; // a walker in the lane: buses may creep past after this; trams never do
 const PED_HIT_SPEED = 1.8; // m/s: overlap above this knocks a pedestrian down
 const CAR_EVICT_SEC = 3; // a car holding a tram / bus still this long is cleared
 const GATE_MARGIN = 24; // m inside the district edge where vehicles (re-)enter
@@ -1543,7 +1542,8 @@ export async function createTransit(scene, THREE, opts = {}) {
     // Pedestrians in the track / lane: brake. Trams stay on rails (no lateral dodge).
     {
       const peds = pedProvider ? pedProvider() : null;
-      if (peds && peds.length && !ghosting) {
+      // Always respect people — even while creeping past a stuck car.
+      if (peds && peds.length) {
         const half = (BODY_LEN[v.mode] || BODY_LEN.bus) * 0.5;
         const hw = v.mode === "tram" ? 1.35 : 1.3;
         for (let p = 0; p < peds.length; p++) {
@@ -1571,14 +1571,10 @@ export async function createTransit(scene, THREE, opts = {}) {
       }
     }
 
-    // Buses may creep past a stubborn walker after a short wait. Trams never leave the
-    // rails to ghost through people — they keep braking (and may still strike them).
-    if ((limitedBy === "player" || limitedBy === "ped") && v.velocity < 0.3) {
-      v.playerT += dt;
-      if (v.mode === "bus" && v.playerT > PLAYER_PATIENCE_SEC) {
-        v.ghostUntil = simTime + GHOST_SEC;
-        v.playerT = 0;
-      }
+    // Never ghost through people — buses and trams keep braking (and may still strike them).
+    if (limitedBy === "player" || limitedBy === "ped") {
+      v.ghostUntil = 0;
+      v.playerT = limitedBy && v.velocity < 0.3 ? v.playerT + dt : Math.max(0, v.playerT - dt);
     } else {
       v.playerT = Math.max(0, v.playerT - dt);
     }
@@ -1604,7 +1600,10 @@ export async function createTransit(scene, THREE, opts = {}) {
       v.stuckT = Math.max(0, v.stuckT - dt * 2);
     }
     v.wait = v.velocity < 0.3 && v.phase !== "dwell" ? limitedBy : "";
-    if (v.mode !== "tram" && simTime < v.ghostUntil) desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
+    // Creep past stuck cars / leaders only — cancelled above when a person is in the way.
+    if (v.mode !== "tram" && simTime < v.ghostUntil && limitedBy !== "player" && limitedBy !== "ped") {
+      desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
+    }
 
     const prevV = v.velocity;
     // Smooth accel / brake (approach uses stronger brake).
