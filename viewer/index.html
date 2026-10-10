@@ -1941,8 +1941,26 @@
           } else {
             console.warn("[cityview] outdoors guard: no buildings.json — indoor walk possible");
           }
-          // Cars give way to trams/buses instead of driving through them.
-          if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
+          // Cars give way to trams/buses and to bikes/scooters instead of driving through them.
+          if (traffic.setObstacles) {
+            traffic.setObstacles(() => {
+              const out = [];
+              for (const v of transit.vehicles || []) {
+                if (v && v.phase !== "gone") out.push(v);
+              }
+              for (const v of micromobility?.vehicles || []) {
+                if (!v?.pos || !v.tan) continue;
+                out.push({
+                  pos: v.pos,
+                  tan: v.tan,
+                  cur: v.cur,
+                  mode: v.kind || "bike",
+                  phase: "cruise",
+                });
+              }
+              return out;
+            });
+          }
           // Cars / buses / trams brake for walkers; hard overlaps knock them (or you) down.
           const pedList = () => (pedestrians && pedestrians.roadPeople ? pedestrians.roadPeople() : []);
           if (traffic.setPedestrians) traffic.setPedestrians(pedList);
@@ -2218,7 +2236,7 @@
         if (micromobility) {
           _riderObstacles.length = 0;
           _riderObstacles.push({ x: walker.position.x, z: walker.position.z, r: 0.45 });
-          // Trams / buses are solid boxes — bikes brake and never “pass through” them.
+          // Trams / buses / cars are solid boxes — bikes brake and never “pass through” them.
           for (const v of transit.vehicles || []) {
             if (!v || v.phase === "gone" || !v.pos) continue;
             const tram = v.mode === "tram";
@@ -2229,6 +2247,18 @@
               tz: v.tan.z,
               hl: tram ? 12 : 6.5,
               hw: tram ? 1.3 : 1.25,
+              hard: true,
+            });
+          }
+          for (const c of traffic.cars || []) {
+            if (!c?.pos || !c.tan) continue;
+            _riderObstacles.push({
+              x: c.pos.x,
+              z: c.pos.z,
+              tx: c.tan.x,
+              tz: c.tan.z,
+              hl: 2.2,
+              hw: 1.0,
               hard: true,
             });
           }

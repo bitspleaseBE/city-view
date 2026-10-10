@@ -941,7 +941,12 @@ export async function createTraffic(scene, THREE, opts = {}) {
       for (const v of src) {
         if (!v || !v.pos || !v.tan || v.phase === "gone") continue;
         const tram = v.mode === "tram";
-        obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: v.velocity || 0, hl: tram ? 16.0 : 6.8, hw: tram ? 1.2 : 1.25 });
+        const bike = v.mode === "bike" || v.mode === "bicycle" || v.mode === "scooter" || v.mode === "cargo";
+        const hl = tram ? 16.0 : bike ? 0.9 : 6.8;
+        const hw = tram ? 1.2 : bike ? 0.45 : 1.25;
+        // Micromobility exposes `cur`; transit uses `velocity`.
+        const speed = Number.isFinite(v.velocity) ? v.velocity : v.cur || 0;
+        obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: speed, hl, hw });
       }
     }
     return obstacleCache;
@@ -1654,7 +1659,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     );
   }
 
-  /** Let cars give way to other vehicle lists (trams/buses): `() => transit.vehicles`. */
+  /** Let cars give way to other vehicles: `() => [...transit.vehicles, ...bikes]`. */
   function setObstacles(provider) {
     obstacleProvider = typeof provider === "function" ? provider : null;
   }
