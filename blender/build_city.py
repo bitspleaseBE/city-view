@@ -4329,12 +4329,17 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     clutter_stats = clutter_blender.add_clutter(layout, RAILS, clutter_mats)
     print(f"Street clutter (OSM-mapped bins, hoops, bollards, hydrants, ...): {clutter_stats}")
     if velo_blender is not None:
+        # Linear form of sRGB #E10613. The exporter writes this socket straight into
+        # baseColorFactor and the viewer applies the sRGB curve, so a hex-like
+        # (0.88, 0.02, 0.07) lifts the green and blue and turns the docks pink.
+        velo_red = (0.75294, 0.00182, 0.00651, 1.0)
         velo_mats = {
             "metal": principled("velo_dock_metal", (0.08, 0.08, 0.09, 1.0), 0.45),
-            "frame": principled("velo_frame_red", (0.72, 0.06, 0.12, 1.0), 0.55),
+            "frame": principled("velo_frame_red", velo_red, 0.38),
+            "silver": principled("velo_silver", (0.75, 0.76, 0.78, 1.0), 0.32, metallic=0.85),
             "mudguard": principled("velo_mudguard", (0.94, 0.93, 0.90, 1.0), 0.7),
             "tire": principled("velo_tire", (0.08, 0.08, 0.08, 1.0), 0.95),
-            "signal_red": principled("velo_accent_red", (0.78, 0.05, 0.1, 1.0), 0.5),
+            "signal_red": principled("velo_accent_red", velo_red, 0.38),
         }
         velo_stats = velo_blender.add_velo_stations(layout, RAILS, velo_mats)
         print(f"Velo docks (GBFS stations): {velo_stats}")
