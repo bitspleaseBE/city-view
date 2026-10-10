@@ -2278,6 +2278,26 @@
               pedestrians.hitTest(v.pos.x, v.pos.z, v.tan.x * v.cur, v.tan.z * v.cur, 0.45);
             }
           }
+          // Same for the player on foot — bikes brake for you, but a clip still hurts.
+          if (
+            mode === "walk" &&
+            !playerCrash.active &&
+            !(scooters && scooters.isRiding()) &&
+            !(velo && velo.isRiding && velo.isRiding()) &&
+            !(transit.isRiding && transit.isRiding())
+          ) {
+            const px = walker.position.x;
+            const pz = walker.position.z;
+            for (const v of micromobility.vehicles || []) {
+              if (!v?.pos || v.cur < 2.2) continue;
+              const dx = v.pos.x - px;
+              const dz = v.pos.z - pz;
+              if (dx * dx + dz * dz < 0.65 * 0.65) {
+                hitByVehicle(v.cur);
+                break;
+              }
+            }
+          }
         }
 
         // ---- Mini map (free mode teleport via click) ----

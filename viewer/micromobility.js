@@ -19,7 +19,6 @@ const LANE_HALF = 0.55; // m: half a bike's swept width
 const STOP_GAP = 1.6; // m nose-to-tail when queued
 const SWERVE = 0.75; // m to the right when an oncoming rider shares the lane
 const OVERTAKE = 1.3; // m to the left when passing something that blocks the lane
-const HARD_HIT_SPEED = 1.5; // m/s into a tram/bus → rider is cleared (accident)
 
 /** Shared lamp materials so setNight can brighten every rider at once. */
 let _lampMat = null;
