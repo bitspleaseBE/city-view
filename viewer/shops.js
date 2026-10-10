@@ -178,9 +178,9 @@ function fmt(h) {
 
 export function hoursLine(hours, d, h) {
   if (isOpen(hours, d, h)) {
-    for (const [o, c] of hours[d] || []) if (h >= o && h < c) return `Open · tot ${fmt(c)}`;
-    for (const [, c] of hours[(d + 6) % 7] || []) if (c > 24) return `Open · tot ${fmt(c)}`;
-    return "Open";
+    for (const [o, c] of hours[d] || []) if (h >= o && h < c) return `Geopend · tot ${fmt(c)}`;
+    for (const [, c] of hours[(d + 6) % 7] || []) if (c > 24) return `Geopend · tot ${fmt(c)}`;
+    return "Geopend";
   }
   for (let k = 0; k < 7; k++) {
     const day = (d + k) % 7;
