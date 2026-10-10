@@ -1759,9 +1759,10 @@ export async function createTransit(scene, THREE, opts = {}) {
       const boardable = findBoardable({ x: playerPos.x, z: playerPos.z });
       if (boardable) {
         const halt = boardable.currentHalt;
+        const modeLabel = boardable.mode === "bus" ? "Bus" : "Tram";
         return {
           riding: false,
-          prompt: `Press E to enter ${boardable.mode} ${boardable.lineText}${
+          prompt: `E · ${modeLabel} ${boardable.lineText} instappen${
             halt ? ` · ${haltDisplayName(halt.name)}` : ""
           }`,
         };
@@ -1773,15 +1774,15 @@ export async function createTransit(scene, THREE, opts = {}) {
         if (near.dist > BOARD_DIST + 2) {
           const dir = arr
             ? arr.dwelling
-              ? `tram waiting · walk ${near.dist.toFixed(0)} m to ${haltLabel}`
-              : `tram ~${Math.max(1, Math.round(arr.eta))}s · walk ${near.dist.toFixed(0)} m to ${haltLabel}`
-            : `walk ${near.dist.toFixed(0)} m to ${haltLabel} tram stop`;
+              ? `tram wacht · ${near.dist.toFixed(0)} m lopen naar ${haltLabel}`
+              : `tram ~${Math.max(1, Math.round(arr.eta))}s · ${near.dist.toFixed(0)} m lopen naar ${haltLabel}`
+            : `${near.dist.toFixed(0)} m lopen naar halte ${haltLabel}`;
           return { riding: false, prompt: dir };
         }
         if (arr && !arr.dwelling) {
           return {
             riding: false,
-            prompt: `Tram ${arr.vehicle.lineText} arriving in ~${Math.max(1, Math.round(arr.eta))}s at ${haltLabel}`,
+            prompt: `Tram ${arr.vehicle.lineText} over ~${Math.max(1, Math.round(arr.eta))}s bij ${haltLabel}`,
           };
         }
       }
