@@ -973,12 +973,14 @@
       }
       function groundAtCore(x, z) {
         const g = _heightGrid;
-        if (!g) return groundAtRay(x, z);
+        // Hot path: never full-scene raycast. Flat sidewalk (~0.12 m) until the idle bake
+        // finishes; out-of-bounds stays flat too. Bake itself uses groundAtRay directly.
+        if (!g) return 0.12;
         const fx = (x - g.ox) / g.cell;
         const fz = (z - g.oz) / g.cell;
         const c0 = Math.floor(fx);
         const r0 = Math.floor(fz);
-        if (c0 < 0 || r0 < 0 || c0 >= g.cols - 1 || r0 >= g.rows - 1) return groundAtRay(x, z);
+        if (c0 < 0 || r0 < 0 || c0 >= g.cols - 1 || r0 >= g.rows - 1) return 0.12;
         const tx = fx - c0;
         const tz = fz - r0;
         const i = r0 * g.cols + c0;
@@ -989,13 +991,13 @@
         return h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz) + h01 * (1 - tx) * tz + h11 * tx * tz;
       }
       /**
-       * Optional height bake (?heightgrid=1). Default OFF: full-scene raycasts in big slices
-       * froze the main thread right after “Click to play”, so cars/people looked dead and
-       * input stopped responding. Ped LOD already uses a constant pavement height when far.
+       * Idle height bake (default ON; ?heightgrid=0 to skip). Tiny slices after cityReady so
+       * Click to play stays responsive. Until done, groundAt returns a flat sidewalk height
+       * instead of thousands of full-scene raycasts per second (the #1 FPS killer).
        */
       async function bakeHeightGridAsync() {
         if (!cityRoot || _heightGrid) return;
-        if (new URLSearchParams(location.search).get("heightgrid") !== "1") return;
+        if (new URLSearchParams(location.search).get("heightgrid") === "0") return;
         const box = new THREE.Box3().setFromObject(cityRoot);
         const cell = 4;
         const pad = 8;
@@ -1004,11 +1006,11 @@
         const cols = Math.ceil((box.max.x + pad - ox) / cell) + 1;
         const rows = Math.ceil((box.max.z + pad - oz) / cell) + 1;
         if (cols * rows > 80000) {
-          console.warn(`[cityview] height grid too large (${cols}×${rows}); keeping raycasts`);
+          console.warn(`[cityview] height grid too large (${cols}×${rows}); keeping flat heights`);
           return;
         }
         const data = new Float32Array(cols * rows);
-        const slice = 80; // keep each slice under ~1 frame
+        const slice = 32; // ~0.5–2 ms/frame; never starve traffic/input
         let i = 0;
         const total = cols * rows;
         const t0 = performance.now();
@@ -1797,6 +1799,28 @@
       const setLoad = (f, label) => window.__loading && window.__loading.set(f, label);
       let cityReady = false;
 
+      // Meshopt + KHR_mesh_quantization leave Int16/Int8 attrs; mergeGeometries needs Float32.
+      // Expand via getX/Y/Z so normalized quantized values become world metres.
+      function dequantizeGeometry(geometry) {
+        const g = geometry.clone();
+        for (const name of Object.keys(g.attributes)) {
+          const attr = g.attributes[name];
+          if (!attr || attr.isInterleavedBufferAttribute) continue;
+          if (attr.array instanceof Float32Array && !attr.normalized) continue;
+          const n = attr.itemSize;
+          const arr = new Float32Array(attr.count * n);
+          for (let i = 0; i < attr.count; i++) {
+            const o = i * n;
+            if (n > 0) arr[o] = attr.getX(i);
+            if (n > 1) arr[o + 1] = attr.getY(i);
+            if (n > 2) arr[o + 2] = attr.getZ(i);
+            if (n > 3) arr[o + 3] = attr.getW(i);
+          }
+          g.setAttribute(name, new THREE.BufferAttribute(arr, n));
+        }
+        return g;
+      }
+
       // Merge static city meshes that share a material into ~128 m tiles. The GLB ships ~12k
       // meshes (one draw call each); after this it is a few hundred, while per-tile frustum
       // culling still drops everything behind/beside the camera. Geometry is baked in root
@@ -1806,10 +1830,16 @@
         const rel = new THREE.Matrix4();
         const centre = new THREE.Vector3();
         const buckets = new Map();
-        // Why meshes were left alone — logged when nothing merges (e.g. Meshopt-quantised
-        // positions are Int16/Int8, not Float32, so every mesh is skipped).
-        const skipped = { notMesh: 0, special: 0, hasChildren: 0, noPosition: 0, nonFloat32: 0, interleaved: 0, huge: 0 };
+        const skipped = {
+          notMesh: 0,
+          special: 0,
+          hasChildren: 0,
+          noPosition: 0,
+          interleaved: 0,
+          huge: 0,
+        };
         let meshCount = 0;
+        let dequantized = 0;
         root.traverse((obj) => {
           if (!obj.isMesh) return;
           meshCount++;
@@ -1819,7 +1849,7 @@
           const pos = g && g.attributes.position;
           if (!pos) return void skipped.noPosition++;
           if (pos.isInterleavedBufferAttribute) return void skipped.interleaved++;
-          if (!(pos.array instanceof Float32Array)) return void skipped.nonFloat32++;
+          if (!(pos.array instanceof Float32Array) || pos.normalized) dequantized++;
           if (!g.boundingBox) g.computeBoundingBox();
           rel.multiplyMatrices(inv, obj.matrixWorld);
           g.boundingBox.getCenter(centre).applyMatrix4(rel);
@@ -1838,7 +1868,7 @@
         for (const b of buckets.values()) {
           if (b.meshes.length < 2) continue;
           const geoms = b.meshes.map((m, i) => {
-            const g = m.geometry.clone();
+            const g = dequantizeGeometry(m.geometry);
             g.applyMatrix4(b.mats[i]);
             return g;
           });
@@ -1865,7 +1895,7 @@
           before += b.meshes.length;
           after++;
         }
-        return { before, after, meshCount, skipped };
+        return { before, after, meshCount, skipped, dequantized };
       }
 
       // Pre-compile every shader variant (day, and night with the pooled lamp lights) while
@@ -1981,11 +2011,13 @@
                 .join(", ");
               console.info(
                 `[cityview] merged 0 meshes into 0 tile batches — nothing was merged (${m.meshCount} meshes seen; ` +
-                  `skipped: ${why || "none eligible (every bucket had a single mesh)"}). ` +
-                  "Meshopt/quantised geometry (non-Float32 positions) skips all merges; draw calls stay high.",
+                  `skipped: ${why || "none eligible (every bucket had a single mesh)"}).`,
               );
             } else {
-              console.info(`[cityview] merged ${m.before} meshes into ${m.after} tile batches`);
+              console.info(
+                `[cityview] merged ${m.before} meshes into ${m.after} tile batches` +
+                  (m.dequantized ? ` (dequantised ${m.dequantized} Meshopt/KHR meshes)` : ""),
+              );
             }
           }
           // Static after the merge: skip per-frame matrix traversal of the (now small) tree.
@@ -2006,8 +2038,8 @@
           setLoad(0.74, "Bringing people outside");
           const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Bringing people outside"));
           pedestrians = await createPedestrians(scene, THREE, {
-            count: 22,
-            people: { initial: 8, resident: 14, rotate: false },
+            count: 14,
+            people: { initial: 6, resident: 10, rotate: false },
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
             camera,
@@ -2025,7 +2057,7 @@
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
           setLoad(0.88, "Bikes and scooters");
-          micromobility = await createMicromobility(scene, THREE, { count: 16 });
+          micromobility = await createMicromobility(scene, THREE, { count: 12 });
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
