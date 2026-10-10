@@ -23,7 +23,7 @@ const FRONT_H = 2.85; // kerb to fascia underside
 const BLADE = 0.62;
 const POOL_DEPTH = 3.2;
 const REACH = 7; // m: "what's this shop" prompt range
-const DAY = ["zo", "ma", "di", "wo", "do", "vr", "za"];
+const DAY = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 const STYLE = {
   food: { bg: ["#1f4d36", "#5a2e1a", "#24323f"], fg: "#f3e6c4", serif: true },
@@ -49,15 +49,15 @@ function hash(n) {
 }
 
 function prettyKind(kind) {
-  const NL = {
-    bakery: "Bakkerij", butcher: "Slagerij", greengrocer: "Groenten & Fruit", pharmacy: "Apotheek",
-    hairdresser: "Kapper", cafe: "Café", pub: "Café", bar: "Bar", restaurant: "Restaurant",
-    fast_food: "Snack", supermarket: "Supermarkt", convenience: "Nachtwinkel", bank: "Bank",
-    florist: "Bloemen", bicycle: "Fietsen", dentist: "Tandarts", doctors: "Dokter",
-    veterinary: "Dierenarts", beauty: "Schoonheid", clothes: "Kleding", furniture: "Meubelen",
-    copyshop: "Copy", optician: "Optiek", laundry: "Wasserette", books: "Boeken",
+  const EN = {
+    bakery: "Bakery", butcher: "Butcher", greengrocer: "Greengrocer", pharmacy: "Pharmacy",
+    hairdresser: "Hairdresser", cafe: "Café", pub: "Pub", bar: "Bar", restaurant: "Restaurant",
+    fast_food: "Fast food", supermarket: "Supermarket", convenience: "Convenience", bank: "Bank",
+    florist: "Florist", bicycle: "Bike shop", dentist: "Dentist", doctors: "Doctor",
+    veterinary: "Vet", beauty: "Beauty", clothes: "Clothes", furniture: "Furniture",
+    copyshop: "Copy shop", optician: "Optician", laundry: "Laundry", books: "Books",
   };
-  return NL[kind] || kind.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  return EN[kind] || kind.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
 function drawIcon(ctx, cat, x, y, s, st) {
@@ -178,20 +178,20 @@ function fmt(h) {
 
 export function hoursLine(hours, d, h) {
   if (isOpen(hours, d, h)) {
-    for (const [o, c] of hours[d] || []) if (h >= o && h < c) return `Geopend · tot ${fmt(c)}`;
-    for (const [, c] of hours[(d + 6) % 7] || []) if (c > 24) return `Geopend · tot ${fmt(c)}`;
-    return "Geopend";
+    for (const [o, c] of hours[d] || []) if (h >= o && h < c) return `Open · until ${fmt(c)}`;
+    for (const [, c] of hours[(d + 6) % 7] || []) if (c > 24) return `Open · until ${fmt(c)}`;
+    return "Open";
   }
   for (let k = 0; k < 7; k++) {
     const day = (d + k) % 7;
     for (const [o] of hours[day] || []) {
       if (k > 0 || o > h) {
-        const when = k === 0 ? "" : k === 1 ? "morgen " : `${DAY[day]} `;
-        return `Gesloten · opent ${when}${fmt(o)}`;
+        const when = k === 0 ? "" : k === 1 ? "tomorrow " : `${DAY[day]} `;
+        return `Closed · opens ${when}${fmt(o)}`;
       }
     }
   }
-  return "Gesloten";
+  return "Closed";
 }
 
 function poolTexture(THREE) {
@@ -550,7 +550,7 @@ export async function createShops(scene, THREE, opts = {}) {
       if (!best) return null;
       const title = best.name || prettyKind(best.kind);
       const kind = best.name ? ` · ${prettyKind(best.kind)}` : "";
-      return `${title}${kind}\n${hoursLine(best.hours, day, hour)}${best.hoursKnown ? "" : " (gebruikelijke uren)"}`;
+      return `${title}${kind}\n${hoursLine(best.hours, day, hour)}${best.hoursKnown ? "" : " (usual hours)"}`;
     },
   };
 }
