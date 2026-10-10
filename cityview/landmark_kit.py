@@ -25,6 +25,8 @@ MATERIALS = frozenset(
         "brick",  # dark red neo-Gothic brick (ZAS)
         "brick_dark",  # weathered / recessed brick
         "brick_brown",  # Van Kuyck mansion brick
+        "brick_cream",  # pale Silesian brick (Thielens, Peter Benoitstraat 34/40)
+        "brick_yellow",  # yellow brick with red bands (Peter Benoitstraat 38)
         "stone_white",  # white limestone: tracery, statues, copings
         "stone_grey",  # light grey stone / concrete (Benoit monument)
         "bluestone",  # Belgian arduin: plinths, sills, steps
@@ -36,6 +38,9 @@ MATERIALS = frozenset(
         "glass",
         "glass_dark",  # deep voids: doorways, shop interiors, belfry openings
         "glass_roof",  # light, dirty glazing of iron canopies
+        "glass_amber",  # stained glass
+        "glass_green",
+        "glass_blue",
         "frame_white",
         "frame_dark",
         "iron",  # cast iron: columns, railings, cresting

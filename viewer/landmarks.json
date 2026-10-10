@@ -5,53 +5,54 @@
   ],
   "landmarks": [
     {
-      "id": "7345816",
-      "name": "ZAS Vincentius (Sint-Vincentiusgasthuis)",
-      "kind": "hospital",
-      "x": 137.65,
-      "y": 458.04
+      "id": "117235287",
+      "name": "Muziekkiosk Koning Albertpark",
+      "kind": "bandstand",
+      "x": 106.11,
+      "y": -235.94,
+      "file": "landmarks/117235287.glb"
     },
     {
       "id": "231220414",
       "name": "Feestzaal Harmonie",
       "kind": "hall",
-      "x": -7.35,
-      "y": 44.95
-    },
-    {
-      "id": "501410388",
-      "name": "Mechelsesteenweg 123 (Art Deco)",
-      "kind": "apartments",
-      "x": -85.5,
-      "y": 502.65
+      "x": -3.94,
+      "y": 67.86,
+      "file": "landmarks/231220414.glb"
     },
     {
       "id": "232921425",
       "name": "In de Gulden Spoor",
       "kind": "house",
-      "x": 127.35,
-      "y": 529.3
+      "x": 136.12,
+      "y": 535.47,
+      "file": "landmarks/232921425.glb"
     },
     {
-      "id": "117235287",
-      "name": "Muziekkiosk Koning Albertpark",
-      "kind": "bandstand",
-      "x": 106.1,
-      "y": -235.9
+      "id": "353285592",
+      "name": "Basiliek van het Heilig Hart",
+      "kind": "church",
+      "x": 12.6,
+      "y": -503.64,
+      "file": "landmarks/353285592.glb",
+      "reach": 60
     },
     {
-      "id": "gulden_spoor_gate",
-      "name": "In de Gulden Spoor \u2013 poortgebouw",
-      "kind": "gatehouse",
-      "x": 177.31,
-      "y": 524.69
+      "id": "432190363",
+      "name": "Klooster van het Heilig Hart",
+      "kind": "school",
+      "x": 38.38,
+      "y": -497.33,
+      "file": "landmarks/432190363.glb"
     },
     {
-      "id": "2396262252",
-      "name": "Monument Peter Benoit",
-      "kind": "memorial",
-      "x": -5.0,
-      "y": 62.0
+      "id": "453577567",
+      "name": "Sint-Bonifaciuskerk",
+      "kind": "church",
+      "x": 399.62,
+      "y": 97.56,
+      "file": "landmarks/453577567.glb",
+      "reach": 60
     },
     {
       "id": "501410385",
@@ -59,7 +60,72 @@
       "kind": "church",
       "x": -45.45,
       "y": 450.89,
+      "file": "landmarks/501410385.glb",
       "reach": 60
+    },
+    {
+      "id": "501410388",
+      "name": "Mechelsesteenweg 123 (Art Deco)",
+      "kind": "apartments",
+      "x": -73.45,
+      "y": 505.0,
+      "file": "landmarks/501410388.glb"
+    },
+    {
+      "id": "501637650",
+      "name": "Peter Benoitstraat 34",
+      "kind": "house",
+      "x": -202.7,
+      "y": 316.27,
+      "file": "landmarks/501637650.glb"
+    },
+    {
+      "id": "501637651",
+      "name": "Peter Benoitstraat 38",
+      "kind": "house",
+      "x": -201.9,
+      "y": 300.49,
+      "file": "landmarks/501637651.glb"
+    },
+    {
+      "id": "501637652",
+      "name": "Peter Benoitstraat 40",
+      "kind": "house",
+      "x": -193.57,
+      "y": 296.72,
+      "file": "landmarks/501637652.glb"
+    },
+    {
+      "id": "503176291",
+      "name": "In de Gulden Spoor \u2013 poortgebouw",
+      "kind": "gatehouse",
+      "x": 168.93,
+      "y": 533.8,
+      "file": "landmarks/503176291.glb"
+    },
+    {
+      "id": "503713425",
+      "name": "Koetshuis Harmoniestraat 24",
+      "kind": "house",
+      "x": -135.97,
+      "y": 166.97,
+      "file": "landmarks/503713425.glb"
+    },
+    {
+      "id": "7345816",
+      "name": "ZAS Vincentius (Sint-Vincentiusgasthuis)",
+      "kind": "hospital",
+      "x": 86.28,
+      "y": 455.61,
+      "file": "landmarks/7345816.glb"
+    },
+    {
+      "id": "2396262252",
+      "name": "Monument Peter Benoit",
+      "kind": "memorial",
+      "x": 22.99,
+      "y": -59.65,
+      "file": "landmarks/2396262252.glb"
     }
   ]
 }

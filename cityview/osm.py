@@ -479,10 +479,12 @@ def _special_use_type(tags: dict[str, str]) -> str | None:
     kind = tags.get("building", "")
     amenity = tags.get("amenity", "")
     shop = tags.get("shop", "")
-    if (
-        kind in {"church", "cathedral", "chapel", "basilica", "monastery"}
-        or amenity == "place_of_worship"
-    ):
+    # The Heilig Hart monastery is tagged place_of_worship as well as
+    # building=monastery. That used to take the church path and grow a second
+    # ~28 m spire beside the basilica. It is a cloister block, not a church.
+    if kind == "monastery":
+        return "school"
+    if kind in {"church", "cathedral", "chapel", "basilica"} or amenity == "place_of_worship":
         return "church"
     if kind == "hospital" or amenity in {"hospital", "clinic"}:
         return "hospital"
@@ -744,7 +746,7 @@ def height_jitter(osm_id: int, height: float, amount: float = 0.05) -> float:
 
 # Types whose massing is a fixed landmark/institution height when OSM has no numbers.
 _TYPE_DEFAULT_BTYPES = {"church", "hospital", "school", "supermarket"}
-_TYPE_DEFAULT_KINDS = {"church", "cathedral", "basilica", "chapel", "monastery"}
+_TYPE_DEFAULT_KINDS = {"church", "cathedral", "basilica", "chapel"}
 _TALL_FLAT_LEVELS = 7  # towers get flat roofs unless OSM maps a roof shape
 
 

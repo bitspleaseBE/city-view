@@ -2262,6 +2262,9 @@ def make_landmark_materials(surface_mat_fn, church_mats: dict) -> dict:
         "brick": (textured("lm_brick_red", brick_img, (0.40, 0.2, 0.15, 1.0), 0.9, tint=(0.78, 0.6, 0.52)), tile("brick_red")),
         "brick_dark": (textured("lm_brick_dark", brick_img, (0.28, 0.14, 0.11, 1.0), 0.94, tint=(0.6, 0.46, 0.4)), tile("brick_red")),
         "brick_brown": (textured("lm_brick_brown", brown_img, (0.30, 0.18, 0.13, 1.0), 0.92, tint=(0.72, 0.6, 0.54)), tile("brick_brown")),
+        # The brown tile is too dark to tint pale. Cream is the yellow brick cooled; yellow is the yellow tile itself.
+        "brick_cream": (textured("lm_brick_cream", wall_img("brick_yellow"), (0.78, 0.76, 0.7, 1.0), 0.88, tint=(0.78, 0.8, 0.78)), tile("brick_yellow")),
+        "brick_yellow": (textured("lm_brick_yellow", wall_img("brick_yellow"), (0.86, 0.7, 0.38, 1.0), 0.9, tint=(1.0, 0.92, 0.62)), tile("brick_yellow")),
         "stone_white": (textured("lm_stone_white", stone_img, (0.86, 0.84, 0.79, 1.0), 0.78, tint=(1.0, 1.0, 0.98)), tile("stone_buff")),
         "stone_grey": (textured("lm_stone_grey", stone_img, (0.62, 0.62, 0.6, 1.0), 0.85, tint=(0.8, 0.82, 0.82)), tile("stone_buff")),
         "bluestone": (surface_mat_fn("curb", "lm_bluestone", (0.3, 0.31, 0.33, 1.0), 0.86, tint=(0.62, 0.66, 0.72)), float(surface_kit.surface_tile_m("curb"))),
@@ -2272,6 +2275,9 @@ def make_landmark_materials(surface_mat_fn, church_mats: dict) -> dict:
         "zinc": (surface_mat_fn("roof_zinc", "lm_zinc", (0.42, 0.44, 0.46, 1.0), 0.55, tint=(0.82, 0.84, 0.86)), float(surface_kit.surface_tile_m("roof_zinc"))),
         "glass": (principled("lm_glass", (0.04, 0.05, 0.06, 1.0), 0.15, metallic=0.35), 2.0),
         "glass_roof": (principled("lm_glass_roof", (0.55, 0.6, 0.62, 1.0), 0.2, metallic=0.3), 2.0),
+        "glass_amber": (principled("lm_glass_amber", (0.86, 0.52, 0.1, 1.0), 0.12, metallic=0.15), 2.0),
+        "glass_green": (principled("lm_glass_green", (0.12, 0.48, 0.28, 1.0), 0.12, metallic=0.15), 2.0),
+        "glass_blue": (principled("lm_glass_blue", (0.1, 0.24, 0.62, 1.0), 0.12, metallic=0.15), 2.0),
         "glass_dark": (principled("lm_glass_dark", (0.015, 0.016, 0.018, 1.0), 0.3, metallic=0.2), 2.0),
         "frame_white": (principled("lm_frame_white", (0.84, 0.84, 0.81, 1.0), 0.6), 2.0),
         "frame_dark": (principled("lm_frame_dark", (0.09, 0.09, 0.09, 1.0), 0.6, metallic=0.3), 2.0),
@@ -2284,6 +2290,28 @@ def make_landmark_materials(surface_mat_fn, church_mats: dict) -> dict:
 
 
 LANDMARK_STATS = {"objects": 0, "tris": 0}
+# One-off meshes exported as their own GLBs and removed from the city file.
+STREAMED: dict[str, list] = {}
+
+
+def _fresh_objects(before: set) -> list:
+    return [obj for obj in bpy.data.objects if obj not in before]
+
+
+def _wants_stream(bldg: dict) -> bool:
+    lm = bldg.get("landmark") or {}
+    return bool(lm.get("custom") or lm.get("stream"))
+
+
+def add_landmark_hold(osm_id, ring, holes, mats) -> None:
+    """Knee-high footprint so the site is not a hole until the detailed GLB loads."""
+    pts = [(float(p[0]), float(p[1])) for p in ring or []]
+    if len(pts) < 3:
+        return
+    hs = [[(float(p[0]), float(p[1])) for p in h] for h in holes or []]
+    hold = landmark_kit.Mesh()
+    landmark_kit.extrude_ring(hold, pts, hs, 0.0, 0.42, "brick", "brick")
+    add_kit_mesh(f"lmhold_{osm_id}", hold, mats["landmark"])
 
 
 def add_kit_mesh(name: str, kit, mats: dict) -> bpy.types.Object | None:
@@ -4362,11 +4390,24 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     ROOF_STATS.clear()
     ROOF_STATS.update({"measured": 0, "fallback": 0})
     for bldg in layout.get("buildings") or []:
+        before = set(bpy.data.objects)
         add_building(bldg, mats, spawn_xy=spawn_xy)
+        if _wants_stream(bldg):
+            fresh = _fresh_objects(before)
+            if fresh:
+                STREAMED[str(bldg["id"])] = fresh
+                add_landmark_hold(bldg.get("id"), bldg.get("ring") or [], bldg.get("holes") or [], mats)
     for node in layout.get("landmark_nodes") or []:
+        before = set(bpy.data.objects)
         kit = landmark_models.build_node_landmark(node)
         if kit is not None:
             add_kit_mesh(f"landmark_{node['id']}", kit, mats["landmark"])
+            fresh = _fresh_objects(before)
+            if fresh:
+                STREAMED[str(node["id"])] = fresh
+                pad = landmark_kit.Mesh()
+                landmark_kit.wbox(pad, float(node["x"]), float(node["y"]), 0.0, 3.2, 1.4, 0.28, 0.0, "stone_grey")
+                add_kit_mesh(f"lmhold_{node['id']}", pad, mats["landmark"])
     print(f"Hand-modelled landmarks: {LANDMARK_STATS['objects']} objects, {LANDMARK_STATS['tris']} tris")
     print(f"Rooftop detail: {ROOFTOP_STATS}, merged into {flush_rooftop()} meshes")
     print(f"Mansard dormers: {DORMER_STATS['dormers']}; textured roof families: {sorted((mats.get('roof_tex') or {}))}")
@@ -4381,10 +4422,44 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     setup_cameras(layout, xmin, ymin, xmax, ymax)
 
 
+def peel_streamed_landmarks(output_dir: Path) -> None:
+    """Write each one-off landmark to its own GLB, then drop it from the city scene.
+
+    The .blend is already saved, so street-level renders still see the detailed mesh.
+    A lmhold_* plinth stays in the city GLB.
+    """
+    dest = output_dir / "landmarks"
+    dest.mkdir(parents=True, exist_ok=True)
+    for lid, objs in STREAMED.items():
+        objs = [o for o in objs if getattr(o, "name", None) in bpy.data.objects]
+        if not objs:
+            continue
+        for obj in bpy.context.view_layer.objects:
+            obj.select_set(False)
+        for obj in objs:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = objs[0]
+        path = dest / f"{lid}.glb"
+        bpy.ops.export_scene.gltf(
+            filepath=str(path),
+            export_format="GLB",
+            use_selection=True,
+            export_texcoords=True,
+            export_normals=True,
+            export_materials="EXPORT",
+            export_yup=True,
+            export_cameras=False,
+        )
+        print(f"Wrote {path} ({path.stat().st_size / 1e6:.2f} MB)")
+        for obj in objs:
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+
 def export_outputs(output_dir: Path, name: str, do_render: bool) -> None:
     blend = output_dir / f"{name}.blend"
     glb = output_dir / f"{name}.glb"
     bpy.ops.wm.save_as_mainfile(filepath=str(blend))
+    peel_streamed_landmarks(output_dir)
     bpy.ops.export_scene.gltf(
         filepath=str(glb),
         export_format="GLB",

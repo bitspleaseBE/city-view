@@ -42,6 +42,20 @@ class CustomLandmarkTests(unittest.TestCase):
         ):
             self.assertEqual(custom_landmark_entry(osm_id)["custom"], kind)
 
+    def test_second_set_and_streamed_church(self):
+        for osm_id, kind in (
+            (503713425, "harmonie_koetshuis"),
+            (501637650, "benoit_34"),
+            (501637651, "benoit_38"),
+            (501637652, "benoit_40"),
+            (453577567, "bonifacius"),
+            (353285592, "heilig_hart"),
+            (432190363, "heilig_hart_klooster"),
+        ):
+            self.assertEqual(custom_landmark_entry(osm_id)["custom"], kind)
+        hit = match_landmark(501410385, "", "church")
+        self.assertTrue(hit.get("stream"))
+
     def test_zas_campus_photo_entry_gone(self):
         self.assertIsNone(match_landmark(9715814, "", "hospital"))
         self.assertIsNone(match_landmark(1, "ZAS Sint-Vincentius", "hospital"))
