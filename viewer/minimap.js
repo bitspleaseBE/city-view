@@ -3,6 +3,9 @@
  * the player position, vehicles, transit, and click-to-teleport in free mode.
  * Uses a simple cached road map rendering.
  */
+
+import { fetchJsonCached } from "./json-cache.js";
+
 export function createMinimap(THREE, opts = {}) {
   const SIZE = 200; // px
   const MARGIN = 12;
@@ -213,7 +216,7 @@ export function createMinimap(THREE, opts = {}) {
 
   async function loadRoads() {
     try {
-      const res = await fetch(ROADS_URL);
+      const res = await fetchJsonCached(ROADS_URL);
       if (!res.ok) return;
       const data = await res.json();
       const roads = data.roads || [];
@@ -397,7 +400,7 @@ export function createMinimap(THREE, opts = {}) {
     hctx.fillStyle = "#56645a"; // land
     hctx.fillRect(0, 0, hiBg.width, hiBg.height);
     try {
-      const res = await fetch("./buildings.json");
+      const res = await fetchJsonCached("./buildings.json");
       if (res.ok) {
         hctx.fillStyle = "#8d978e";
         for (const b of (await res.json()).buildings || []) {
@@ -416,7 +419,7 @@ export function createMinimap(THREE, opts = {}) {
       /* buildings are optional on the radar */
     }
     try {
-      const res = await fetch(ROADS_URL);
+      const res = await fetchJsonCached(ROADS_URL);
       if (!res.ok) return;
       const data = await res.json();
       const roads = data.roads || [];

@@ -11,6 +11,7 @@
  * ``setCrossingGate`` says the ped light is green. Lateral offset stays on the pavement.
  */
 import { createPeoplePool } from "./people.js";
+import { fetchJsonCached } from "./json-cache.js";
 
 const ROADS_URL = "./roads.json";
 const JOIN_M = 5.0; // endpoints this close are the same junction
@@ -27,12 +28,15 @@ const RECOVER_S = 0.45; // end of the scramble → walking again
 const HIT_DAMAGE = 22;
 const FRAILTY = { child: 0.85, senior: 0.75 };
 const BODY_CLEAR_S = 20; // a body may be cleared away once out of sight this long after death
+const MAX_BODIES = 4; // cap visible dead bodies; oldest force-cleared for redress
 const REDRESS_EVERY_S = 2.5;
 const REDRESS_HIDDEN_M = 28; // out of view and at least this far from the camera
 const REDRESS_FAR_M = 90; // or simply this far away
 const HOT_M = 55; // full anim + height sample
 const WARM_M = 110; // half-rate mixer, fixed pavement height
 const COLD_M = 180; // hide mesh, kinematics only
+const INDOOR_CHECK_M = 0.6; // re-test the footprint blocker after this much walking
+const SPLIT_STEP_M = 1.0; // indoor sampling step along a route
 const PAVEMENT_Y = 0.12; // sidewalk default when we skip groundAt raycasts
 
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -381,6 +385,9 @@ export async function createPedestrians(scene, THREE, opts = {}) {
         return 0;
       },
       setBlocker() {},
+      filterRoutes() {
+        return { before: 0, after: 0, dropped: 0 };
+      },
       setOnKilled() {},
       setCrossingGate() {},
     };
@@ -402,13 +409,33 @@ export async function createPedestrians(scene, THREE, opts = {}) {
 
   /** `dt` (walking updates only) lets someone back on their feet turn to the route, not snap. */
   function placeMember(m, dt = 0, precise = true) {
-    const route = walkRoutes[m.routeIdx];
-    const pos = routePosition(route, m.s);
+    let route = walkRoutes[m.routeIdx];
+    let pos = routePosition(route, m.s);
     const baseY = m.mesh.userData.baseY || 0;
-    const nx = -pos.tz;
-    const nz = pos.tx;
+    let nx = -pos.tz;
+    let nz = pos.tx;
     m.routeX = pos.x + nx * m.side;
     m.routeZ = pos.z + nz * m.side;
+    // Runtime alley backstop: never accept an advance that steps indoors. Checked every
+    // INDOOR_CHECK_M of travel (insideBuilding scans footprints) and on every route change.
+    if (blockerOn && (m.okRoute !== m.routeIdx || Math.abs(m.s - m.okS) >= INDOOR_CHECK_M)) {
+      if (blocked(m.routeX, m.routeZ)) {
+        if (m.okRoute === m.routeIdx && Number.isFinite(m.okS)) {
+          m.s = m.okS; // reject the step, turn round
+          m.dir = -m.dir;
+        } else {
+          relocateMember(m);
+        }
+        route = walkRoutes[m.routeIdx];
+        pos = routePosition(route, m.s);
+        nx = -pos.tz;
+        nz = pos.tx;
+        m.routeX = pos.x + nx * m.side;
+        m.routeZ = pos.z + nz * m.side;
+      }
+      m.okRoute = m.routeIdx;
+      m.okS = m.s;
+    }
     const x = m.routeX + (m.offX || 0);
     const z = m.routeZ + (m.offZ || 0);
     m.mesh.position.set(x, footY(x, z, baseY, precise), z);
@@ -437,6 +464,107 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     m.routeZ = pos.z + nz * m.side;
     m.mesh.position.x = m.routeX;
     m.mesh.position.z = m.routeZ;
+  }
+
+  /**
+   * Runtime alley backstop: strip / split the indoor stretches out of `walkRoutes`
+   * (`blocked(x, z)` = inside a building footprint), rebuild the junction graph and the spawn
+   * pool, then re-seat every walker on the nearest surviving piece. Safe to call repeatedly;
+   * a no-op when nothing is indoors. Keeps `walkRoutes` identity (also exposed as `routes`).
+   */
+  function filterRoutes(blockedFn) {
+    const test = typeof blockedFn === "function" ? blockedFn : blocked;
+    const before = walkRoutes.length;
+    if (!blockerOn && typeof blockedFn !== "function") return { before, after: before, dropped: 0 };
+    const old = walkRoutes.slice();
+    const next = [];
+    let cutRoutes = 0;
+    for (let i = 0; i < old.length; i++) {
+      const r = old[i];
+      const parts = splitRouteOutdoors(r, test);
+      if (parts.length === 1 && parts[0].whole) {
+        next.push({ ...r, src: i, s0: 0 });
+        continue;
+      }
+      cutRoutes++;
+      for (const pc of parts) {
+        let len = pc.length;
+        if (len === undefined) {
+          len = 0;
+          for (let k = 0; k < pc.points.length - 1; k++) {
+            len += Math.hypot(pc.points[k + 1].x - pc.points[k].x, pc.points[k + 1].z - pc.points[k].z);
+          }
+        }
+        next.push({ ...r, points: pc.points, length: len, src: i, s0: pc.s0 });
+      }
+    }
+    if (!cutRoutes) return { before, after: before, dropped: 0 };
+    if (!next.length) return { before, after: before, dropped: 0 }; // never leave the town empty
+    walkRoutes.length = 0;
+    for (const r of next) walkRoutes.push(r);
+    const sp = spawnRoutes();
+    if (!sp.length) {
+      // Too little survives to spawn on: restore the original network.
+      walkRoutes.length = 0;
+      for (const r of old) walkRoutes.push(r);
+      return { before, after: before, dropped: 0 };
+    }
+    spawnPool.length = 0;
+    for (const r of sp) spawnPool.push(r);
+    graph.clear();
+    for (const [k, v] of buildGraph(walkRoutes)) graph.set(k, v);
+
+    // Re-seat walkers: same source route and arc position if a piece still covers it.
+    const seat = (m) => {
+      const oldIdx = m.routeIdx;
+      for (let i = 0; i < walkRoutes.length; i++) {
+        const r = walkRoutes[i];
+        if (r.src !== oldIdx) continue;
+        const len = r.length;
+        if (m.s >= r.s0 - 0.01 && m.s <= r.s0 + len + 0.01) {
+          m.routeIdx = i;
+          m.s = Math.max(0.05, Math.min(len - 0.05, m.s - r.s0));
+          return true;
+        }
+      }
+      return false;
+    };
+    for (const g of groups) {
+      const lead = g.members[0];
+      const seated = g.members.map((m) => ({ m, ok: seat(m) }));
+      if (seated.every((e) => e.ok)) {
+        for (const { m } of seated) {
+          m.recent = new Set();
+          m.okRoute = -1;
+        }
+      } else {
+        // Whole household hops to a new route together so they do not scatter.
+        const hops = relocateMember(lead);
+        if (hops) {
+          g.members.forEach((m, mi) => {
+            if (m === lead) return;
+            m.routeIdx = lead.routeIdx;
+            m.dir = lead.dir;
+            const len = walkRoutes[m.routeIdx].length;
+            m.s = Math.max(0.05, Math.min(len - 0.05, lead.s - lead.dir * (mi >> 1) * 0.95));
+            m.recent = new Set();
+            m.turns = 0;
+          });
+        }
+        for (const m of g.members) m.okRoute = -1;
+      }
+      g.routeIdx = lead.routeIdx;
+      g.route = walkRoutes[lead.routeIdx];
+      for (const m of g.members) {
+        if (!m.down) placeMember(m);
+      }
+    }
+    const info = { before, after: walkRoutes.length, dropped: before - walkRoutes.length, cut: cutRoutes };
+    console.info(
+      `[cityview] pedestrians: alley backstop — ${cutRoutes} walk(s) trimmed of indoor stretches ` +
+        `(${before} → ${walkRoutes.length} walks, ${spawnPool.length} safe spawn)`
+    );
+    return info;
   }
 
   const camera = opts.camera || null;
@@ -490,6 +618,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const _qFall = new THREE.Quaternion();
   const _qYaw = new THREE.Quaternion();
   let blocked = () => false;
+  let blockerOn = false;
   let onKilled = () => {};
 
   /**
@@ -716,7 +845,6 @@ export async function createPedestrians(scene, THREE, opts = {}) {
           m.mesh.position.z = m.routeZ + (m.offZ || 0);
         }
 
-        const baseY = m.mesh.userData.baseY || 0;
         // placeMember already set Y — do not raycast again.
         if (m.mesh.userData.mixer) {
           if (precise || (d2 <= warm2 && _lodParity)) {
@@ -724,9 +852,8 @@ export async function createPedestrians(scene, THREE, opts = {}) {
           }
         } else if (precise) {
           m.phase += dt * m.speed * BOBBLE_FREQ;
-          m.mesh.position.y =
-            footY(m.mesh.position.x, m.mesh.position.z, baseY, false) +
-            BOBBLE_AMP * Math.abs(Math.sin(m.phase));
+          // placeMember (precise) already sampled the ground this frame and reset Y: just add the bob.
+          m.mesh.position.y += BOBBLE_AMP * Math.abs(Math.sin(m.phase));
           const swingAmt = 0.2 * Math.sin(m.phase);
           for (let ci = 0; ci < m.mesh.children.length; ci++) {
             const child = m.mesh.children[ci];
@@ -736,6 +863,24 @@ export async function createPedestrians(scene, THREE, opts = {}) {
           }
         }
       }
+    }
+    cullExcessBodies();
+  }
+
+  /** Keep at most MAX_BODIES dead people on the ground; oldest become redress-eligible. */
+  function cullExcessBodies() {
+    const bodies = [];
+    for (const g of groups) {
+      for (const m of g.members) {
+        if (m.down?.dead) bodies.push(m);
+      }
+    }
+    if (bodies.length <= MAX_BODIES) return;
+    bodies.sort((a, b) => (b.down.deadFor || 0) - (a.down.deadFor || 0));
+    for (let i = MAX_BODIES; i < bodies.length; i++) {
+      const m = bodies[i];
+      m.down.deadFor = Math.max(m.down.deadFor || 0, BODY_CLEAR_S + 1);
+      m.mesh.visible = false;
     }
   }
 
@@ -770,8 +915,11 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     hitTest,
     roadPeople,
     setBlocker(fn) {
-      blocked = fn;
+      blocked = typeof fn === "function" ? fn : () => false;
+      blockerOn = typeof fn === "function";
+      for (const g of groups) for (const m of g.members) m.okRoute = -1;
     },
+    filterRoutes,
     /** fn({ x, y, z, yaw }) once a killed pedestrian's body comes to rest (y = ground). */
     setOnKilled(fn) {
       onKilled = fn;
@@ -784,7 +932,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
 
 async function loadWalks() {
   try {
-    const res = await fetch(ROADS_URL);
+    const res = await fetchJsonCached(ROADS_URL);
     if (!res.ok) return [];
     const data = await res.json();
     return data.walks || [];
@@ -825,6 +973,79 @@ function buildWalkRoutes(walks, center) {
   ];
 }
 
+/**
+ * Cut `route` into its outdoor runs: samples every ~SPLIT_STEP_M, drops stretches where
+ * `blocked(x, z)` says we are inside a building footprint. Original vertices are kept inside
+ * a run so the geometry is untouched. Each piece carries `s0` (arc length of its start along
+ * the source route) so walkers can be re-seated. Crossings are all-or-nothing (their ends
+ * must stay on the kerb).
+ */
+function splitRouteOutdoors(route, blocked) {
+  const pts = route.points;
+  const seg = [];
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const l = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].z - pts[i].z);
+    seg.push(l);
+    total += l;
+  }
+  const pieces = [];
+  let cur = null;
+  let indoor = 0;
+  let samples = 0;
+  let prev = { x: pts[0].x, z: pts[0].z, s: 0, out: !blocked(pts[0].x, pts[0].z) };
+  samples++;
+  if (!prev.out) indoor++;
+  if (prev.out) cur = { points: [{ x: prev.x, z: prev.z }], s0: 0 };
+  let cum = 0;
+  const close = () => {
+    if (cur) pieces.push(cur);
+    cur = null;
+  };
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    const n = Math.max(1, Math.ceil(seg[i] / SPLIT_STEP_M));
+    for (let k = 1; k <= n; k++) {
+      const t = k / n;
+      const x = a.x + (b.x - a.x) * t;
+      const z = a.z + (b.z - a.z) * t;
+      const out = !blocked(x, z);
+      samples++;
+      if (!out) indoor++;
+      const smp = { x, z, s: cum + seg[i] * t, out };
+      const vertex = k === n; // a source vertex: keep it so curved runs stay curved
+      if (prev.out && out) {
+        if (vertex) cur.points.push({ x: b.x, z: b.z });
+      } else if (prev.out && !out) {
+        const last = cur.points[cur.points.length - 1];
+        if (Math.hypot(last.x - prev.x, last.z - prev.z) > 0.05) cur.points.push({ x: prev.x, z: prev.z });
+        close();
+      } else if (!prev.out && out) {
+        cur = { points: [{ x: smp.x, z: smp.z }], s0: smp.s };
+      }
+      prev = smp;
+    }
+    cum += seg[i];
+  }
+  close();
+  if (route.kind === "crossing") {
+    return indoor * 2 < samples ? [{ points: pts, s0: 0, length: total, whole: true }] : [];
+  }
+  const out = [];
+  for (const pc of pieces) {
+    let len = 0;
+    for (let i = 0; i < pc.points.length - 1; i++) {
+      len += Math.hypot(pc.points[i + 1].x - pc.points[i].x, pc.points[i + 1].z - pc.points[i].z);
+    }
+    if (len < 5) continue; // same floor as buildWalkRoutes
+    pc.length = len;
+    out.push(pc);
+  }
+  if (!indoor && out.length === 1) return [{ points: pts, s0: 0, length: total, whole: true }];
+  return out;
+}
+
 function buildGraph(routes) {
   const ends = [];
   for (let i = 0; i < routes.length; i++) {
@@ -838,6 +1059,9 @@ function buildGraph(routes) {
     const links = [];
     for (const b of ends) {
       if (a.routeIdx === b.routeIdx) continue;
+      // Pieces of one split route must not re-join across the building gap that cut them.
+      const sa = routes[a.routeIdx].src;
+      if (sa !== undefined && sa === routes[b.routeIdx].src) continue;
       if (Math.hypot(a.x - b.x, a.z - b.z) > JOIN_M) continue;
       links.push({ routeIdx: b.routeIdx, reverse: b.atEnd });
     }

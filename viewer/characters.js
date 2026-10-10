@@ -32,10 +32,15 @@ function load(path) {
 const walking = (name) => load(`${name}_Walking.glb`);
 const clipFile = (name, kind) => load(`clips/${name}_${kind}.glb`);
 
-/** Start every character download now; resolves when all have settled. */
-export function preloadCharacters() {
+/**
+ * Start character downloads now; resolves when all have settled. By default only the
+ * Walking GLBs (mesh + walk clip) are fetched; pass `{ clips: true }` to also prefetch
+ * Riding / Scooter clips. Otherwise those load on demand (and are cached) when
+ * `loadCharacterTemplates("Riding" | "Scooter")` is called.
+ */
+export function preloadCharacters({ clips = false } = {}) {
   return Promise.allSettled(
-    CHARACTERS.flatMap((n) => [walking(n), clipFile(n, "Riding"), clipFile(n, "Scooter")]),
+    CHARACTERS.flatMap((n) => (clips ? [walking(n), clipFile(n, "Riding"), clipFile(n, "Scooter")] : [walking(n)])),
   );
 }
 

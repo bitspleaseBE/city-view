@@ -8,6 +8,8 @@ import { fitHumanoid } from "./humanoid-fit.js";
 import { makeShareScooter } from "./scooters.js";
 import { loadCharacterTemplates } from "./characters.js";
 import { shared } from "./lanes.js";
+import { createCellGrid } from "./cell-grid.js";
+import { fetchJsonCached } from "./json-cache.js";
 
 const KMH = 1 / 3.6;
 const SNAP_M = 14;
@@ -24,6 +26,7 @@ const HARD_HIT_SPEED = 1.5; // m/s closing → knock-down (not a soft brush)
 const CRASH_KILL_SPEED = 7.5; // m/s closing with a tram/bus → lethal
 const CRASH_LIE_S = 3.2; // s on the deck before scramble / clear
 const CRASH_DEAD_S = 9; // s before a killed rider is cleared
+const MAX_WRECKS = 4; // cap tipped bikes/scooters on the ground at once
 
 /** Shared lamp materials so setNight can brighten every rider at once. */
 let _lampMat = null;
@@ -438,7 +441,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   let roads = [];
   try {
     // Fixed relative path only (opts.roadsUrl ignored — avoids SSRF on user-controlled URLs).
-    const res = await fetch("./roads.json");
+    const res = await fetchJsonCached("./roads.json");
     if (res.ok) {
       const data = await res.json();
       roads = data.roads || [];
@@ -528,6 +531,30 @@ export async function createMicromobility(scene, THREE, opts = {}) {
    * Oriented obstacles (trams / buses: `{ x, z, tx, tz, hl, hw, hard }`) are solid — riders
    * brake and never try to overtake through them.
    */
+  // Spatial prefilter over this frame's obstacle list (24 m cells). Exact tests stay as-is;
+  // the grid only drops obstacles that cannot reach the rider.
+  const obsGrid = createCellGrid();
+  const _nearObs = [];
+  let gridSrc = null;
+  let gridReach = 0;
+  function buildObstacleGrid(obstacles) {
+    obsGrid.clear();
+    gridSrc = obstacles;
+    let maxExt = 0;
+    for (let i = 0; i < obstacles.length; i++) {
+      const ob = obstacles[i];
+      obsGrid.insert(ob, ob.x, ob.z);
+      const ext = ob.hl != null ? Math.max(ob.hl ?? 1, ob.hw ?? 1) : ob.r ?? 0.4;
+      if (ext > maxExt) maxExt = ext;
+    }
+    // Longest look-ahead + obstacle half-extent + lateral notice band (+ slack).
+    gridReach = Math.max(LOOK_AHEAD, LOOK_AHEAD_HARD) + maxExt + HARD_SIDE + 2;
+  }
+  function nearObstacles(v, obstacles) {
+    if (obstacles !== gridSrc) return obstacles; // not this frame's list: no prefilter
+    return obsGrid.query(v.pos.x, v.pos.z, gridReach, _nearObs);
+  }
+
   function targetSpeed(v, obstacles) {
     let gap = Infinity;
     let oncoming = false;
@@ -574,7 +601,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       }
       consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
     }
-    for (const ob of obstacles) {
+    for (const ob of nearObstacles(v, obstacles)) {
       if (ob.hl != null) considerBox(ob);
       else consider(ob.x, ob.z, 0, 0, ob.r ?? 0.4);
     }
@@ -637,7 +664,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   function hardHit(v, obstacles) {
     let best = null;
     let bestD = Infinity;
-    for (const ob of obstacles) {
+    for (const ob of nearObstacles(v, obstacles)) {
       if (!ob.hard || ob.hl == null) continue;
       const dx = v.pos.x - ob.x;
       const dz = v.pos.z - ob.z;
@@ -769,24 +796,79 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     }
   }
 
+  // Distance LOD (mirrors pedestrians.js Hot / Warm / Cold), measured from the camera:
+  //   Hot  <= HOT_M   full mixer, hard-hit tests
+  //   Warm <= WARM_M  mixer at half rate, no hit tests
+  //   Cold <= COLD_M  hidden, mixer frozen, path still advances
+  //   Far  >  FAR_M   recycled onto a path near the camera (rate-limited)
+  const HOT_M = 60;
+  const WARM_M = 120;
+  const COLD_M = 200;
+  const FAR_M = 200;
+  const RECYCLE_MIN_M = 50;
+  const RECYCLE_MAX_M = 150;
+  const RECYCLES_PER_FRAME = 2;
+  let lodFrame = 0;
+  let recycled = 0;
+  const camPos = { x: 0, z: 0, set: false };
+
+  /** Same pattern as traffic.setCamera: update() reads this when no cam is passed. */
+  function setCamera(x, z) {
+    if (Number.isFinite(x) && Number.isFinite(z)) {
+      camPos.x = x;
+      camPos.z = z;
+      camPos.set = true;
+    }
+  }
+
+  /** Move a far-away rider onto a path point 50-150 m from the camera. True when it moved. */
+  function recycleNear(v, cx, cz) {
+    if (recycled >= RECYCLES_PER_FRAME) return false;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const path = paths[(Math.random() * paths.length) | 0];
+      const s = Math.random() * Math.max(1, path.length - 2) + 0.5;
+      samplePath(path, s, THREE, _pos, _tan);
+      const d = Math.hypot(_pos.x - cx, _pos.z - cz);
+      if (d < RECYCLE_MIN_M || d > RECYCLE_MAX_M) continue;
+      if (vehicles.some((o) => o !== v && o.pos.distanceToSquared(_pos) < SPAWN_GAP * SPAWN_GAP)) continue;
+      v.path = path;
+      v.reverse = legalDirs(path)[0];
+      v.s = s;
+      v.cur = v.speed;
+      v.swerve = 0;
+      v.overtake = 0;
+      v.stuck = 0;
+      place(v);
+      recycled++;
+      return true;
+    }
+    return false;
+  }
+
   function update(dt, obstacles = [], cam = null) {
     if (!(dt > 0)) return;
     dtSwerve = dt;
-    const cx = cam ? cam.x : null;
-    const cz = cam ? cam.z : null;
-    const hot2 = 60 * 60;
-    const cold2 = 180 * 180;
-    for (const v of vehicles) {
+    lodFrame++;
+    recycled = 0;
+    buildObstacleGrid(obstacles);
+    if (cam && Number.isFinite(cam.x) && Number.isFinite(cam.z)) setCamera(cam.x, cam.z);
+    const haveCam = camPos.set;
+    const cx = camPos.x;
+    const cz = camPos.z;
+    const hot2 = HOT_M * HOT_M;
+    const warm2 = WARM_M * WARM_M;
+    const far2 = FAR_M * FAR_M;
+    for (let vi = 0; vi < vehicles.length; vi++) {
+      const v = vehicles[vi];
       if (v.crash) {
         updateCrash(v, dt, obstacles);
         continue;
       }
 
-      const d2 =
-        cx == null ? 0 : (v.pos.x - cx) * (v.pos.x - cx) + (v.pos.z - cz) * (v.pos.z - cz);
-      if (d2 > cold2) {
+      const d2 = haveCam ? (v.pos.x - cx) * (v.pos.x - cx) + (v.pos.z - cz) * (v.pos.z - cz) : 0;
+      if (d2 > warm2) {
+        // Cold / Far: hidden, mixer frozen; still advance along the path cheaply.
         v.mesh.visible = false;
-        // Still advance on the path so they don't pile up far away.
         v.s += (v.reverse ? -v.speed : v.speed) * dt * 0.85;
         if (v.s >= v.path.length) {
           v.s = v.path.length - 0.01;
@@ -796,6 +878,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
           advanceEnd(v);
         }
         place(v);
+        if (d2 > far2) recycleNear(v, cx, cz);
         continue;
       }
       v.mesh.visible = true;
@@ -814,18 +897,16 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       }
       place(v);
 
-      // Far riders: skip hard-hit / skinned anim (still collide near the camera).
-      if (d2 > hot2) {
-        continue;
-      }
-
-      // Still inside a tram/bus after braking → accident: fly off, maybe die.
-      const hit = hardHit(v, obstacles);
-      if (hit) {
-        const closing = Math.max(v.cur, 0) + Math.max(0, Number(hit.speed) || 0);
-        if (closing >= HARD_HIT_SPEED || v.cur < 0.4) {
-          startCrash(v, hit);
-          continue;
+      const hot = d2 <= hot2;
+      // Still inside a tram/bus after braking → accident: fly off, maybe die (near the camera only).
+      if (hot) {
+        const hit = hardHit(v, obstacles);
+        if (hit) {
+          const closing = Math.max(v.cur, 0) + Math.max(0, Number(hit.speed) || 0);
+          if (closing >= HARD_HIT_SPEED || v.cur < 0.4) {
+            startCrash(v, hit);
+            continue;
+          }
         }
       }
 
@@ -837,12 +918,27 @@ export async function createMicromobility(scene, THREE, opts = {}) {
 
       const rider = v.mesh.userData.rider;
       if (rider?.userData?.mixer) {
-        // Pedal / push cadence roughly tracks travel speed
-        const scale = Math.max(0.05, Math.min(1.6, v.cur / 4.5));
-        if (rider.userData.action) rider.userData.action.setEffectiveTimeScale(scale);
-        rider.userData.mixer.update(dt);
+        // Warm riders tick every other frame (staggered per rider) with the accumulated dt.
+        v.mixDt = (v.mixDt || 0) + dt;
+        if (hot || ((lodFrame + vi) & 1) === 0) {
+          // Pedal / push cadence roughly tracks travel speed
+          const scale = Math.max(0.05, Math.min(1.6, v.cur / 4.5));
+          if (rider.userData.action) rider.userData.action.setEffectiveTimeScale(scale);
+          rider.userData.mixer.update(v.mixDt);
+          v.mixDt = 0;
+        }
       }
     }
+    cullExcessWrecks();
+  }
+
+  /** Cap visible tipped wrecks; oldest force-respawn onto the network. */
+  function cullExcessWrecks() {
+    const wrecks = [];
+    for (const v of vehicles) if (v.crash) wrecks.push(v);
+    if (wrecks.length <= MAX_WRECKS) return;
+    wrecks.sort((a, b) => (b.crash.t || 0) - (a.crash.t || 0));
+    for (let i = MAX_WRECKS; i < wrecks.length; i++) respawnRider(wrecks[i]);
   }
 
   function dispose() {
@@ -869,5 +965,6 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     count: vehicles.length,
     mixamo: rideTemplates.length > 0 || scooterTemplates.length > 0,
     setNight,
+    setCamera,
   };
 }

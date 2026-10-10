@@ -9,6 +9,7 @@
  */
 
 import { shared } from "./lanes.js";
+import { createCellGrid } from "./cell-grid.js";
 
 const TRANSIT_URL = "./transit.json";
 const TRAM_COUNT = 6;
@@ -38,6 +39,7 @@ const MAX_STEP = 1 / 30; // s: the sim never integrates a bigger step (stable at
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame (tab switch, hitch)
 const MAX_SUBSTEPS = 2; // cap work when FPS tanks (same death-spiral guard as traffic.js)
 const HARD_BRAKE = 3.0; // m/s^2 a tram / bus can shed speed when a car is right in front
+const FAR_SCAN_M = 120; // beyond this from the camera: skip player / ped hit scans (leaders still apply)
 const PED_HIT_SPEED = 1.8; // m/s: overlap above this knocks a pedestrian down
 const CAR_EVICT_SEC = 3; // a car holding a tram / bus still this long is cleared
 const GATE_MARGIN = 24; // m inside the district edge where vehicles (re-)enter
@@ -1299,6 +1301,27 @@ export async function createTransit(scene, THREE, opts = {}) {
   let onHitPlayer = null;
   /** Shared ped snapshot for all vehicles × substeps this frame. */
   let framePeds = null;
+  /** Spatial prefilter over `framePeds` (24 m cells) — rebuilt once per frame. */
+  const pedGrid = createCellGrid();
+  const _nearPeds = [];
+  /** Camera XZ for the far-vehicle scan cull (falls back to the walker when unset). */
+  const camPos = { x: 0, z: 0, set: false };
+  function isNearCamera(x, z) {
+    if (!camPos.set && !playerPos.lengthSq()) return true;
+    const cx = camPos.set ? camPos.x : playerPos.x;
+    const cz = camPos.set ? camPos.z : playerPos.z;
+    const dx = x - cx;
+    const dz = z - cz;
+    return dx * dx + dz * dz <= FAR_SCAN_M * FAR_SCAN_M;
+  }
+  /** Camera position (XZ) used to skip hard-hit / ped scans for far vehicles. */
+  function setCamera(x, z) {
+    if (Number.isFinite(x) && Number.isFinite(z)) {
+      camPos.x = x;
+      camPos.z = z;
+      camPos.set = true;
+    }
+  }
 
   function setVehicleLabel(v, path) {
     setLabel(THREE, v, path);
@@ -1546,7 +1569,8 @@ export async function createTransit(scene, THREE, opts = {}) {
       }
     }
 
-    if (walkObject && !(ride && ride.vehicle === v)) {
+    const scanNear = isNearCamera(v.pos.x, v.pos.z);
+    if (walkObject && scanNear && !(ride && ride.vehicle === v)) {
       const dx = playerPos.x - v.pos.x;
       const dz = playerPos.z - v.pos.z;
       if (dx * dx + dz * dz < (PLAYER_STOP_DIST + 8) ** 2) {
@@ -1571,10 +1595,14 @@ export async function createTransit(scene, THREE, opts = {}) {
 
     // Pedestrians in the track / lane: brake. Trams stay on rails (no lateral dodge).
     {
-      const peds = framePeds;
-      // Always respect people — even while creeping past a stuck car.
+      // Always respect people — even while creeping past a stuck car (when anywhere near the camera).
+      const halfLen = (BODY_LEN[v.mode] || BODY_LEN.bus) * 0.5;
+      const peds =
+        scanNear && framePeds && framePeds.length
+          ? pedGrid.query(v.pos.x, v.pos.z, PLAYER_STOP_DIST + halfLen + 10, _nearPeds)
+          : null;
       if (peds && peds.length) {
-        const half = (BODY_LEN[v.mode] || BODY_LEN.bus) * 0.5;
+        const half = halfLen;
         const hw = v.mode === "tram" ? 1.35 : 1.3;
         for (let p = 0; p < peds.length; p++) {
           const ped = peds[p];
@@ -1748,11 +1776,19 @@ export async function createTransit(scene, THREE, opts = {}) {
       playerPos.set(walkObject.position.x, 0, walkObject.position.z);
     }
     framePeds = pedProvider ? pedProvider() : null;
+    pedGrid.clear();
+    if (framePeds) {
+      for (let p = 0; p < framePeds.length; p++) {
+        const ped = framePeds[p];
+        pedGrid.insert(ped, ped.x, ped.z);
+      }
+    }
     const total = Math.min(dt, MAX_FRAME);
     const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(total / MAX_STEP)));
     const h = total / n;
     for (let i = 0; i < n; i++) step(h, walkObject);
     framePeds = null;
+    pedGrid.clear();
   }
 
   function tryInteract(player) {
@@ -1999,6 +2035,7 @@ export async function createTransit(scene, THREE, opts = {}) {
     setPedestrians,
     setOnHitPed,
     setOnHitPlayer,
+    setCamera,
     locateStop,
     vehicles,
     count: vehicles.length,
@@ -2018,6 +2055,7 @@ function emptyTransit() {
   return {
     update() {},
     dispose() {},
+    setCamera() {},
     setNight() {},
     locateStop() {
       return { stop: null, changed: false };
