@@ -954,7 +954,11 @@
           pos.z = cz + (dz / d) * R;
           playerMotion.bump(0.6);
         };
-        if (micromobility) for (const v of micromobility.vehicles) push(v.pos.x, v.pos.z, 0.85);
+        // Upright riders only — tipped wrecks use the hit/knockdown path, not a solid cylinder.
+        if (micromobility) for (const v of micromobility.vehicles) {
+          if (v.crash) continue;
+          push(v.pos.x, v.pos.z, 0.85);
+        }
         if (scooters) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
         if (outdoors) outdoors.ensureOutdoors(pos);
       }

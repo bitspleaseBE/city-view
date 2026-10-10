@@ -711,15 +711,17 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     if (pool) for (const g of groups) releaseGroup(g);
   }
 
-  /** Upright people cars / buses / trams should brake for (reuses one array). */
+  /** People cars / buses / trams should brake for — including those lying in the lane (reuses one array). */
   const _roadPeople = [];
   function roadPeople() {
     _roadPeople.length = 0;
     for (const g of groups) {
       for (const m of g.members) {
-        if (m.down) continue;
         const p = m.mesh.position;
-        _roadPeople.push({ x: p.x, z: p.z, r: 0.32 * (m.prof.scale || 1) });
+        // A body on the paving is longer than a standing person — give traffic a bit more room.
+        const scale = m.prof.scale || 1;
+        const r = m.down ? 0.55 * scale : 0.32 * scale;
+        _roadPeople.push({ x: p.x, z: p.z, r });
       }
     }
     return _roadPeople;
