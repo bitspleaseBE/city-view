@@ -23,7 +23,7 @@ const FRONT_H = 2.85; // kerb to fascia underside
 const BLADE = 0.62;
 const POOL_DEPTH = 3.2;
 const REACH = 7; // m: "what's this shop" prompt range
-const DAY = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+const DAY = ["zo", "ma", "di", "wo", "do", "vr", "za"];
 
 const STYLE = {
   food: { bg: ["#1f4d36", "#5a2e1a", "#24323f"], fg: "#f3e6c4", serif: true },
@@ -178,17 +178,20 @@ function fmt(h) {
 
 export function hoursLine(hours, d, h) {
   if (isOpen(hours, d, h)) {
-    for (const [o, c] of hours[d] || []) if (h >= o && h < c) return `Open · until ${fmt(c)}`;
-    for (const [, c] of hours[(d + 6) % 7] || []) if (c > 24) return `Open · until ${fmt(c)}`;
+    for (const [o, c] of hours[d] || []) if (h >= o && h < c) return `Open · tot ${fmt(c)}`;
+    for (const [, c] of hours[(d + 6) % 7] || []) if (c > 24) return `Open · tot ${fmt(c)}`;
     return "Open";
   }
   for (let k = 0; k < 7; k++) {
     const day = (d + k) % 7;
     for (const [o] of hours[day] || []) {
-      if (k > 0 || o > h) return `Closed · opens ${k === 0 ? "" : k === 1 ? "tomorrow " : DAY[day] + " "}${fmt(o)}`;
+      if (k > 0 || o > h) {
+        const when = k === 0 ? "" : k === 1 ? "morgen " : `${DAY[day]} `;
+        return `Gesloten · opent ${when}${fmt(o)}`;
+      }
     }
   }
-  return "Closed";
+  return "Gesloten";
 }
 
 function poolTexture(THREE) {
@@ -547,7 +550,7 @@ export async function createShops(scene, THREE, opts = {}) {
       if (!best) return null;
       const title = best.name || prettyKind(best.kind);
       const kind = best.name ? ` · ${prettyKind(best.kind)}` : "";
-      return `${title}${kind}\n${hoursLine(best.hours, day, hour)}${best.hoursKnown ? "" : " (usual hours)"}`;
+      return `${title}${kind}\n${hoursLine(best.hours, day, hour)}${best.hoursKnown ? "" : " (gebruikelijke uren)"}`;
     },
   };
 }
