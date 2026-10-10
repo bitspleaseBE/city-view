@@ -7,6 +7,7 @@ import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import { fitHumanoid } from "./humanoid-fit.js";
 import { makeShareScooter } from "./scooters.js";
 import { loadCharacterTemplates } from "./characters.js";
+import { shared } from "./lanes.js";
 
 const KMH = 1 / 3.6;
 const SNAP_M = 14;
@@ -580,6 +581,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   let dtSwerve = 0;
 
   for (let i = 0; i < COUNT; i++) spawnOne();
+  shared.bikes = vehicles;
 
   console.info(
     `[cityview] micromobility: ${vehicles.length} riders` +
@@ -687,6 +689,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       if (rider?.userData?.mixer) rider.userData.mixer.stopAllAction();
     }
     vehicles.length = 0;
+    if (shared.bikes === vehicles) shared.bikes = null;
   }
 
   function setNight(glow) {

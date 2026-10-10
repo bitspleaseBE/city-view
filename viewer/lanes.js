@@ -13,5 +13,6 @@
  *       stay on the boulevard, not the building-side asphalt strip beside the sidewalk.
  *   cars -> the live car list, so buses / trams brake for cars in front of them instead of
  *       driving through them.
+ *   bikes -> micromobility riders, so buses / trams also brake for bikes in their lane.
  */
-export const shared = { laneAt: null, cars: null };
+export const shared = { laneAt: null, cars: null, bikes: null };
