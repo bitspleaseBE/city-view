@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>City View — Klein Antwerpen · Velo Harmonie</title>
+    <title>Metropolis — Klein Antwerpen · Velo Harmonie</title>
     <style>
       :root {
         --ink: #1a2430;
@@ -15,7 +15,7 @@
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background: #6eb6ff;
+        background: #06080c;
         font-family: "Iowan Old Style", "Palatino Linotype", Palatino, serif;
         color: var(--ink);
       }
@@ -24,18 +24,16 @@
         touch-action: none;
       }
 
-      /* ---- Loading screen: sunny Antwerp sky, gabled skyline, tram-yellow progress ---- */
+      /* ---- Loading screen: GTA-style Antwerp key art (port, cathedral, diamonds, cast) ---- */
       #loading {
         position: fixed;
         inset: 0;
         z-index: 1000;
         display: flex;
-        align-items: center;
+        align-items: flex-end;
         justify-content: center;
         overflow: hidden;
-        background:
-          radial-gradient(circle 42vmin at 78% 20%, rgba(255, 231, 160, 0.95) 0, rgba(255, 231, 160, 0.4) 18%, rgba(255, 231, 160, 0) 100%),
-          linear-gradient(180deg, #4aa0ff 0%, #6eb6ff 38%, #a8d4ff 72%, #d8e8f4 100%);
+        background: #06080c;
         transition: opacity 0.7s ease, visibility 0s linear 0.7s;
       }
       #loading.done {
@@ -43,43 +41,62 @@
         visibility: hidden;
         pointer-events: none;
       }
-      #loading .ld-skyline {
+      #loading .ld-art {
         position: absolute;
-        left: 0;
-        right: 0;
-        bottom: 0;
+        inset: 0;
         width: 100%;
-        height: 34vh;
-        min-height: 150px;
+        height: 100%;
+        object-fit: cover;
+        object-position: center 40%;
         pointer-events: none;
+        transform: scale(1.04);
+        animation: ld-ken 18s ease-in-out alternate infinite;
+      }
+      @keyframes ld-ken {
+        from { transform: scale(1.04) translate3d(0, 0, 0); }
+        to { transform: scale(1.1) translate3d(-1.2%, -0.8%, 0); }
+      }
+      #loading .ld-veil {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          linear-gradient(180deg, #06080c88 0%, transparent 28%, transparent 52%, #06080cee 88%, #06080c 100%),
+          linear-gradient(90deg, #06080c55 0%, transparent 35%, transparent 65%, #06080c44 100%);
       }
       #loading .ld-card {
         position: relative;
-        margin-top: -12vh;
-        padding: 0 24px;
+        z-index: 1;
+        width: min(36rem, 92vw);
+        margin: 0 0 max(4.5vh, 28px);
+        padding: 0 8px;
         text-align: center;
-        width: min(30rem, 100%);
         box-sizing: border-box;
+        font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
       }
       #loading .ld-kicker {
-        margin: 0 0 10px;
-        font-size: 0.78rem;
-        letter-spacing: 0.22em;
+        margin: 0 0 8px;
+        font: 700 0.72rem/1.3 system-ui, sans-serif;
+        letter-spacing: 0.28em;
         text-transform: uppercase;
-        color: rgba(26, 36, 48, 0.62);
+        color: #ff2bd6;
+        text-shadow: 0 1px 8px #000c;
       }
       #loading h2 {
-        margin: 0 0 22px;
-        font-size: clamp(2rem, 7vw, 3.4rem);
-        font-weight: 600;
-        line-height: 1.05;
-        letter-spacing: 0.005em;
-        color: var(--ink);
-        text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+        margin: 0 0 18px;
+        font-size: clamp(2.1rem, 7.5vw, 3.6rem);
+        font-weight: 400;
+        line-height: 0.95;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: #fff;
+        -webkit-text-stroke: 3px #080a0d;
+        paint-order: stroke fill;
+        text-shadow: 3px 4px 0 #080a0d, 0 0 28px #000a;
       }
       #loading .ld-dots i {
         font-style: normal;
-        opacity: 0.25;
+        opacity: 0.35;
         animation: ld-dot 1.2s infinite;
       }
       #loading .ld-dots i:nth-child(2) {
@@ -89,20 +106,20 @@
         animation-delay: 0.4s;
       }
       @keyframes ld-dot {
-        0%, 70%, 100% { opacity: 0.25; }
+        0%, 70%, 100% { opacity: 0.35; }
         30% { opacity: 1; }
       }
       #loading .ld-track {
-        height: 8px;
-        border-radius: 4px;
-        background: rgba(26, 36, 48, 0.18);
+        height: 10px;
+        border: 2px solid #080a0d;
+        background: #ffffff22;
         overflow: hidden;
-        box-shadow: inset 0 0 0 1px rgba(26, 36, 48, 0.12);
+        box-shadow: 3px 3px 0 #080a0d;
       }
       #loading .ld-fill {
         height: 100%;
         width: 100%;
-        background: linear-gradient(90deg, #f2b630, #ffd35c);
+        background: linear-gradient(90deg, #c4129a, #ff2bd6 55%, #ff7ae8);
         transform-origin: left center;
         transform: scaleX(0.03);
         transition: transform 0.35s ease-out;
@@ -111,24 +128,34 @@
         animation: ld-pulse 1.4s ease-in-out infinite;
       }
       @keyframes ld-pulse {
-        0%, 100% { opacity: 0.55; }
+        0%, 100% { opacity: 0.65; }
         50% { opacity: 1; }
       }
       #loading .ld-sub {
         display: flex;
         justify-content: space-between;
-        margin-top: 10px;
-        font-size: 0.85rem;
-        color: rgba(26, 36, 48, 0.75);
+        gap: 12px;
+        margin-top: 12px;
+        font: 600 0.82rem/1.35 system-ui, sans-serif;
+        color: #e8eef4;
+        text-shadow: 0 1px 6px #000c;
+      }
+      #loading .ld-sub #ld-pct {
+        color: #ff2bd6;
+        font-variant-numeric: tabular-nums;
       }
       #loading.failed .ld-fill {
-        background: #b5483a;
+        background: #c23b2e;
         transform: scaleX(1);
       }
       @media (prefers-reduced-motion: reduce) {
         #loading,
         #loading .ld-fill {
           transition: none;
+        }
+        #loading .ld-art {
+          animation: none;
+          transform: none;
         }
         #loading .ld-dots i,
         #loading.indet .ld-fill {
@@ -318,8 +345,8 @@
       body.locked #click-cue,
       body.free-view #click-cue,
       body.on-transit #click-cue,
-      /* Hide cue only while the loader is still on screen (not after .done / remove). */
-      body:has(#loading:not(.done)) #click-cue {
+      body:has(#loading) #click-cue,
+      #click-cue.gone {
         display: none;
       }
       body.touch-device #click-cue {
@@ -329,25 +356,487 @@
         position: fixed;
         left: 50%;
         top: 50%;
-        width: 4px;
-        height: 4px;
-        margin: -2px 0 0 -2px;
-        border-radius: 50%;
-        background: rgba(255, 255, 255, 0.85);
-        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+        width: 22px;
+        height: 22px;
+        transform: translate(-50%, -50%);
+        filter: drop-shadow(0 0 2px #000);
         pointer-events: none;
         display: none;
       }
+      #crosshair i {
+        position: absolute;
+        background: #fff;
+        width: 6px;
+        height: 1px;
+        top: 10px;
+      }
+      #crosshair i:nth-child(2) { right: 0; }
+      #crosshair i:nth-child(3) { width: 1px; height: 6px; top: 0; left: 10px; }
+      #crosshair i:nth-child(4) { width: 1px; height: 6px; top: auto; bottom: 0; left: 10px; }
       body.locked #crosshair {
         display: block;
       }
-      body.night #crosshair {
-        background: rgba(255, 255, 255, 0.95);
-        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75), 0 0 6px rgba(0, 0, 0, 0.55);
-      }
       body.free-view #crosshair,
-      body.on-transit #crosshair {
+      body.on-transit #crosshair,
+      body.menu-open #crosshair {
         display: none !important;
+      }
+
+      /* ---- City poster menu (title / pause) ---- */
+      #city-menu {
+        position: fixed;
+        inset: 0;
+        z-index: 900;
+        overflow: hidden;
+        color: #fff;
+        font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+      }
+      #city-menu .cm-poster {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+      #city-menu .cm-bg {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center;
+        pointer-events: none;
+      }
+      #city-menu .cm-scrim {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(90deg, #081927aa, transparent 62%),
+          linear-gradient(0deg, #06121fd0, transparent 28%);
+        pointer-events: none;
+      }
+      #city-menu .cm-home {
+        position: relative;
+        z-index: 1;
+        width: min(42%, 28rem);
+        margin-left: 7%;
+        height: calc(100dvh - 72px);
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        padding-top: 4dvh;
+      }
+      #city-menu .cm-home[hidden],
+      #city-menu .cm-panel[hidden],
+      #city-menu .cm-portrait-wrap[hidden] {
+        display: none !important;
+      }
+      #city-menu .cm-logo {
+        width: auto;
+        height: min(28dvh, 200px);
+        max-width: 100%;
+        object-fit: contain;
+        filter: drop-shadow(3px 6px 1px #0007);
+        animation: cm-fly .38s cubic-bezier(.16, 1, .3, 1) both;
+      }
+      /* Large right-side cast plate: waist-up, planted on the bottom-right. */
+      #city-menu .cm-portrait-wrap {
+        position: absolute;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        left: auto;
+        z-index: 1;
+        width: min(48vw, 640px);
+        height: min(85dvh, 880px);
+        overflow: hidden;
+        pointer-events: none;
+        transform: none;
+        -webkit-mask-image: linear-gradient(180deg, #000 0 80%, transparent 100%);
+        mask-image: linear-gradient(180deg, #000 0 80%, transparent 100%);
+      }
+      #city-menu .cm-portrait {
+        display: block;
+        position: absolute;
+        right: 6%;
+        bottom: 0;
+        height: 100%;
+        width: auto;
+        max-width: 100%;
+        object-fit: contain;
+        object-position: center bottom;
+        filter:
+          drop-shadow(0 22px 36px #000d)
+          drop-shadow(0 4px 12px #0008);
+      }
+      #city-menu .cm-nav {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 2px;
+        margin-top: 2dvh;
+        min-width: min(100%, 16rem);
+        animation: cm-fly .4s 40ms cubic-bezier(.16, 1, .3, 1) both;
+      }
+      #city-menu .cm-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 0;
+        border: 0;
+        padding: 0.35em 0.85em 0.35em 0.7em;
+        background: transparent;
+        color: #fff;
+        font: 700 clamp(18px, 2.8dvh, 28px)/1.35 system-ui, "Segoe UI", sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        text-align: left;
+        text-shadow: 0 1px 8px #000a;
+        cursor: pointer;
+      }
+      #city-menu .cm-item::after {
+        content: "";
+        width: 0.55em;
+        opacity: 0;
+        font-size: 0.85em;
+      }
+      #city-menu .cm-item.selected {
+        background: #ff2bd6;
+        color: #fff;
+        text-shadow: none;
+        box-shadow: 0 0 24px #ff2bd655;
+      }
+      #city-menu .cm-item.selected::after {
+        content: "›";
+        opacity: 1;
+        font-weight: 400;
+      }
+      #city-menu .cm-status {
+        margin-top: 14px;
+        font: 12px/1.5 system-ui, sans-serif;
+        color: #e0e7ed;
+      }
+      #city-menu .cm-footer {
+        position: absolute;
+        bottom: 14px;
+        left: 4%;
+        display: flex;
+        gap: 18px;
+        font: 11px/1.6 system-ui, sans-serif;
+        color: #d7e0e7;
+        z-index: 2;
+      }
+      #city-menu .cm-footer kbd {
+        display: inline-block;
+        padding: 1px 6px;
+        border: 1px solid #ffffff55;
+        border-radius: 4px;
+        margin-right: 4px;
+        font: 10px/1.4 ui-monospace, monospace;
+      }
+      #city-menu .cm-sound {
+        margin-left: 8px;
+        padding: 2px 8px;
+        border: 1px solid #ffffff55;
+        border-radius: 4px;
+        background: transparent;
+        color: #d7e0e7;
+        font: 11px/1.4 system-ui, sans-serif;
+        cursor: pointer;
+      }
+      #city-menu .cm-sound[aria-pressed="true"] { opacity: 0.55; }
+      #city-menu .cm-panel {
+        position: relative;
+        z-index: 2;
+        width: min(720px, 92vw);
+        margin: 8vh auto 0;
+        padding: 28px 32px 24px;
+        background: linear-gradient(125deg, #162b3af5, #090e16fc);
+        border: 2px solid #080a0d;
+        border-top: 5px solid #ff2bd6;
+        box-shadow: 0 18px 48px #000a;
+        font-family: system-ui, sans-serif;
+      }
+      #city-menu .cm-panel.cm-maps-panel {
+        width: min(980px, 94vw);
+        animation: cm-fly .32s cubic-bezier(.16, 1, .3, 1) both;
+      }
+      #city-menu .cm-panel h2 {
+        margin: 0 0 18px;
+        font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+        font-size: clamp(28px, 5vw, 44px);
+        letter-spacing: 0.02em;
+      }
+      #city-menu .cm-eyebrow {
+        margin: 0 0 6px;
+        font: 11px/1.4 system-ui, sans-serif;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #ff2bd6;
+      }
+      #city-menu .cm-maps-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(240px, 42%);
+        gap: 22px;
+        align-items: stretch;
+      }
+      #city-menu .cm-maps { list-style: none; margin: 0; padding: 0; }
+      #city-menu .cm-map {
+        width: 100%;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        margin: 0 0 10px;
+        padding: 14px 16px;
+        border: 2px solid #ffffff22;
+        background: #ffffff0d;
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+        text-align: left;
+        transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
+      }
+      #city-menu .cm-map-text {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+      #city-menu .cm-map strong { font-size: 1.15rem; }
+      #city-menu .cm-map em {
+        font-style: normal;
+        font-size: 0.78rem;
+        opacity: 0.62;
+        letter-spacing: 0.02em;
+      }
+      #city-menu .cm-map-note { font-size: 0.85rem; opacity: 0.75; flex-shrink: 0; }
+      #city-menu .cm-map.selected {
+        border-color: #ff2bd6;
+        background: #ff2bd618;
+        box-shadow: 0 0 0 1px #ff2bd644, 0 8px 28px #0006;
+      }
+      #city-menu .cm-map.selected .cm-map-note { color: #ff9ae8; opacity: 1; }
+      #city-menu .cm-map.locked { opacity: 0.45; cursor: pointer; }
+      #city-menu .cm-map.locked.selected { opacity: 0.7; }
+      #city-menu .cm-map-preview {
+        min-height: 220px;
+      }
+      #city-menu .cm-map-frame {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1;
+        overflow: hidden;
+        border: 2px solid #ffffff22;
+        background:
+          radial-gradient(ellipse at 30% 20%, #1a3a52 0%, transparent 55%),
+          linear-gradient(160deg, #0c1824, #060a10);
+        box-shadow: inset 0 0 40px #0008;
+      }
+      #city-menu .cm-map-frame::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        border-top: 3px solid #ff2bd6;
+        box-shadow: inset 0 0 0 1px #ffffff10;
+      }
+      #city-menu .cm-map-img,
+      #city-menu .cm-map-roads {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      #city-menu .cm-map-roads {
+        mix-blend-mode: screen;
+        opacity: 0.95;
+        pointer-events: none;
+      }
+      #city-menu .cm-map-placeholder {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background:
+          repeating-linear-gradient(
+            -18deg,
+            #ffffff06 0 12px,
+            transparent 12px 24px
+          ),
+          linear-gradient(145deg, #152433, #0a1018);
+      }
+      #city-menu .cm-map-placeholder[hidden] { display: none !important; }
+      #city-menu .cm-map-lock {
+        padding: 10px 16px;
+        border: 1px solid #ffffff44;
+        font: 700 12px/1 system-ui, sans-serif;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: #e8eef4;
+        background: #0006;
+      }
+      #city-menu .cm-map-caption {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        padding: 28px 14px 12px;
+        background: linear-gradient(0deg, #061018f0 20%, transparent);
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        pointer-events: none;
+      }
+      #city-menu .cm-map-caption strong {
+        font: 700 1.05rem/1.2 Impact, Haettenschweiler, "Arial Black", sans-serif;
+        letter-spacing: 0.03em;
+        text-shadow: 0 1px 6px #000c;
+      }
+      #city-menu .cm-map-caption span {
+        font: 11px/1.35 system-ui, sans-serif;
+        opacity: 0.8;
+      }
+      @media (max-width: 720px) {
+        #city-menu .cm-maps-layout {
+          grid-template-columns: 1fr;
+        }
+        #city-menu .cm-map-preview {
+          order: -1;
+          max-width: 320px;
+          margin: 0 auto 8px;
+        }
+      }
+      #city-menu .cm-back,
+      #city-menu .cm-confirm {
+        margin-top: 16px;
+        margin-right: 10px;
+        padding: 10px 18px;
+        border: 0;
+        background: #ff2bd6;
+        color: #fff;
+        font: 700 14px/1 system-ui, sans-serif;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        cursor: pointer;
+        box-shadow: 0 0 18px #ff2bd644;
+      }
+      #city-menu .cm-back {
+        background: transparent;
+        color: #fff;
+        border: 1px solid #ffffff55;
+        box-shadow: none;
+      }
+      #city-menu .cm-cast {
+        position: absolute;
+        inset: 0;
+        z-index: 3;
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        padding: 6vh 4vw 80px;
+        text-align: center;
+        background: #0c1016f5;
+        border: 0;
+        border-top: 0;
+        box-shadow: none;
+        overflow: auto;
+      }
+      #city-menu .cm-cast::before {
+        content: "ANTWERPEN";
+        position: absolute;
+        inset: 18% 0 auto;
+        font: 900 14vw/1 Impact, sans-serif;
+        color: #ffffff0c;
+        letter-spacing: 0.08em;
+        pointer-events: none;
+      }
+      #city-menu .cm-carousel {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: min(52vh, 420px);
+        margin: 12px 0 8px;
+      }
+      #city-menu .cm-stage {
+        position: relative;
+        width: min(70vw, 520px);
+        height: 100%;
+      }
+      #city-menu .cm-card {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        transition: transform .28s cubic-bezier(.16,1,.3,1), opacity .28s ease;
+        cursor: pointer;
+        pointer-events: none;
+      }
+      #city-menu .cm-card.focus { pointer-events: auto; }
+      #city-menu .cm-card img {
+        max-height: 92%;
+        max-width: 100%;
+        object-fit: contain;
+        filter: drop-shadow(0 10px 18px #000a);
+        pointer-events: none;
+      }
+      #city-menu .cm-card figcaption { display: none; }
+      #city-menu .cm-arrow {
+        position: relative;
+        flex: 0 0 auto;
+        width: 42px;
+        height: 42px;
+        border: 0;
+        border-radius: 8px;
+        background: #ffffff18;
+        color: #fff;
+        font-size: 28px;
+        cursor: pointer;
+        z-index: 20;
+      }
+      #city-menu .cm-index { margin: 0; color: #ff2bd6; font: 12px/1.4 system-ui, sans-serif; }
+      #city-menu .cm-name {
+        margin: 6px 0 4px;
+        font-family: Impact, Haettenschweiler, "Arial Black", sans-serif;
+        font-size: clamp(28px, 5vw, 48px);
+      }
+      #city-menu .cm-blurb {
+        margin: 0 auto 8px;
+        max-width: 28rem;
+        font: 14px/1.45 system-ui, sans-serif;
+        color: #d7e0e7;
+      }
+      @keyframes cm-fly {
+        0% { transform: translateY(100dvh); opacity: 0; }
+        72% { transform: translateY(-10px); opacity: 1; }
+        100% { transform: translateY(0); opacity: 1; }
+      }
+      body.menu-open #hint,
+      body.menu-open #modes,
+      body.menu-open #status,
+      body.menu-open #hud,
+      body.menu-open #click-cue,
+      body.menu-open #prompt,
+      body.menu-open #ride {
+        visibility: hidden !important;
+      }
+      @media (max-width: 700px) {
+        #city-menu .cm-home { width: 70%; margin-left: 4%; }
+        #city-menu .cm-portrait-wrap {
+          width: 78vw;
+          height: 62dvh;
+          right: -8%;
+          opacity: 0.92;
+        }
+        #city-menu .cm-portrait {
+          right: 0;
+          bottom: -10%;
+          height: 115%;
+          filter: brightness(0.85) drop-shadow(0 14px 22px #000a);
+        }
       }
       /* Touch HUD sits above the radar; keep prompts from covering the sticks. */
       body.touch-ui #prompt {
@@ -365,11 +854,8 @@
   </head>
   <body>
     <div id="loading" class="indet" role="status" aria-live="polite">
-      <svg class="ld-skyline" viewBox="0 0 1200 160" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
-        <path fill="#8fa3bd" opacity="0.5" d="M0 160 L0 120 L90 120 L90 104 L170 104 L170 126 L260 126 L260 98 L330 98 L330 118 L430 118 L430 90 L500 90 L500 112 L610 112 L610 100 L700 100 L700 84 L742 84 L752 40 L758 6 L762 40 L772 84 L800 84 L800 96 L840 96 L840 70 L880 70 L880 106 L980 106 L980 92 L1060 92 L1060 122 L1140 122 L1140 108 L1200 108 L1200 160 Z" />
-        <path fill="#7a4e3c" d="M0 160 L0 96 L14 96 L14 88 L28 88 L28 80 L42 80 L42 72 L56 80 L56 88 L70 88 L70 96 L84 96 L84 160 L84 122 L92 122 L92 114 L99 114 L99 106 L106 106 L106 98 L114 98 L114 90 L122 98 L122 106 L129 106 L129 114 L136 114 L136 122 L144 122 L144 160 L144 88 L152 88 L152 80 L159 80 L159 72 L166 72 L166 64 L174 64 L174 56 L182 64 L182 72 L189 72 L189 80 L196 80 L196 88 L204 88 L204 160 L204 88 L219 88 L219 80 L234 80 L234 72 L249 80 L249 88 L264 88 L264 160 L264 64 L274 64 L274 56 L284 56 L284 48 L294 48 L294 40 L304 48 L304 56 L314 56 L314 64 L324 64 L324 160 L324 88 L339 88 L339 80 L354 80 L354 72 L369 80 L369 88 L384 88 L384 160 L384 122 L396 122 L396 114 L408 114 L408 106 L420 106 L420 98 L432 98 L432 90 L444 98 L444 106 L456 106 L456 114 L468 114 L468 122 L480 122 L480 160 L480 104 L488 104 L488 96 L495 96 L495 88 L502 88 L502 80 L510 80 L510 72 L518 80 L518 88 L525 88 L525 96 L532 96 L532 104 L540 104 L540 160 L540 56 L555 56 L555 48 L570 48 L570 40 L585 48 L585 56 L600 56 L600 160 L600 122 L609 122 L609 114 L618 114 L618 106 L627 106 L627 98 L636 98 L636 90 L645 98 L645 106 L654 106 L654 114 L663 114 L663 122 L672 122 L672 160 L672 80 L684 80 L684 72 L696 72 L696 64 L708 64 L708 56 L720 64 L720 72 L732 72 L732 80 L744 80 L744 160 L744 122 L753 122 L753 114 L762 114 L762 106 L771 106 L771 98 L780 98 L780 90 L789 98 L789 106 L798 106 L798 114 L807 114 L807 122 L816 122 L816 160 L816 88 L837 88 L837 80 L858 80 L858 72 L879 80 L879 88 L900 88 L900 160 L900 72 L918 72 L918 64 L936 64 L936 56 L954 64 L954 72 L972 72 L972 160 L972 122 L980 122 L980 114 L987 114 L987 106 L994 106 L994 98 L1002 98 L1002 90 L1010 98 L1010 106 L1017 106 L1017 114 L1024 114 L1024 122 L1032 122 L1032 160 L1032 72 L1041 72 L1041 64 L1050 64 L1050 56 L1059 56 L1059 48 L1068 48 L1068 40 L1077 48 L1077 56 L1086 56 L1086 64 L1095 64 L1095 72 L1104 72 L1104 160 L1104 80 L1120 80 L1120 72 L1136 72 L1136 64 L1152 64 L1152 56 L1168 64 L1168 72 L1184 72 L1184 80 L1200 80 L1200 160 Z" />
-        <rect x="0" y="152" width="1200" height="8" fill="#c4b59a" />
-      </svg>
+      <img class="ld-art" src="./menu/loading-antwerp.jpg" alt="" />
+      <div class="ld-veil" aria-hidden="true"></div>
       <div class="ld-card">
         <p class="ld-kicker">Klein Antwerpen · Velo Harmonie</p>
         <h2>Antwerp is loading<span class="ld-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></h2>
@@ -385,59 +871,21 @@
         const fill = document.getElementById("ld-fill");
         const stage = document.getElementById("ld-stage");
         const pct = document.getElementById("ld-pct");
-        // Displayed progress chases a target and creeps during long silent stages so the bar
-        // feels linear in time (download used to burn 80% of the bar in a few seconds, then stall).
-        let target = 0;
         let shown = 0;
-        let ceil = 0.08;
-        let finishing = false;
-        let lastTick = performance.now();
-        const paint = () => {
-          root.classList.remove("indet");
-          fill.style.transform = "scaleX(" + Math.max(0.03, shown).toFixed(3) + ")";
-          pct.textContent = Math.round(shown * 100) + "%";
-        };
-        let doneAt = 0;
-        const tick = (now) => {
-          if (!root.isConnected) return;
-          const dt = Math.min(0.08, (now - lastTick) / 1000);
-          lastTick = now;
-          if (shown < target) {
-            // Catch up to the stage target quickly; finish even faster once klaar.
-            shown = Math.min(target, shown + dt * (finishing ? 1.4 : 0.7));
-          } else if (!finishing && shown < ceil && shown < 0.985) {
-            // Keep moving a little while the next await is silent.
-            shown = Math.min(ceil, shown + dt * 0.04);
-          }
-          paint();
-          if (finishing && shown >= 1) {
-            if (!doneAt) {
-              doneAt = now;
-              root.classList.add("done");
-            } else if (now - doneAt > 700) {
-              root.remove();
-              return;
-            }
-          }
-          requestAnimationFrame(tick);
-        };
-        requestAnimationFrame(tick);
         window.__loading = {
           set(frac, label) {
-            const f = Math.max(target, Math.min(1, frac));
-            target = f;
-            // Leave headroom for creep until the next milestone (never past 98.5% before done).
-            ceil = Math.min(0.985, Math.max(ceil, f + 0.07));
+            shown = Math.max(shown, Math.min(1, frac));
+            root.classList.remove("indet");
+            fill.style.transform = "scaleX(" + Math.max(0.03, shown).toFixed(3) + ")";
+            pct.textContent = Math.round(shown * 100) + "%";
             if (label) stage.textContent = label;
           },
           done() {
-            finishing = true;
-            target = 1;
-            ceil = 1;
-            stage.textContent = "Ready";
+            this.set(1, "Ready");
+            root.classList.add("done");
+            setTimeout(() => root.remove(), 1000);
           },
           fail(msg) {
-            finishing = true;
             root.classList.remove("indet");
             root.classList.add("failed");
             stage.textContent = msg;
@@ -460,9 +908,8 @@
             chunks.push(value);
             got += value.length;
             // ~36 MB Meshopt city; asymptotic fallback when Content-Length is missing/wrong.
-            // Download is only ~42% of the bar — parse / traffic / people take the rest of the wait.
             const f = total && got <= total ? got / total : 1 - Math.exp(-got / 36e6);
-            window.__loading.set(f * 0.42, "Fetching the streets");
+            window.__loading.set(f * 0.8, "Fetching the streets");
           }
           const buf = new Uint8Array(got);
           let off = 0;
@@ -492,7 +939,7 @@
       <p>Velo Harmonie · grab a Velo or a scooter, hop on a tram, or just walk</p>
     </div>
     <div id="click-cue">Click to play</div>
-    <div id="crosshair"></div>
+    <div id="crosshair" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
     <script type="importmap">
       {
         "imports": {
@@ -505,43 +952,31 @@
       import * as THREE from "three";
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
-      import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
+      import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
       import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
       import { createTraffic } from "./traffic.js";
       import { createTransit } from "./transit.js";
       import { createPedestrians } from "./pedestrians.js";
-      import { createCashDrops, cashAmount } from "./cash.js";
       import { createMicromobility } from "./micromobility.js";
-      import { preloadCharacters, onCharacterProgress } from "./characters.js";
+      import { preloadStarter } from "./characters.js";
       import { createVelo } from "./velo.js";
       import { createScooters } from "./scooters.js";
       import { createShops } from "./shops.js";
       import { createTerraces } from "./terraces.js";
       import { createPropCollider } from "./props-collide.js";
       import { createPlayerMotion } from "./player-motion.js";
-      import { createHud, perf } from "./hud.js";
-      import { createPlayerCrash } from "./crash.js";
+      import { createPlayerAvatar, preloadPlayer } from "./players.js";
+      import { createThirdPersonCamera } from "./third-person.js";
+      import { createMenu } from "./menu.js";
+      import { createHud } from "./hud.js";
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
-      import { createLandmarkLocator } from "./landmarks.js";
-      import { createLandmarkStream } from "./landmark-stream.js";
       import { createOutdoorsGuard } from "./outdoors.js";
-      import { paintParkedCars, wireParkedCarLamps } from "./cars.js";
+      import { wireParkedCarLamps } from "./cars.js";
       import { createTouchControls, wantsTouchControls } from "./touch-controls.js";
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
-      const HINT = {
-        walk: "Walk: click + WASD · Shift sprint · Space jump · E Velo / scooter / tram · Esc · V free · N night · M radar",
-        walkShort: "Walk: click + WASD · E Velo / scooter / tram · Esc · V free · N night",
-        walkCue: "Walk: click + WASD · E Velo / scooter / tram · V free · N night · M radar",
-        walkLocked: "WASD · mouse look · Space jump · E Velo / scooter / tram · Esc · V free · N night · M radar",
-        walkTouch: "Walk: stick move · drag look · Go interact · Sprint / Jump",
-        map: "Free view (top-down): WASD pan · Shift fast · scroll zoom · click radar to teleport · V walk · N night",
-        mapTouch: "Map view: drag pan · pinch zoom · tap radar to teleport",
-        velo: "Cycling — WASD · E hop off / return at a station",
-        tram: "Riding — E request stop · get off at next halt",
-      };
       const btnWalk = document.getElementById("btn-walk");
       const btnFree = document.getElementById("btn-free");
       const btnNight = document.getElementById("btn-night");
@@ -591,43 +1026,49 @@
       scene.fog = new THREE.FogExp2(FOG_COLOR, 0.00055);
 
       const camera = new THREE.PerspectiveCamera(
-        68,
+        58,
         window.innerWidth / window.innerHeight,
-        0.25,
-        // Tight far plane: the district is ~1 km; drawing to 4.5 km just burns fill-rate.
-        1100,
+        0.2,
+        4500,
       );
-      camera.position.set(-218.5, 1.7, -432.1);
+      camera.position.set(-218.5, 3.2, -427.5);
 
-      // Competitive defaults: no MSAA, capped DPR. Sharper and much cheaper than soft AA + HiDPI.
+      // Opaque canvas with no stencil: cheaper framebuffer + no alpha compositing with the page.
       const renderer = new THREE.WebGLRenderer({
-        antialias: false,
+        antialias: true,
         alpha: false,
         stencil: false,
         powerPreference: "high-performance",
       });
-      const PR_MAX = Math.min(window.devicePixelRatio || 1, 1);
-      const PR_MIN = Math.min(0.65, PR_MAX);
+      // Render-resolution cap (deliberately below devicePixelRatio ≤ 2): the adaptive scaler in
+      // tick() trims it further only when frame time says the GPU can't keep up.
+      const PR_MAX = Math.min(window.devicePixelRatio || 1, 1.2);
+      const PR_MIN = Math.min(0.75, PR_MAX);
       let pixelRatio = PR_MAX;
       renderer.setPixelRatio(pixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setClearColor(SKY, 1);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
-      // ACES is pretty but expensive; NoToneMapping keeps contrast punchy and saves GPU.
-      renderer.toneMapping = THREE.NoToneMapping;
-      renderer.toneMappingExposure = 1;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.28; // brighter, more dynamic range
       document.body.appendChild(renderer.domElement);
 
-      // No IBL / fill light: each extra light + env map taxes every PBR material. Hemi + sun
-      // only — competitive-style lighting, hotter so the street still reads without ACES/IBL.
-      scene.environment = null;
+      // Cheap IBL so glass/metal catch sky instead of looking like flat stickers.
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const roomEnv = new RoomEnvironment();
+      scene.environment = pmrem.fromScene(roomEnv, 0.04).texture;
+      roomEnv.dispose(); // the studio scene is only needed to bake the cube map
+      pmrem.dispose();
 
-      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 1.2);
+      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85);
       scene.add(hemi);
-      const sun = new THREE.DirectionalLight(0xfff2d6, 1.75);
+      const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
       sun.position.set(220, 320, -160);
       scene.add(sun);
       scene.add(sun.target);
+      const fill = new THREE.DirectionalLight(0xcfe4ff, 0.35);
+      fill.position.set(-160, 120, 200);
+      scene.add(fill);
 
       // Visible sun disc + soft haze
       const sunMesh = new THREE.Mesh(
@@ -702,7 +1143,7 @@
       const VEG_NIGHT = new THREE.Color(0x0a120c);
       const TRUNK_NIGHT = new THREE.Color(0x0c0908);
       const lampHeads = []; // world positions of street-lamp heads
-      const LAMP_LIGHTS = 2; // nearest lamps only — each PointLight is a full extra light pass
+      const LAMP_LIGHTS = 4;
       const LAMP_INTENSITY = 38;
       const lampLights = [];
       let lampGlow = 0;
@@ -716,7 +1157,7 @@
       // Stars: a sparse dome that rides with the camera and fades in with the night.
       const starGeo = new THREE.BufferGeometry();
       {
-        const n = 280;
+        const n = 700;
         const pos = new Float32Array(n * 3);
         for (let i = 0; i < n; i++) {
           const u = Math.random() * 2 - 1;
@@ -743,8 +1184,8 @@
       stars.visible = false;
       scene.add(stars);
 
-      // Debug / screenshot hook (no behaviour): window.__cityview.setNight(true), .camera, .walk
-      window.__cityview = {
+      // Debug / screenshot hook (no behaviour): window.__metropolis.setNight(true), .camera, .walk
+      window.__metropolis = {
         camera,
         renderer,
         setNight: setTimeOfDay,
@@ -762,11 +1203,6 @@
         get clock() { return { hour: gameHour, day: gameDay }; },
         get motion() { return playerMotion; },
         get pixelRatio() { return pixelRatio; },
-        get pedestrians() { return pedestrians; },
-        get cash() { return cash; },
-        get outdoors() { return outdoors; },
-        get crash() { return playerCrash; },
-        crashScooter: (speed) => crashRide(speed),
       };
 
       function applyTimeOfDay(t) {
@@ -782,13 +1218,16 @@
         renderer.setClearColor(_tmpCol, 1);
         scene.fog.density = baseFogDensity * (1 + 0.5 * night);
 
+        renderer.toneMappingExposure = 1.18 - 0.1 * night;
+        scene.environmentIntensity = 1 - 0.86 * smooth(0.05, 0.8, t);
+
         hemi.color.copy(HEMI_SKY_DAY).lerp(HEMI_SKY_NIGHT, night);
         hemi.groundColor.copy(HEMI_GND_DAY).lerp(HEMI_GND_NIGHT, night);
-        hemi.intensity = 1.2 - 0.85 * night;
+        hemi.intensity = 0.85 - 0.62 * night;
 
         // One directional light plays the sun by day and the moon by night.
         sun.color.copy(SUN_COL).lerp(SUN_DUSK, dusk).lerp(MOON_COL, smooth(0.5, 0.9, t));
-        sun.intensity = 1.75 * dayAmt + 0.4 * smooth(0.5, 1.0, t);
+        sun.intensity = 1.35 * dayAmt + 0.3 * smooth(0.5, 1.0, t);
         sun.position.lerpVectors(sunArcPos, MOON_POS, smooth(0.2, 0.8, t));
         sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
         sunHaze.position.copy(sunMesh.position);
@@ -796,6 +1235,7 @@
         sunMesh.scale.setScalar(1 - 0.45 * smooth(0.4, 0.9, t));
         sunHaze.material.color.set(0xffe8b0).lerp(_tmpCol.set(0x8fa6d8), smooth(0.4, 0.9, t));
         sunHaze.material.opacity = 0.18 + 0.1 * dusk;
+        fill.intensity = 0.35 - 0.2 * night;
 
         // Façade windows + lamp heads glow; cars and trams follow.
         const glow = smooth(0.4, 0.9, t);
@@ -810,7 +1250,6 @@
         shops && shops.setNight(glow);
         terraces && terraces.setNight && terraces.setNight(glow);
         transit.setNight && transit.setNight(glow);
-        minimap && minimap.setNight && minimap.setNight(glow);
 
         // Crowns stay vivid green under moonlight unless we pull them down with the sky.
         for (const v of vegMats) {
@@ -825,7 +1264,6 @@
         skirtMat && skirtMat.color.set(GROUND_SKIRT).lerp(_tmpCol.set(0x23252b), night);
 
         const isNight = t > 0.5;
-        document.body.classList.toggle("night", isNight);
         btnNight.textContent = isNight ? "Day" : "Night";
         btnNight.setAttribute("aria-pressed", String(isNight));
         btnNight.classList.toggle("active", isNight);
@@ -917,7 +1355,6 @@
       let mode = "walk"; // walk | free
       const eyeHeight = 1.7;
       const keys = { w: false, a: false, s: false, d: false, shift: false, space: false };
-      const lookEuler = new THREE.Euler(0, 0, 0, "YXZ");
       const TOUCH = wantsTouchControls();
       if (TOUCH) {
         document.body.classList.add("touch-device");
@@ -925,15 +1362,14 @@
         if (cue) cue.textContent = "Tap to play";
       }
       let touch = null;
-      // Jump physics
-      const JUMP = { v: 0, g: -12, strength: 5.0, active: false, cooldown: 0 };
+      // GTA-style hop: short, snappy impulse; re-press Space to jump again.
+      const JUMP = { v: 0, y: 0, g: -24, strength: 7.4, active: false, held: false };
       let prevTime = performance.now();
       let cityRoot = null;
       let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
       let traffic = { update() {}, dispose() {} };
       let transit = { update() {}, dispose() {} };
       let pedestrians = null;
-      let cash = null;
       let micromobility = null;
       let velo = null;
       let scooters = null;
@@ -943,103 +1379,36 @@
       let parkedCars = null;
       let outdoors = null;
       const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
-      /** Optional baked heightfield (filled after city merge) — kills per-frame full-scene raycasts. */
-      let _heightGrid = null;
-      function groundAtRay(x, z) {
-        if (!cityRoot) return 0;
-        _groundRay.ray.origin.set(x, 1.2, z);
-        const hit = _groundRay.intersectObject(cityRoot, true)[0];
-        return hit && hit.point.y < 0.6 ? hit.point.y : 0;
+      let groundMeshes = null;
+      /** Sidewalk / road tiles only. Raycasting the whole city (façades included) stalls for tens of seconds. */
+      function collectGroundMeshes(root) {
+        const meshes = [];
+        const size = new THREE.Vector3();
+        root.traverse((obj) => {
+          if (!obj.isMesh) return;
+          const n = obj.name || "";
+          if (!/(sidewalk|road_|park_|curb|ground)/i.test(n)) return;
+          const geo = obj.geometry;
+          if (!geo) return;
+          if (!geo.boundingBox) geo.computeBoundingBox();
+          geo.boundingBox.getSize(size);
+          if (Math.max(size.x, size.z) > 200) return;
+          meshes.push(obj);
+        });
+        groundMeshes = meshes;
+        console.info(`[metropolis] ground rays: ${meshes.length} walkable meshes`);
       }
       /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
       function groundAt(x, z) {
-        // F3 profiling: calls/frame always, wall time only while the stats panel is open.
-        perf.count("groundAt");
-        if (!perf.on) return groundAtCore(x, z);
-        const t0 = performance.now();
-        const y = groundAtCore(x, z);
-        perf.add("groundAt", performance.now() - t0);
-        return y;
+        if (!cityRoot) return 0;
+        _groundRay.ray.origin.set(x, 1.2, z);
+        const hit = (groundMeshes?.length
+          ? _groundRay.intersectObjects(groundMeshes, false)
+          : _groundRay.intersectObject(cityRoot, true))[0];
+        return hit && hit.point.y < 0.6 ? hit.point.y : 0;
       }
-      function groundAtCore(x, z) {
-        const g = _heightGrid;
-        // Hot path: never full-scene raycast. Flat sidewalk (~0.12 m) until the idle bake
-        // finishes; out-of-bounds stays flat too. Bake itself uses groundAtRay directly.
-        if (!g) return 0.12;
-        const fx = (x - g.ox) / g.cell;
-        const fz = (z - g.oz) / g.cell;
-        const c0 = Math.floor(fx);
-        const r0 = Math.floor(fz);
-        if (c0 < 0 || r0 < 0 || c0 >= g.cols - 1 || r0 >= g.rows - 1) return 0.12;
-        const tx = fx - c0;
-        const tz = fz - r0;
-        const i = r0 * g.cols + c0;
-        const h00 = g.data[i];
-        const h10 = g.data[i + 1];
-        const h01 = g.data[i + g.cols];
-        const h11 = g.data[i + g.cols + 1];
-        return h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz) + h01 * (1 - tx) * tz + h11 * tx * tz;
-      }
-      /**
-       * Idle height bake (default ON; ?heightgrid=0 to skip). Tiny slices after cityReady so
-       * Click to play stays responsive. Until done, groundAt returns a flat sidewalk height
-       * instead of thousands of full-scene raycasts per second (the #1 FPS killer).
-       */
-      async function bakeHeightGridAsync() {
-        if (!cityRoot || _heightGrid) return;
-        if (new URLSearchParams(location.search).get("heightgrid") === "0") return;
-        const box = new THREE.Box3().setFromObject(cityRoot);
-        const cell = 4;
-        const pad = 8;
-        const ox = Math.floor(box.min.x - pad);
-        const oz = Math.floor(box.min.z - pad);
-        const cols = Math.ceil((box.max.x + pad - ox) / cell) + 1;
-        const rows = Math.ceil((box.max.z + pad - oz) / cell) + 1;
-        if (cols * rows > 80000) {
-          console.warn(`[cityview] height grid too large (${cols}×${rows}); keeping flat heights`);
-          return;
-        }
-        const data = new Float32Array(cols * rows);
-        const slice = 32; // ~0.5–2 ms/frame; never starve traffic/input
-        let i = 0;
-        const total = cols * rows;
-        const t0 = performance.now();
-        while (i < total) {
-          const end = Math.min(total, i + slice);
-          for (; i < end; i++) {
-            const c = i % cols;
-            const r = (i / cols) | 0;
-            data[i] = groundAtRay(ox + c * cell, oz + r * cell);
-          }
-          await new Promise((r) => requestAnimationFrame(r));
-        }
-        _heightGrid = { ox, oz, cell, cols, rows, data };
-        console.info(
-          `[cityview] height grid ${cols}×${rows} @ ${cell}m in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
-        );
-      }
-      const _riderObstacles = [];
+      const _riderObstacles = [{ x: 0, z: 0, r: 0.45 }];
       const _beforeStep = { x: 0, z: 0 };
-      const _afterWall = { x: 0, z: 0 };
-      let _lastVehicleHitMs = 0;
-
-      /** Speed component into the building face next to `from` (ring of samples → wall normal). */
-      function speedIntoWall(from, yaw, speed) {
-        let nx = 0;
-        let nz = 0;
-        for (let i = 0; i < 16; i++) {
-          const a = (i / 16) * Math.PI * 2;
-          const sx = Math.sin(a);
-          const sz = Math.cos(a);
-          if (outdoors.insideBuilding(from.x + sx * 0.6, from.z + sz * 0.6)) {
-            nx += sx;
-            nz += sz;
-          }
-        }
-        const n = Math.hypot(nx, nz);
-        if (n < 1e-6) return speed;
-        return Math.max(0, speed * (-Math.sin(yaw) * nx - Math.cos(yaw) * nz) / n);
-      }
       /** Riders and parked scooters are solid: slide the walker out instead of through them. */
       function pushOutOfSolids(pos) {
         const push = (cx, cz, R) => {
@@ -1052,11 +1421,7 @@
           pos.z = cz + (dz / d) * R;
           playerMotion.bump(0.6);
         };
-        // Upright riders only — tipped wrecks use the hit/knockdown path, not a solid cylinder.
-        if (micromobility) for (const v of micromobility.vehicles) {
-          if (v.crash) continue;
-          push(v.pos.x, v.pos.z, 0.85);
-        }
+        if (micromobility) for (const v of micromobility.vehicles) push(v.pos.x, v.pos.z, 0.85);
         if (scooters) for (const s of scooters.solids()) push(s.x, s.z, s.r + 0.3);
         if (outdoors) outdoors.ensureOutdoors(pos);
       }
@@ -1078,12 +1443,9 @@
         if (terraces) hit = props.resolveCircles(pos, r, terraces.solids) || hit;
         if (hit) playerMotion.bump(onWheels ? 0.35 : 0.6);
         if (hit && outdoors) outdoors.ensureOutdoors(pos);
-        return hit;
       }
       let minimap = null;
       let streetLocator = null;
-      let landmarkLocator = null;
-      let landmarkStream = { update() {}, prime: async () => {} };
       // Horizontal playable AABB (XZ), set after GLB load — keeps walk/orbit in-district.
       let playBounds = null;
       const _clampTmp = new THREE.Vector3();
@@ -1162,82 +1524,42 @@
         freeCam.minH = 35;
       }
 
-      const walkControls = new PointerLockControls(camera, document.body);
-      scene.add(walkControls.getObject());
-      const playerMotion = createPlayerMotion(THREE, camera, walkControls);
-      const playerCrash = createPlayerCrash(THREE, camera, { eye: eyeHeight, canvas: renderer.domElement });
-      const CRASH_IMPACT = 3.2; // m/s straight into something solid throws you off
-      const CRASH_PERSON = 3.0; // m/s into a pedestrian: you both go down
-
-      /** Thrown off a scooter / Velo / struck by traffic: land hurt, or die if it was violent. */
-      function crashRide(speed, label) {
-        if (playerCrash.active || playerCrash.dead) return;
-        const w = walkControls.getObject();
-        const yaw = playerMotion.yaw();
-        if (scooters && scooters.isRiding()) {
-          const res = scooters.crash({ x: w.position.x, z: w.position.z, yaw, speed });
-          if (res) hud.spend(res.cost, `${res.brand} ride`);
-        }
-        if (velo && velo.isRiding && velo.isRiding()) {
-          velo.tryInteract({ x: w.position.x, z: w.position.z });
-        }
-        rideEl.style.display = "none";
-        promptEl.style.display = "none";
-        const dmg = playerCrash.start(w.position, yaw, speed);
-        playerMotion.stop();
-        keys.space = false;
-        const kmh = Math.round(speed * 3.6);
-        if (playerCrash.dead) {
-          hud.notify(label || `Fatal impact at ${kmh} km/h`, 6000);
-        } else {
-          hud.notify(
-            (label || `Crashed at ${kmh} km/h`) + ` · −${dmg} health`,
-            5000,
-          );
-        }
-      }
-      function crashScooter(speed) {
-        crashRide(speed, `You came off the scooter at ${Math.round(speed * 3.6)} km/h`);
-      }
-      /** Car / tram / bus that could not stop in time. */
-      function hitByVehicle(speed) {
-        const now = performance.now();
-        if (now - _lastVehicleHitMs < 900) return;
-        if (playerCrash.active || playerCrash.dead) return;
-        if (transit.isRiding && transit.isRiding()) return;
-        _lastVehicleHitMs = now;
-        crashRide(Math.max(speed, 3.5), `Hit by a vehicle at ${Math.round(speed * 3.6)} km/h`);
-      }
-      playerCrash.setOnDeath(() => {
-        hud.notify("You died · restarting…", 4500);
-        setTimeout(() => {
-          if (!playerCrash.dead) return;
-          const w = walkControls.getObject();
-          const yaw = playerMotion.yaw();
-          w.position.copy(spawnPos);
-          w.position.y = eyeHeight;
-          playerCrash.respawn(w.position, yaw);
-          playerMotion.stop();
-          hud.setHealth(100);
-          hud.notify("Back on your feet", 2800);
-        }, 2800);
-      });
-      // Simple humanoid capsule so Free view can frame the walker.
-      const avatar = new THREE.Group();
-      const bodyMat = new THREE.MeshLambertMaterial({ color: 0x3a4658 });
-      const skinMat = new THREE.MeshLambertMaterial({ color: 0xc4a882 });
-      const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.85, 4, 8), bodyMat);
-      torso.position.y = 1.05;
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 8), skinMat);
-      head.position.y = 1.72;
-      avatar.add(torso, head);
-      avatar.visible = false;
-      scene.add(avatar);
+      // Player root holds feet position; camera is a lagged third-person boom.
+      const playerRoot = new THREE.Object3D();
+      playerRoot.position.set(-218.5, 1.7, -432.1);
+      scene.add(playerRoot);
+      const thirdPerson = createThirdPersonCamera(THREE, camera, () => outdoors);
+      const playerMotion = createPlayerMotion(
+        THREE,
+        playerRoot,
+        () => thirdPerson.yaw(),
+        (y) => thirdPerson.setYaw(y),
+      );
+      const playerAvatar = createPlayerAvatar(THREE, scene);
+      let sessionStarted = false;
+      let pointerLocked = false;
+      const lockListeners = { lock: [], unlock: [] };
+      const walkControls = {
+        getObject: () => playerRoot,
+        get isLocked() {
+          return pointerLocked;
+        },
+        lock() {
+          if (TOUCH) return;
+          renderer.domElement.requestPointerLock?.()?.catch?.(() => {});
+        },
+        unlock() {
+          if (document.pointerLockElement) document.exitPointerLock?.();
+        },
+        addEventListener(type, fn) {
+          if (lockListeners[type]) lockListeners[type].push(fn);
+        },
+      };
+      // Free-view marker (top-down framing of the walker).
+      const avatar = playerAvatar.root;
 
       // Free view: locked top-down (no pitch/orbit). WASD / drag pans on XZ, wheel zooms height.
       const freeCam = { x: 0, z: 0, height: 320, minH: 35, maxH: 700 };
-      let kaartStreetClock = 0;
-      let kaartStreetLast = "";
       const walkSaved = { x: 0, z: 0, yaw: 0 };
       const UP_WORLD = new THREE.Vector3(0, 1, 0);
       const UP_TOPDOWN = new THREE.Vector3(0, 0, -1); // north (-Z) is screen-up
@@ -1322,7 +1644,6 @@
       renderer.domElement.addEventListener("pointercancel", endFreeDrag);
 
       function setMode(next) {
-        if (playerCrash.active) return;
         if (transit.isRiding && transit.isRiding()) return;
         if (velo && velo.isRiding && velo.isRiding()) return;
         if (scooters && scooters.isRiding()) return;
@@ -1332,25 +1653,22 @@
         btnWalk.classList.toggle("active", mode === "walk");
         btnFree.classList.toggle("active", mode === "free");
         if (mode === "walk") {
-          avatar.visible = false;
+          playerAvatar.setVisible(true);
           if (prevMode === "free") {
-            // Leave top-down: restore the walker's spot and an upright camera.
-            // Minimap teleports can land walkSaved inside a footprint — snap out first.
+            // Leave top-down: restore the walker's spot and look yaw.
             snapWalkSavedOutdoors();
             softClampXZ(walkSaved, playBounds);
             camera.up.copy(UP_WORLD);
-            camera.rotation.set(0, walkSaved.yaw, 0, "YXZ");
+            thirdPerson.setYaw(walkSaved.yaw);
             walkControls.getObject().position.set(walkSaved.x, eyeHeight, walkSaved.z);
-            walkControls.getObject().rotation.y = walkSaved.yaw;
+            thirdPerson.snap(walkControls.getObject().position);
           }
           walkControls.getObject().position.y = eyeHeight;
           clampWalkerXZ(walkControls.getObject().position);
-          hint.textContent = TOUCH ? HINT.walkTouch : HINT.walk;
-          {
-            const p = walkControls.getObject().position;
-            const street = streetLocator?.locate?.(p.x, p.z);
-            status.textContent = street ? `Walking — ${street}` : "Walking";
-          }
+          hint.textContent = TOUCH
+            ? "Walk: stick move · drag look · Go interact · Sprint / Jump"
+            : "Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · Esc menu · V free · N night · M map";
+          status.textContent = "Walking — Velo Harmonie";
           touch?.setModeLabel("walk");
         } else {
           if (walkControls.isLocked) walkControls.unlock();
@@ -1359,22 +1677,19 @@
           if (prevMode !== "free") {
             walkSaved.x = p.x;
             walkSaved.z = p.z;
-            walkSaved.yaw = walkControls.getObject().rotation.y;
+            walkSaved.yaw = thirdPerson.yaw();
           }
           snapWalkSavedOutdoors();
-          avatar.position.set(walkSaved.x, 0, walkSaved.z);
-          avatar.rotation.y = walkSaved.yaw;
-          avatar.visible = true;
+          playerAvatar.update(0, walkSaved, 0, walkSaved.yaw, "walk");
+          playerAvatar.setVisible(true);
           freeCam.x = walkSaved.x;
           freeCam.z = walkSaved.z;
           softClampXZ(freeCam, playBounds);
           applyFreeCamera();
-          hint.textContent = TOUCH ? HINT.mapTouch : HINT.map;
-          {
-            const street = streetLocator?.locate?.(freeCam.x, freeCam.z) || "";
-            kaartStreetLast = street;
-            status.textContent = street ? `Free view — ${street}` : "Free view";
-          }
+          hint.textContent = TOUCH
+            ? "Map view: drag pan · pinch zoom · tap radar to teleport"
+            : "Free view (top-down): WASD pan · Shift fast · scroll zoom · click map teleport · V walk · N night";
+          status.textContent = "Free view";
           touch?.setModeLabel("free");
         }
       }
@@ -1385,11 +1700,8 @@
         clampWalkerXZ(walkControls.getObject().position);
         rideEl.style.display = "none";
         promptEl.style.display = "none";
-        hint.textContent = HINT.walkShort;
-        {
-          const street = streetLocator?.locate?.(drop.x, drop.z);
-          status.textContent = street ? `Back on the street — ${street}` : "Back on the street";
-        }
+        hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
+        status.textContent = "Back on the street";
         if (mode === "walk" && !walkControls.isLocked) {
           // Keep unlocked until click — pointer lock after ride is flaky mid-frame.
         }
@@ -1415,7 +1727,7 @@
       }
 
       function handleInteractE() {
-        if (mode !== "walk" || playerCrash.active) return;
+        if (mode !== "walk") return;
         const p = walkControls.getObject().position;
         const onTram = transit.isRiding && transit.isRiding();
         const onVelo = velo && velo.isRiding && velo.isRiding();
@@ -1432,7 +1744,7 @@
             rideLine.textContent = "Velo";
             rideNext.textContent = result.name;
             promptEl.style.display = "none";
-            hint.textContent = HINT.velo;
+            hint.textContent = "Cycling — WASD · E hop off / return at a station";
             status.textContent =
               result.capacity === "—"
                 ? `On a Velo · ${result.name}`
@@ -1443,7 +1755,7 @@
             avatar.visible = mode !== "walk";
             rideEl.style.display = "none";
             promptEl.style.display = "none";
-            hint.textContent = HINT.walkShort;
+            hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
             status.textContent = `Returned Velo at ${result.name}`;
             return;
           }
@@ -1451,7 +1763,7 @@
             avatar.visible = mode !== "walk";
             rideEl.style.display = "none";
             promptEl.style.display = "none";
-            hint.textContent = HINT.walkShort;
+            hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
             status.textContent = "Hopped off — E remounts the parked bike";
             return;
           }
@@ -1464,10 +1776,6 @@
         if (onVelo) return;
         if (handleScooterE(p)) return;
         const result = transit.tryInteract({ x: p.x, z: p.z });
-        if (result.action === "none" && nearACar(p.x, p.z)) {
-          status.textContent = NO_LICENCE;
-          return;
-        }
         if (result.action === "board") {
           if (walkControls.isLocked) walkControls.unlock();
           avatar.visible = false;
@@ -1475,7 +1783,7 @@
           rideLine.textContent = `${result.mode === "bus" ? "Bus" : "Tram"} ${result.line}`;
           rideNext.textContent = `Next halt: ${result.nextHalt}`;
           promptEl.style.display = "none";
-          hint.textContent = HINT.tram;
+          hint.textContent = "Riding — E request stop · get off at next halt";
           status.textContent = `On board · next ${result.nextHalt}`;
         } else if (result.action === "request_alight") {
           rideNext.textContent = `Getting off at: ${result.nextHalt}`;
@@ -1484,60 +1792,6 @@
         } else if (result.action === "alight") {
           applyAlightDrop(result.drop);
         }
-      }
-
-      // Cars are walk-up only for now: E refuses, driving gets unlocked later.
-      const CAR_REACH = 1.7; // metres outside the car's footprint
-      const DRIVE_PROMPT = "Press E to drive";
-      const NO_LICENCE = "Yo bro, you don't have a drivers license. Don't do that.";
-      const parkedFootprints = [];
-
-      function indexParkedCars() {
-        parkedFootprints.length = 0;
-        if (!cityRoot) return;
-        const box = new THREE.Box3();
-        cityRoot.traverse((o) => {
-          if (!/^car_\d+_/.test(o.name || "") || /_body$/.test(o.name)) return;
-          box.setFromObject(o);
-          if (!Number.isFinite(box.min.x)) return;
-          parkedFootprints.push({ minX: box.min.x, maxX: box.max.x, minZ: box.min.z, maxZ: box.max.z });
-        });
-      }
-
-      function gapToAabb(px, pz, a) {
-        const dx = px < a.minX ? a.minX - px : px > a.maxX ? px - a.maxX : 0;
-        const dz = pz < a.minZ ? a.minZ - pz : pz > a.maxZ ? pz - a.maxZ : 0;
-        return Math.hypot(dx, dz);
-      }
-
-      /** True when the walker is beside a parked or moving car. */
-      function nearACar(px, pz) {
-        for (const a of parkedFootprints) {
-          if (gapToAabb(px, pz, a) <= CAR_REACH) return true;
-        }
-        const moving = traffic.cars;
-        if (!moving) return false;
-        for (const car of moving) {
-          const yaw = car.mesh.rotation.y;
-          const hl = car.mesh.userData.halfL || 2.2;
-          const hw = car.mesh.userData.halfW || 0.9;
-          const c = Math.abs(Math.cos(yaw));
-          const s = Math.abs(Math.sin(yaw));
-          // Traffic meshes point along local +Z (length) and local +X (width).
-          const ex = hw * c + hl * s;
-          const ez = hw * s + hl * c;
-          if (
-            gapToAabb(px, pz, {
-              minX: car.pos.x - ex,
-              maxX: car.pos.x + ex,
-              minZ: car.pos.z - ez,
-              maxZ: car.pos.z + ez,
-            }) <= CAR_REACH
-          ) {
-            return true;
-          }
-        }
-        return false;
       }
 
       function showPrompt(text) {
@@ -1593,15 +1847,6 @@
           if (veloPrompt) {
             rideEl.style.display = "none";
             showPrompt(veloPrompt);
-          } else if (
-            hud.prompt &&
-            (hud.prompt.startsWith("Press E") || hud.prompt.startsWith("E ·"))
-          ) {
-            rideEl.style.display = "none";
-            showPrompt(hud.prompt);
-          } else if (mode === "walk" && nearACar(p.x, p.z)) {
-            rideEl.style.display = "none";
-            showPrompt(DRIVE_PROMPT);
           } else if (hud.prompt) {
             rideEl.style.display = "none";
             showPrompt(hud.prompt);
@@ -1619,26 +1864,69 @@
       btnFree.addEventListener("click", () => setMode("free"));
 
       function walkEngaged() {
-        return walkControls.isLocked || !!(touch && touch.isEngaged());
+        if (menu?.open) return false;
+        return walkControls.isLocked || !!(touch && touch.isEngaged()) || sessionStarted;
       }
 
       function applyLookDelta(dx, dy) {
-        lookEuler.setFromQuaternion(camera.quaternion);
-        lookEuler.y -= dx * 0.0025;
-        lookEuler.x -= dy * 0.0025;
-        const lim = Math.PI / 2 - 0.02;
-        lookEuler.x = Math.max(-lim, Math.min(lim, lookEuler.x));
-        camera.quaternion.setFromEuler(lookEuler);
-      }
-
-      function toggleRadar() {
-        if (!minimap) return;
-        minimap._visible = !(minimap._visible ?? true);
-        minimap.setVisible(minimap._visible);
-        hud.notify(minimap._visible ? "Radar on" : "Radar off", 1800);
+        thirdPerson.applyLook(dx, dy);
       }
 
       let helpShown = false;
+      /** @type {ReturnType<typeof createMenu> | null} */
+      let menu = null;
+      menu = createMenu({
+        hasStarted: () => sessionStarted,
+        isPlaying: () => sessionStarted && menu && !menu.open,
+        onPause: () => {
+          walkControls.unlock();
+          document.body.classList.remove("locked");
+        },
+        onPlay: () => {
+          sessionStarted = true;
+          document.body.classList.add("locked");
+          document.getElementById("hud")?.classList.add("gone");
+          document.getElementById("click-cue")?.classList.add("gone");
+          if (!helpShown) {
+            helpShown = true;
+            hud.showHelp(8000);
+          }
+          if (!TOUCH) walkControls.lock();
+          else touch?.startSession();
+          hint.textContent = TOUCH
+            ? "Walk: stick move · drag look · Go interact · Sprint / Jump"
+            : "WASD · mouse look · Space jump · E Velo / tram · Esc menu · V free · N night · M map";
+        },
+        onCharacter: async (id) => {
+          await playerAvatar.setPlayer(id);
+        },
+        onBrowse: (id) => preloadPlayer(id),
+      });
+
+      document.addEventListener("pointerlockchange", () => {
+        const locked =
+          document.pointerLockElement === document.body ||
+          document.pointerLockElement === renderer.domElement;
+        const was = pointerLocked;
+        pointerLocked = locked;
+        if (locked && !was) {
+          document.body.classList.add("locked");
+          for (const fn of lockListeners.lock) fn();
+        } else if (!locked && was) {
+          if (!(touch && touch.isActive()) && !menu.open) document.body.classList.remove("locked");
+          for (const fn of lockListeners.unlock) fn();
+          // Esc often exits pointer lock — open the poster when a session is running.
+          if (sessionStarted && mode === "walk" && !menu.open && !TOUCH) {
+            menu.show();
+          }
+        }
+      });
+      window.addEventListener("mousemove", (e) => {
+        if (!pointerLocked || menu.open || mode !== "walk") return;
+        if (transit.isRiding && transit.isRiding()) return;
+        applyLookDelta(e.movementX || 0, e.movementY || 0);
+      });
+
       if (TOUCH) {
         touch = createTouchControls({
           keys,
@@ -1655,14 +1943,19 @@
             hud.notify(toNight ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
           },
           onToggleHelp: () => hud.toggleHelp(),
-          onToggleMap: () => toggleRadar(),
+          onToggleMap: () => {
+            if (!minimap) return;
+            minimap._visible = !(minimap._visible ?? true);
+            minimap.setVisible(minimap._visible);
+          },
           onLook: applyLookDelta,
           onPinchZoom: () => {},
           canLook: () =>
             mode === "walk" &&
-            !(transit.isRiding && transit.isRiding()) &&
-            !playerCrash.active,
+            !menu.open &&
+            !(transit.isRiding && transit.isRiding()),
           onStart: () => {
+            sessionStarted = true;
             if (!helpShown) {
               helpShown = true;
               hud.showHelp(8000);
@@ -1673,10 +1966,16 @@
       }
 
       document.body.addEventListener("click", (e) => {
-        if (!cityReady || mode !== "walk") return;
-        if (e.target.closest("#modes, #touch-ui")) return;
+        if (menu.open) return;
+        if (mode !== "walk") return;
+        if (e.target.closest("#modes, #touch-ui, #city-menu")) return;
         if (TOUCH) {
           touch.startSession();
+          sessionStarted = true;
+          return;
+        }
+        if (!sessionStarted) {
+          menu.show();
           return;
         }
         if (!walkControls.isLocked) walkControls.lock();
@@ -1688,30 +1987,30 @@
           helpShown = true;
           hud.showHelp(8000);
         }
+        hint.textContent = "WASD · mouse look · Space jump · E Velo / tram · Esc menu · V free · N night · M map";
       });
       walkControls.addEventListener("unlock", () => {
-        // Keep the touch session engaged when iOS has no pointer lock.
-        if (!(touch && touch.isActive())) document.body.classList.remove("locked");
-      });
-      walkControls.addEventListener("lock", () => {
-        hint.textContent = HINT.walkLocked;
-      });
-      walkControls.addEventListener("unlock", () => {
-        if (mode === "walk" && !TOUCH) {
-          hint.textContent = HINT.walkCue;
+        if (!(touch && touch.isActive()) && !menu.open) document.body.classList.remove("locked");
+        if (mode === "walk" && !TOUCH && !menu.open) {
+          hint.textContent = "Walk: click + WASD · E Velo / tram · Esc menu · V free · N night · M map";
         }
       });
 
       window.addEventListener("keydown", (e) => {
+        if (menu.open) return;
+        if (e.code === "Escape") {
+          e.preventDefault();
+          if (sessionStarted) menu.show();
+          return;
+        }
         if (e.code === "KeyE") {
           e.preventDefault();
           handleInteractE();
           return;
         }
         if (e.code === "KeyN") {
-          const toNight = todFromHour(gameHour) < 0.5;
           toggleTimeOfDay();
-          hud.notify(toNight ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
+          hud.notify(todFromHour(gameHour) < 0.5 ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
           return;
         }
         if (e.code === "KeyH") {
@@ -1724,7 +2023,10 @@
           return;
         }
         if (e.code === "KeyM") {
-          toggleRadar();
+          if (minimap) {
+            minimap._visible = !(minimap._visible ?? true);
+            minimap.setVisible(minimap._visible);
+          }
           return;
         }
         if (e.code === "KeyV") {
@@ -1758,14 +2060,14 @@
         clampWalkerXZ(spawnPos);
         walkControls.getObject().position.copy(spawnPos);
         const e = new THREE.Euler().setFromQuaternion(node.getWorldQuaternion(new THREE.Quaternion()));
-        walkControls.getObject().rotation.y = e.y;
+        thirdPerson.setYaw(e.y);
       }
 
       function applySpawnJson(spawn) {
         spawnPos.set(spawn.x, spawn.z, -spawn.y);
         clampWalkerXZ(spawnPos);
         walkControls.getObject().position.copy(spawnPos);
-        walkControls.getObject().rotation.y = spawn.yaw ?? 0;
+        thirdPerson.setYaw(spawn.yaw ?? 0);
       }
 
       async function loadSpawnJson() {
@@ -1790,28 +2092,6 @@
       const setLoad = (f, label) => window.__loading && window.__loading.set(f, label);
       let cityReady = false;
 
-      // Meshopt + KHR_mesh_quantization leave Int16/Int8 attrs; mergeGeometries needs Float32.
-      // Expand via getX/Y/Z so normalized quantized values become world metres.
-      function dequantizeGeometry(geometry) {
-        const g = geometry.clone();
-        for (const name of Object.keys(g.attributes)) {
-          const attr = g.attributes[name];
-          if (!attr || attr.isInterleavedBufferAttribute) continue;
-          if (attr.array instanceof Float32Array && !attr.normalized) continue;
-          const n = attr.itemSize;
-          const arr = new Float32Array(attr.count * n);
-          for (let i = 0; i < attr.count; i++) {
-            const o = i * n;
-            if (n > 0) arr[o] = attr.getX(i);
-            if (n > 1) arr[o + 1] = attr.getY(i);
-            if (n > 2) arr[o + 2] = attr.getZ(i);
-            if (n > 3) arr[o + 3] = attr.getW(i);
-          }
-          g.setAttribute(name, new THREE.BufferAttribute(arr, n));
-        }
-        return g;
-      }
-
       // Merge static city meshes that share a material into ~128 m tiles. The GLB ships ~12k
       // meshes (one draw call each); after this it is a few hundred, while per-tile frustum
       // culling still drops everything behind/beside the camera. Geometry is baked in root
@@ -1821,33 +2101,18 @@
         const rel = new THREE.Matrix4();
         const centre = new THREE.Vector3();
         const buckets = new Map();
-        const skipped = {
-          notMesh: 0,
-          special: 0,
-          hasChildren: 0,
-          noPosition: 0,
-          interleaved: 0,
-          huge: 0,
-        };
-        let meshCount = 0;
-        let dequantized = 0;
         root.traverse((obj) => {
-          if (!obj.isMesh) return;
-          meshCount++;
-          if ((obj.name || "").startsWith("lmhold_")) return void skipped.special++;
-          if (obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return void skipped.special++;
-          if (obj.children.length) return void skipped.hasChildren++; // would orphan child nodes
+          if (!obj.isMesh || obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return;
+          if (obj.children.length) return; // would orphan child nodes
           const g = obj.geometry;
           const pos = g && g.attributes.position;
-          if (!pos) return void skipped.noPosition++;
-          if (pos.isInterleavedBufferAttribute) return void skipped.interleaved++;
-          if (!(pos.array instanceof Float32Array) || pos.normalized) dequantized++;
+          if (!pos || !(pos.array instanceof Float32Array) || pos.isInterleavedBufferAttribute) return;
           if (!g.boundingBox) g.computeBoundingBox();
           rel.multiplyMatrices(inv, obj.matrixWorld);
           g.boundingBox.getCenter(centre).applyMatrix4(rel);
           // Huge meshes (ground, long roads) stay as-is: merging them would bloat tile bounds.
           const ext = g.boundingBox.getSize(_clampTmp);
-          if (Math.max(ext.x, ext.z) > tile * 1.5) return void skipped.huge++;
+          if (Math.max(ext.x, ext.z) > tile * 1.5) return;
           const sig = Object.keys(g.attributes).sort().join(",") + (g.index ? "|i" : "|n");
           const key = `${obj.material.uuid}|${sig}|${Math.floor(centre.x / tile)}|${Math.floor(centre.z / tile)}`;
           let b = buckets.get(key);
@@ -1860,17 +2125,13 @@
         for (const b of buckets.values()) {
           if (b.meshes.length < 2) continue;
           const geoms = b.meshes.map((m, i) => {
-            const g = dequantizeGeometry(m.geometry);
+            const g = m.geometry.clone();
             g.applyMatrix4(b.mats[i]);
             return g;
           });
           const merged = mergeGeometries(geoms, false);
           for (const g of geoms) g.dispose();
-          if (!merged) {
-            // incompatible attributes: leave the originals alone
-            skipped.mergeFailed = (skipped.mergeFailed || 0) + b.meshes.length;
-            continue;
-          }
+          if (!merged) continue; // incompatible attributes: leave the originals alone
           merged.computeBoundingSphere();
           const mesh = new THREE.Mesh(merged, b.material);
           mesh.name = `merged_${b.meshes[0].name || "mesh"}`;
@@ -1887,7 +2148,7 @@
           before += b.meshes.length;
           after++;
         }
-        return { before, after, meshCount, skipped, dequantized };
+        return { before, after };
       }
 
       // Pre-compile every shader variant (day, and night with the pooled lamp lights) while
@@ -1946,9 +2207,8 @@
                   n.includes("facade") || n.includes("bldg_") || n.includes("chim") || n.includes("roof");
                 for (const m of mats) {
                   if (!m) continue;
-                  // Fleet cars carry authored smooth normals; flat shading would facet them.
-                  m.flatShading = !isFacade && !/^car_/.test(m.name || "");
-                  if (m.name && /glass/i.test(m.name) && !/^car_/.test(m.name)) {
+                  m.flatShading = !isFacade;
+                  if (m.name && /glass/i.test(m.name)) {
                     m.metalness = Math.max(m.metalness ?? 0, 0.45);
                     m.roughness = Math.min(m.roughness ?? 1, 0.18);
                     m.envMapIntensity = 1.1;
@@ -1988,169 +2248,76 @@
               lampHeads.push(new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld));
             }
           });
-          // Recolour each kerbside car, then wire its lamps, before merge so they stay discrete.
-          paintParkedCars(cityRoot);
+          // Wrap kerbside cars + bolt-on lamps before merge so they stay discrete.
           parkedCars = wireParkedCarLamps(cityRoot, THREE);
           cityRoot.updateMatrixWorld(true);
-          setLoad(0.55, "Building the streets");
+          setLoad(0.9, "Building the streets");
           await nextFrame();
           if (new URLSearchParams(location.search).get("merge") !== "0") {
             const m = mergeStaticMeshes(cityRoot);
-            if (m.before === 0 && m.after === 0) {
-              const why = Object.entries(m.skipped)
-                .filter(([k, n]) => n > 0 && k !== "notMesh")
-                .map(([k, n]) => `${k}=${n}`)
-                .join(", ");
-              console.info(
-                `[cityview] merged 0 meshes into 0 tile batches — nothing was merged (${m.meshCount} meshes seen; ` +
-                  `skipped: ${why || "none eligible (every bucket had a single mesh)"}).`,
-              );
-            } else {
-              console.info(
-                `[cityview] merged ${m.before} meshes into ${m.after} tile batches` +
-                  (m.dequantized ? ` (dequantised ${m.dequantized} Meshopt/KHR meshes)` : ""),
-              );
-            }
+            console.info(`[metropolis] merged ${m.before} meshes into ${m.after} tile batches`);
           }
           // Static after the merge: skip per-frame matrix traversal of the (now small) tree.
           cityRoot.updateMatrixWorld(true); // bake world matrices of the merged tiles once
           cityRoot.traverse((obj) => (obj.matrixWorldAutoUpdate = false));
-          indexParkedCars();
+          collectGroundMeshes(cityRoot);
           const spawnNode = cityRoot.getObjectByName("HumanSpawn");
           const spawnJson = await loadSpawnJson();
           if (spawnNode) applySpawnFromNode(spawnNode);
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
-          setLoad(0.62, "Starting traffic");
+          setLoad(0.94, "Starting traffic and trams");
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
-          setLoad(0.68, "Starting trams and buses");
-          transit = await createTransit(scene, THREE, { tramCount: 3, busCount: 4 });
-          // ---- Pedestrians (humanoids walking on sidewalks) ----
-          setLoad(0.74, "Bringing people outside");
-          const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Bringing people outside"));
+          transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
+          // A handful of Aj, then the other bodies and the rest of the crowd after the city is up.
           pedestrians = await createPedestrians(scene, THREE, {
-            count: 10,
-            people: { initial: 5, resident: 8, rotate: false },
+            count: 40,
+            firstCount: 5,
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
-            camera,
-            groundAt,
-          });
-          stopCharProgress();
-          cash = createCashDrops(scene, THREE);
-          pedestrians.setOnKilled(({ x, y, z, yaw }) => {
-            // Beside the body, like a dropped wallet.
-            const side = yaw + (Math.random() < 0.5 ? 1 : -1) * Math.PI * 0.5;
-            const d = 0.5 + Math.random() * 0.3;
-            cash.drop(x + Math.sin(side) * d, y, z + Math.cos(side) * d, cashAmount());
           });
           if (pedestrians.setCrossingGate && traffic.pedMayCross) {
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
-          setLoad(0.88, "Bikes and scooters");
-          micromobility = await createMicromobility(scene, THREE, { count: 8 });
+          micromobility = await createMicromobility(scene, THREE, { count: 28, firstCount: 6 });
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             groundAt,
           });
-          setLoad(0.91, "Placing nearby landmarks");
-          await nextFrame();
-          try {
-            const catalogRes = await fetch("./landmarks.json");
-            const catalog = catalogRes.ok ? await catalogRes.json() : { landmarks: [] };
-            landmarkStream = createLandmarkStream({ scene, loader, cityRoot, catalog });
-            await landmarkStream.prime(spawnPos.x, spawnPos.z);
-          } catch (err) {
-            console.warn("[cityview] landmark stream", err);
-          }
-          // Shop signs, terraces and the radar raster start after the city is walkable.
-          // ---- Mini map + street name locator ----
+          // Shop signs raycast the streets. They fill in after the city is on screen.
           minimap = createMinimap(THREE, {
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             width: 200,
             height: 200,
-            districtName: "Harmonie",
           });
           if (minimap.setBlips) {
             const BRAND = { Dott: "#18a6e0", Bolt: "#34d186" };
-            const WRECK = "#c45a3a"; // match tipped micromobility hazards on the radar
             const stations = (velo?.stations || []).map((st) => ({ x: st.x, z: st.z, color: "#e2001a" }));
             minimap.setBlips(() =>
               scooters.fleet
                 .filter((s) => s.parked)
-                .map((s) => {
-                  const tipped = !!(s.fall || Math.abs(s.mesh.rotation.z) > 0.4);
-                  return {
-                    x: s.mesh.position.x,
-                    z: s.mesh.position.z,
-                    color: tipped ? WRECK : BRAND[s.brand] || "#fff",
-                  };
-                })
+                .map((s) => ({ x: s.mesh.position.x, z: s.mesh.position.z, color: BRAND[s.brand] || "#fff" }))
                 .concat(stations),
             );
           }
           streetLocator = await createStreetLocator();
-          landmarkLocator = await createLandmarkLocator();
-          if (landmarkLocator.count) {
-            console.info(`[cityview] landmarks: ${landmarkLocator.count} heritage POIs`);
-          }
-          // Opening beat: you're on the Gounod platform, not a random sidewalk.
-          if (spawnJson?.label && minimap?.showStreetName) {
-            const street =
-              streetLocator.locate?.(spawnPos.x, spawnPos.z) || "Mechelsesteenweg";
-            minimap.showStreetName(spawnJson.label, `De Lijn · ${street}`, 5200);
-            if (hud.notify) hud.notify(`${spawnJson.label} · lijn 4 · 7`, 5200);
-          }
           outdoors = await createOutdoorsGuard();
           props = await createPropCollider();
           if (pedestrians && outdoors.ready && pedestrians.setBlocker) {
             pedestrians.setBlocker((x, z) => outdoors.insideBuilding(x, z));
-            // Alley backstop: strip indoor stretches out of the walk routes, re-seat walkers.
-            if (pedestrians.filterRoutes) pedestrians.filterRoutes((x, z) => outdoors.insideBuilding(x, z));
           }
           if (outdoors.ready) {
             clampWalkerXZ(walkControls.getObject().position);
             clampWalkerXZ(spawnPos);
-            console.info(`[cityview] outdoors guard: ${outdoors.count} building footprints`);
+            console.info(`[metropolis] outdoors guard: ${outdoors.count} building footprints`);
           } else {
-            console.warn("[cityview] outdoors guard: no buildings.json — indoor walk possible");
+            console.warn("[metropolis] outdoors guard: no buildings.json — indoor walk possible");
           }
-          // Cars give way to trams/buses and to bikes/scooters instead of driving through them.
-          if (traffic.setObstacles) {
-            traffic.setObstacles(() => {
-              const out = [];
-              for (const v of transit.vehicles || []) {
-                if (v && v.phase !== "gone") out.push(v);
-              }
-              for (const v of micromobility?.vehicles || []) {
-                // Thrown wrecks are not lane leaders — cars must not queue behind them.
-                if (!v?.pos || !v.tan || v.crash) continue;
-                out.push({
-                  pos: v.pos,
-                  tan: v.tan,
-                  cur: v.cur,
-                  mode: v.kind || "bike",
-                  phase: "cruise",
-                });
-              }
-              return out;
-            });
-          }
-          // Cars / buses / trams brake for walkers; hard overlaps knock them (or you) down.
-          const pedList = () => (pedestrians && pedestrians.roadPeople ? pedestrians.roadPeople() : []);
-          if (traffic.setPedestrians) traffic.setPedestrians(pedList);
-          if (transit.setPedestrians) transit.setPedestrians(pedList);
-          if (traffic.setOnHitPed) {
-            traffic.setOnHitPed((x, z, vx, vz, r) => pedestrians && pedestrians.hitTest(x, z, vx, vz, r));
-          }
-          if (transit.setOnHitPed) {
-            transit.setOnHitPed((x, z, vx, vz, r) => pedestrians && pedestrians.hitTest(x, z, vx, vz, r));
-          }
-          if (traffic.setOnHitPlayer) traffic.setOnHitPlayer((speed) => hitByVehicle(speed));
-          if (transit.setOnHitPlayer) transit.setOnHitPlayer((speed) => hitByVehicle(speed));
+          // Cars give way to trams/buses instead of driving through them.
+          if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
           const nCars = traffic.count ?? 0;
           const nTransit = transit.count ?? 0;
           const nPeds = pedestrians?.groups?.reduce((n, g) => n + g.members.length, 0) ?? 0;
@@ -2164,20 +2331,15 @@
           if (nVelo > 0) bits.push(`${nVelo} Velo stations`);
           status.textContent =
             bits.length > 0
-              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · ${TOUCH ? "tap Go for Velo / scooter / tram" : "E Velo / scooter / tram"}`
+              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · ${TOUCH ? "tap Go for Velo / tram" : "E Velo / tram"}`
               : TOUCH
                 ? "Sunny day — tap to walk"
                 : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
-          setLoad(0.96, "Warming up the lights");
+          setLoad(0.97, "Warming up the lights");
           await nextFrame();
-          // Full shader compile of the district often freezes mid-range phones; opt in with ?warmup=1.
-          if (new URLSearchParams(location.search).get("warmup") === "1") {
-            await warmUpRenderer();
-          } else {
-            renderer.render(scene, camera);
-          }
+          await warmUpRenderer();
           if (touch) {
             touch.setActive(true);
             touch.setNightLabel(tod > 0.5);
@@ -2196,41 +2358,37 @@
           cityReady = true;
           prevTime = performance.now();
           window.__loading && window.__loading.done();
+          await playerAvatar.ready();
+          thirdPerson.setYaw(playerMotion.yaw());
+          thirdPerson.snap(walkControls.getObject().position);
+          menu.setStatus(TOUCH ? "Touch controls ready · Best in landscape" : "Keyboard & mouse ready");
+          menu.show();
           setTimeout(() => document.getElementById("hud")?.classList.add("gone"), 9000);
           requestAnimationFrame(() => {
+            pedestrians?.streamVariety?.();
             micromobility?.streamVariety?.();
             traffic?.loadRest?.();
             minimap?.warmBase?.();
-            settleStreetLife();
+            void settleStreetLife();
           });
-          // Bake heights after first paint so the loader is not stuck on thousands of raycasts.
-          bakeHeightGridAsync().catch((e) => console.warn("[cityview] height grid failed", e));
-          // One-line GPU census after a couple of frames (Valorant-feel target: draw calls ≪ 1k).
-          requestAnimationFrame(() =>
-            requestAnimationFrame(() => {
-              const info = renderer.info.render;
-              console.info(
-                `[cityview] frame census: drawCalls=${info.calls} tris=${info.triangles} ` +
-                  `dpr=${pixelRatio.toFixed(2)} aa=0 far=${camera.far}`,
-              );
-            }),
-          );
       }
 
       async function settleStreetLife() {
         try {
-          const glow = smooth(0.4, 0.9, tod);
           shops = await createShops(scene, THREE, {
             groundAt,
             anisotropy: renderer.capabilities.getMaxAnisotropy(),
+            yieldEvery: 8,
           });
           if (!shops) return;
           shops.update(gameHour, gameDay);
+          const glow = smooth(0.4, 0.9, tod);
           shops.setNight(glow);
           terraces = createTerraces(scene, THREE, shops.records, { groundAt });
           terraces?.setNight?.(glow);
+          console.info(`[metropolis] shops: ${shops.count} signs`);
         } catch (err) {
-          console.warn("[cityview] shops deferred failed", err);
+          console.warn("[metropolis] shop signs failed", err);
         }
       }
 
@@ -2238,9 +2396,11 @@
         try {
           setLoad(0, "Fetching the streets");
           const buf = await window.__glbPromise;
-          // Not earlier: during the city download the characters would only steal its bandwidth.
-          preloadCharacters(); // Amy's walk mesh only; the other riders start after the first frame
-          setLoad(0.48, "Unpacking the streets");
+          // After the city file, so these don't compete with the 55 MB download.
+          // Only Aj and the saved neighbour. The rest start once the city is visible.
+          preloadStarter();
+          preloadPlayer();
+          setLoad(0.82, "Unpacking the streets");
           await nextFrame();
           await MeshoptDecoder.ready;
           const gltf = await loader.parseAsync(buf, "./");
@@ -2314,251 +2474,124 @@
           requestAnimationFrame(tick);
           return;
         }
-        try {
-          tickFrame(rawDt, dt, simDt);
-        } catch (err) {
-          // One bad frame must not kill the rAF loop — otherwise Click to play looks dead.
-          console.error("[cityview] frame error", err);
-        }
-        requestAnimationFrame(tick);
-      }
-
-      function tickFrame(rawDt, dt, simDt) {
         adaptResolution(rawDt);
-        landmarkStream.update(camera.position.x, camera.position.z, mode, freeCam.height);
 
+        const menuOpen = menu.open;
         const ridingTram = transit.isRiding && transit.isRiding();
         const ridingVelo = velo && velo.isRiding && velo.isRiding();
         const riding = ridingTram;
-
-        // ---- Jump physics (spacebar) ----
-        if (
-          keys.space &&
-          JUMP.cooldown <= 0 &&
-          !JUMP.active &&
-          mode === "walk" &&
-          !riding &&
-          !ridingVelo &&
-          !(scooters && scooters.isRiding()) &&
-          !playerCrash.active
-        ) {
-          JUMP.v = JUMP.strength;
-          JUMP.active = true;
-          JUMP.cooldown = 0.3; // prevent re-trigger
-        }
-        JUMP.cooldown -= dt;
-        if (JUMP.active) {
-          JUMP.v += JUMP.g * dt;
-          const walker = walkControls.getObject();
-          walker.position.y += JUMP.v * dt;
-          if (walker.position.y <= eyeHeight) {
-            walker.position.y = eyeHeight;
-            JUMP.v = 0;
-            JUMP.active = false;
-          }
-        }
-
         const onScooter = scooters && scooters.isRiding();
-        playerMotion.setFootScale(playerCrash.speedScale());
-        hud.setHealth(playerCrash.health);
-        if (playerCrash.active) {
-          const w = walkControls.getObject();
-          _beforeStep.x = w.position.x;
-          _beforeStep.z = w.position.z;
-          playerCrash.update(dt, w);
-          let stopped = !!(outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep));
-          clampWalkerXZ(w.position);
-          stopped = collideWorld(w.position, false) || stopped;
-          if (stopped) playerCrash.stopHorizontal();
-        } else if (!riding && mode === "walk" && walkEngaged()) {
-          playerCrash.update(dt, walkControls.getObject());
-          const kind = ridingVelo ? "velo" : onScooter ? "scooter" : "walk";
-          const w = walkControls.getObject();
-          _beforeStep.x = w.position.x;
-          _beforeStep.z = w.position.z;
-          playerMotion.step(dt, keys, kind);
-          const rideSpeed = playerMotion.speed;
-          if (!JUMP.active) w.position.y = playerMotion.eye(kind);
-          const wallHit = !!(outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep));
-          if (wallHit) playerMotion.bump(0.5);
-          clampWalkerXZ(w.position);
-          _afterWall.x = w.position.x;
-          _afterWall.z = w.position.z;
-          if (!onScooter && !ridingVelo) pushOutOfSolids(w.position);
-          collideWorld(w.position, onScooter || ridingVelo);
-          if ((onScooter || ridingVelo) && dt > 0) {
-            const yaw = playerMotion.yaw();
-            const fx = -Math.sin(yaw);
-            const fz = -Math.cos(yaw);
-            // Props push out along their surface normal, so what they took away is the speed into them.
-            let impact = Math.hypot(w.position.x - _afterWall.x, w.position.z - _afterWall.z) / dt;
-            // Building edges resolve per axis (a graze on a diagonal facade can undo the whole step),
-            // so measure the speed along the facade's normal instead.
-            if (wallHit) impact = Math.max(impact, speedIntoWall(_beforeStep, yaw, rideSpeed));
-            const people = pedestrians
-              ? pedestrians.hitTest(w.position.x + fx * 0.4, w.position.z + fz * 0.4, fx * rideSpeed, fz * rideSpeed, 0.3)
-              : 0;
-            if ((impact > CRASH_IMPACT && rideSpeed > CRASH_IMPACT) || (people && rideSpeed > CRASH_PERSON)) {
-              if (wallHit) {
-                w.position.x = _beforeStep.x;
-                w.position.z = _beforeStep.z;
+
+        if (!menuOpen) {
+          // ---- Jump (Space): edge-triggered hop, full air move like GTA ----
+          const canJump =
+            mode === "walk" && !riding && !ridingVelo && !onScooter && walkEngaged();
+          if (!canJump) {
+            JUMP.active = false;
+            JUMP.v = 0;
+            JUMP.y = 0;
+          } else {
+            if (keys.space && !JUMP.held && !JUMP.active) {
+              JUMP.v = JUMP.strength;
+              JUMP.active = true;
+            }
+            if (JUMP.active) {
+              JUMP.v += JUMP.g * dt;
+              JUMP.y += JUMP.v * dt;
+              if (JUMP.y <= 0) {
+                JUMP.y = 0;
+                JUMP.v = 0;
+                JUMP.active = false;
               }
-              crashRide(
-                rideSpeed,
-                onScooter
-                  ? `You came off the scooter at ${Math.round(rideSpeed * 3.6)} km/h`
-                  : `You came off the Velo at ${Math.round(rideSpeed * 3.6)} km/h`,
-              );
             }
           }
-          if (ridingVelo && velo.update) {
-            velo.update(dt, {
-              x: w.position.x,
-              z: w.position.z,
+          JUMP.held = !!keys.space;
+          {
+            const walker = walkControls.getObject();
+            const baseEye = playerMotion.eye(onScooter ? "scooter" : ridingVelo ? "velo" : "walk");
+            walker.position.y = baseEye + JUMP.y;
+          }
+
+          if (!riding && mode === "walk" && walkEngaged()) {
+            const kind = ridingVelo ? "velo" : onScooter ? "scooter" : "walk";
+            const w = walkControls.getObject();
+            _beforeStep.x = w.position.x;
+            _beforeStep.z = w.position.z;
+            playerMotion.step(dt, keys, kind);
+            w.position.y = playerMotion.eye(kind) + JUMP.y;
+            clampWalkerXZ(w.position);
+            if (outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep)) playerMotion.bump(0.5);
+            if (!onScooter && !ridingVelo) pushOutOfSolids(w.position);
+            collideWorld(w.position, onScooter || ridingVelo);
+            if (ridingVelo && velo.update) {
+              velo.update(dt, {
+                x: w.position.x,
+                z: w.position.z,
+                yaw: playerMotion.yaw(),
+                moving: Math.abs(playerMotion.speed) > 0.05,
+                speed: playerMotion.speed,
+              });
+            }
+            if ((onScooter || ridingVelo) && Math.abs(playerMotion.speed) > 0.15) {
+              thirdPerson.easeYawToward(playerMotion.yaw(), dt, 3);
+            }
+          } else {
+            playerMotion.stop();
+          }
+          if (scooters) {
+            const w = walkControls.getObject().position;
+            scooters.update(dt, {
+              x: w.x,
+              z: w.z,
               yaw: playerMotion.yaw(),
-              moving: Math.abs(playerMotion.speed) > 0.05,
               speed: playerMotion.speed,
+              turn: (keys.d ? 1 : 0) - (keys.a ? 1 : 0),
             });
           }
-        } else {
-          playerMotion.stop();
-          playerCrash.update(dt, walkControls.getObject());
-        }
-        if (scooters) {
-          const w = walkControls.getObject().position;
-          scooters.update(dt, {
-            x: w.x,
-            z: w.z,
-            yaw: playerMotion.yaw(),
-            speed: playerMotion.speed,
-            turn: (keys.d ? 1 : 0) - (keys.a ? 1 : 0),
-          });
-        }
-        if (!riding && mode === "free") {
-          const panStep = freeCam.height * 0.9 * (keys.shift ? 2.2 : 1.0) * dt;
-          // Screen-up is north (-Z); W pans toward it.
-          panFree(((keys.d ? 1 : 0) - (keys.a ? 1 : 0)) * panStep, ((keys.s ? 1 : 0) - (keys.w ? 1 : 0)) * panStep);
-          applyFreeCamera();
-          if ((kaartStreetClock -= dt) <= 0) {
-            kaartStreetClock = 0.45;
-            const street = streetLocator?.locate?.(freeCam.x, freeCam.z) || "";
-            if (street !== kaartStreetLast) {
-              kaartStreetLast = street;
-              status.textContent = street ? `Free view — ${street}` : "Free view";
-            }
+          if (!riding && mode === "free") {
+            const panStep = freeCam.height * 0.9 * (keys.shift ? 2.2 : 1.0) * dt;
+            panFree(((keys.d ? 1 : 0) - (keys.a ? 1 : 0)) * panStep, ((keys.s ? 1 : 0) - (keys.w ? 1 : 0)) * panStep);
+            applyFreeCamera();
           }
         }
 
-        const walker =
-          mode === "walk" ? walkControls.getObject() : avatar.visible ? avatar : walkControls.getObject();
-        advanceClock(dt);
-        updateLampLights(dt, walker);
-        if (stars.visible) stars.position.copy(camera.position);
-        // Camera XZ lets far vehicles skip hard-hit / ped scans (walker can be a distant avatar).
-        if (traffic.setCamera) traffic.setCamera(camera.position.x, camera.position.z);
-        if (transit.setCamera) transit.setCamera(camera.position.x, camera.position.z);
-        const _pt = perf.on;
-        let _t0 = _pt ? performance.now() : 0;
-        traffic.update(simDt, walker);
-        if (_pt) {
-          const n = performance.now();
-          perf.add("traffic.update", n - _t0);
-          _t0 = n;
+        const wPos = walkControls.getObject().position;
+        const moveKind = ridingVelo ? "velo" : onScooter ? "scooter" : "walk";
+        const spd = Math.abs(playerMotion.speed);
+        let bodyYaw = thirdPerson.yaw();
+        if (spd > 0.12 && mode === "walk") {
+          // Face the direction of travel (camera-relative WASD).
+          const y = thirdPerson.yaw();
+          const fx = -Math.sin(y) * playerMotion.state.fwd + Math.cos(y) * playerMotion.state.side;
+          const fz = -Math.cos(y) * playerMotion.state.fwd - Math.sin(y) * playerMotion.state.side;
+          if (fx * fx + fz * fz > 1e-6) bodyYaw = Math.atan2(-fx, -fz);
         }
-        transit.update(simDt, walker);
-        if (_pt) {
-          const n = performance.now();
-          perf.add("transit.update", n - _t0);
-          _t0 = n;
+        if (mode === "walk" || mode === "free") {
+          playerAvatar.update(menuOpen ? 0 : dt, wPos, spd, bodyYaw, moveKind);
+          playerAvatar.setVisible(true);
         }
-        if (pedestrians) pedestrians.update(simDt);
-        if (_pt) perf.add("pedestrians.update", performance.now() - _t0);
-        if (cash) {
-          const me = walkControls.getObject().position;
-          const got = cash.update(dt, mode === "walk" && !riding ? me.x : Infinity, me.z);
-          if (got) hud.earn(got, "Picked up cash");
+        if (mode === "walk" && !riding) {
+          thirdPerson.update(menuOpen ? 1 / 60 : dt, wPos);
         }
-        if (micromobility) {
-          _riderObstacles.length = 0;
-          _riderObstacles.push({ x: walker.position.x, z: walker.position.z, r: 0.45 });
-          // Trams / buses / cars are solid boxes — bikes brake and never “pass through” them.
-          for (const v of transit.vehicles || []) {
-            if (!v || v.phase === "gone" || !v.pos) continue;
-            const tram = v.mode === "tram";
-            _riderObstacles.push({
-              x: v.pos.x,
-              z: v.pos.z,
-              tx: v.tan.x,
-              tz: v.tan.z,
-              hl: tram ? 12.5 : 6.8,
-              hw: tram ? 1.45 : 1.35,
-              speed: v.velocity || 0,
-              hard: true,
-            });
+
+        const walker = mode === "walk" ? walkControls.getObject() : playerAvatar.root;
+        if (!menuOpen) {
+          advanceClock(dt);
+          updateLampLights(dt, walker);
+          if (stars.visible) stars.position.copy(camera.position);
+          traffic.update(simDt, walker);
+          transit.update(simDt, walker);
+          if (pedestrians) pedestrians.update(simDt);
+          if (micromobility) {
+            _riderObstacles[0].x = walker.position.x;
+            _riderObstacles[0].z = walker.position.z;
+            micromobility.update(simDt, _riderObstacles);
           }
-          for (const c of traffic.cars || []) {
-            if (!c?.pos || !c.tan) continue;
-            _riderObstacles.push({
-              x: c.pos.x,
-              z: c.pos.z,
-              tx: c.tan.x,
-              tz: c.tan.z,
-              hl: 2.2,
-              hw: 1.0,
-              speed: c.velocity || 0,
-              hard: true,
-            });
-          }
-          // Walkers in the lane: riders slow for them (same real-world avoid instinct as cars).
-          if (pedestrians && pedestrians.roadPeople) {
-            const peds = pedestrians.roadPeople();
-            for (let i = 0; i < peds.length; i++) {
-              const p = peds[i];
-              _riderObstacles.push({ x: p.x, z: p.z, r: (p.r || 0.35) + 0.2 });
-            }
-          }
-          const _tm = perf.on ? performance.now() : 0;
-          if (micromobility.setCamera) micromobility.setCamera(camera.position.x, camera.position.z);
-          micromobility.update(simDt, _riderObstacles);
-          if (_tm) perf.add("micromobility.update", performance.now() - _tm);
-          // A rider (or sliding wreck) that clips a pedestrian knocks them down.
-          if (pedestrians && pedestrians.hitTest) {
-            for (const v of micromobility.vehicles || []) {
-              if (!v?.pos) continue;
-              const spd = v.crash ? Math.hypot(v.crash.vx, v.crash.vz) : v.cur;
-              if (spd < 1.8) continue;
-              const vx = v.crash ? v.crash.vx : v.tan.x * v.cur;
-              const vz = v.crash ? v.crash.vz : v.tan.z * v.cur;
-              pedestrians.hitTest(v.pos.x, v.pos.z, vx, vz, 0.45);
-            }
-          }
-          // Same for the player on foot — bikes brake for you, but a clip still hurts.
-          if (
-            mode === "walk" &&
-            !playerCrash.active &&
-            !(scooters && scooters.isRiding()) &&
-            !(velo && velo.isRiding && velo.isRiding()) &&
-            !(transit.isRiding && transit.isRiding())
-          ) {
-            const px = walker.position.x;
-            const pz = walker.position.z;
-            for (const v of micromobility.vehicles || []) {
-              if (!v?.pos) continue;
-              const spd = v.crash ? Math.hypot(v.crash.vx, v.crash.vz) : v.cur;
-              const dx = v.pos.x - px;
-              const dz = v.pos.z - pz;
-              const d2 = dx * dx + dz * dz;
-              // Fast clip knocks you; a tipped bike at rest is still a trip hazard.
-              if (spd >= 2.2 && d2 < 0.65 * 0.65) {
-                hitByVehicle(spd);
-                break;
-              }
-              if (v.crash && spd < 2.2 && d2 < 0.55 * 0.55) {
-                hitByVehicle(Math.max(2.5, spd + 1.5));
-                break;
-              }
-            }
-          }
+          if (traffic.setCamera) traffic.setCamera(camera.position.x, camera.position.z);
+          if (transit.setCamera) transit.setCamera(camera.position.x, camera.position.z);
+          if (micromobility?.setCamera) micromobility.setCamera(camera.position.x, camera.position.z);
+        } else if (stars.visible) {
+          stars.position.copy(camera.position);
         }
 
         // ---- Mini map (free mode teleport via click) ----
@@ -2573,13 +2606,6 @@
               walkSaved.x = tp.x;
               walkSaved.z = tp.z;
               softClampXZ(freeCam, playBounds);
-              softClampXZ(walkSaved, playBounds);
-              snapWalkSavedOutdoors();
-              const street = streetLocator?.locate?.(walkSaved.x, walkSaved.z) || "";
-              kaartStreetLast = street;
-              status.textContent = street ? `Free view — ${street}` : "Free view";
-              hud.notify(street ? `Dropped here · ${street}` : "Dropped here — V to walk", 2800);
-              if (street && minimap.showStreetName) minimap.showStreetName(street, "Harmonie", 3200);
             }
           }
           const ppos =
@@ -2588,56 +2614,12 @@
               : mode === "free"
                 ? freeCam
                 : avatar.position;
-          if (minimap.showStreetName) {
-            const lm = landmarkLocator?.update?.(ppos.x, ppos.z);
-            if (lm?.landmark) {
-              if (lm.changed) {
-                minimap.showStreetName(lm.landmark.name, "Onroerend erfgoed");
-                if (lm.firstVisit && hud.notify) hud.notify(lm.landmark.name, 4800);
-              }
-            } else {
-              const vs = velo?.locateStation?.(ppos.x, ppos.z);
-              if (vs?.station) {
-                if (vs.changed) {
-                  const bikes = vs.station.bikesAvailable ?? 0;
-                  const cap = vs.station.capacity ?? "?";
-                  minimap.showStreetName(
-                    vs.station.name,
-                    `Velo Antwerpen · ${bikes}/${cap} fietsen`,
-                  );
-                }
-              } else {
-                const hs = transit?.locateStop?.(ppos.x, ppos.z);
-                if (hs?.stop) {
-                  if (hs.changed) {
-                    const lines = (hs.stop.lines || []).filter(Boolean).join(" · ");
-                    minimap.showStreetName(
-                      hs.stop.name,
-                      lines ? `De Lijn · lijn ${lines}` : "De Lijn halte",
-                    );
-                  }
-                } else {
-                  const sh = shops?.locateShop?.(ppos.x, ppos.z, gameHour, gameDay);
-                  if (sh?.shop) {
-                    if (sh.changed) {
-                      minimap.showStreetName(sh.shop.name, sh.subtitle || "Harmonie");
-                    }
-                  } else if (streetLocator) {
-                    const { street, changed } = streetLocator.update(ppos.x, ppos.z);
-                    if (changed && street) minimap.showStreetName(street);
-                  }
-                }
-              }
-            }
+          if (streetLocator && minimap.showStreetName) {
+            const { street, changed } = streetLocator.update(ppos.x, ppos.z);
+            if (changed && street) minimap.showStreetName(street);
           }
           if (minimap.setHeading) minimap.setHeading(playerMotion.yaw());
-          // Radar/minimap at ~12 Hz — full canvas redraw every frame was pure CPU waste.
-          if ((minimap._drawClock = (minimap._drawClock || 0) - rawDt) <= 0) {
-            minimap._drawClock = 0.08;
-            const _tmap = perf.on ? performance.now() : 0;
-            minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility, velo);
-            if (_tmap) perf.add("minimap.draw", performance.now() - _tmap);
-          }
+          minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility, velo);
         }
 
         // Auto-alight when the requested stop dwell begins.
@@ -2675,9 +2657,8 @@
           },
         });
 
-        const _tr = perf.on ? performance.now() : 0;
         renderer.render(scene, camera);
-        if (_tr) perf.add("renderer.render", performance.now() - _tr);
+        requestAnimationFrame(tick);
       }
       tick();
     </script>

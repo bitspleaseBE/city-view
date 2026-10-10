@@ -264,7 +264,8 @@ export async function createShops(scene, THREE, opts = {}) {
   const uvOf = (px, py, w, h) => [px / ATLAS_W, 1 - (py + h) / ATLAS_H, (px + w) / ATLAS_W, 1 - py / ATLAS_H];
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
-  shops.forEach((shop, i) => {
+  for (let i = 0; i < shops.length; i++) {
+    const shop = shops[i];
     const sx = (i % COLS) * SLOT_W;
     const sy = Math.floor(i / COLS) * SLOT_H;
     drawFascia(ctx, shop, sx, sy, shop.w / FASCIA_H);
@@ -377,7 +378,10 @@ export async function createShops(scene, THREE, opts = {}) {
     );
     for (let k = 0; k < 4; k++) poolCol.push(0, 0, 0);
     records.push({ ...shop, fx, fz, nx, nz, gy, vBase, vCount: 8, pBase, open: null });
-  });
+    if (opts.yieldEvery && (i + 1) % opts.yieldEvery === 0) {
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+  }
 
   const atlas = new THREE.CanvasTexture(canvas);
   atlas.colorSpace = THREE.SRGBColorSpace;

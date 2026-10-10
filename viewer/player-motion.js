@@ -1,9 +1,11 @@
 /**
- * First-person movement with inertia, shared by walking and everything you can ride.
+ * Third-person movement with inertia, shared by walking and everything you can ride.
  *
  * Speeds are m/s. Walking is a brisk game walk and Shift jogs; every ride is faster than a jog
  * so it is worth taking, but still slow enough to read the streets. On wheels A/D steer (you
  * can't strafe a bike) and S brakes, then rolls back slowly.
+ *
+ * `getYaw` / `setYaw` come from the look camera (mouse). The player root only stores position.
  */
 export const MOVE = {
   walk: { speed: 3.6, boost: 1.55, accel: 14, brake: 18, eye: 1.7 },
@@ -18,15 +20,17 @@ function approach(v, target, up, down, dt) {
   return Math.abs(d) <= s ? target : v + Math.sign(d) * s;
 }
 
-export function createPlayerMotion(THREE, camera, controls) {
+/**
+ * @param {object} THREE
+ * @param {import("three").Object3D} playerObject
+ * @param {() => number} getYaw
+ * @param {(y: number) => void} setYaw
+ */
+export function createPlayerMotion(THREE, playerObject, getYaw, setYaw) {
   const state = { fwd: 0, side: 0, kind: "walk", footScale: 1 };
-  const euler = new THREE.Euler(0, 0, 0, "YXZ");
-  const dir = new THREE.Vector3();
 
-  /** Heading of the camera on the ground plane (0 = looking down −Z). */
   function yaw() {
-    camera.getWorldDirection(dir);
-    return Math.atan2(-dir.x, -dir.z);
+    return getYaw();
   }
 
   /**
@@ -37,7 +41,7 @@ export function createPlayerMotion(THREE, camera, controls) {
     const cfg = MOVE[kind] || MOVE.walk;
     if (kind !== state.kind) {
       state.kind = kind;
-      state.fwd = Math.min(state.fwd, cfg.speed); // hopping off a bike doesn't sprint you
+      state.fwd = Math.min(state.fwd, cfg.speed);
       state.side = 0;
     }
     const onWheels = kind !== "walk";
@@ -48,18 +52,23 @@ export function createPlayerMotion(THREE, camera, controls) {
     state.fwd = approach(state.fwd, fwdTarget, cfg.accel, cfg.brake, dt);
     state.side = onWheels ? 0 : approach(state.side, sideIn * top * 0.85, cfg.accel, cfg.brake, dt);
     if (onWheels && sideIn) {
-      // Steering bites harder at speed, but you can still turn on the spot while pushing off.
       const grip = Math.min(1, 0.35 + Math.abs(state.fwd) / cfg.speed);
-      euler.setFromQuaternion(camera.quaternion);
-      euler.y -= sideIn * cfg.turn * grip * dt;
-      camera.quaternion.setFromEuler(euler);
+      setYaw(getYaw() - sideIn * cfg.turn * grip * dt);
     }
-    if (state.fwd) controls.moveForward(state.fwd * dt);
-    if (state.side) controls.moveRight(state.side * dt);
+    const y = getYaw();
+    const sx = Math.sin(y);
+    const cz = Math.cos(y);
+    if (state.fwd) {
+      playerObject.position.x -= sx * state.fwd * dt;
+      playerObject.position.z -= cz * state.fwd * dt;
+    }
+    if (state.side) {
+      playerObject.position.x += cz * state.side * dt;
+      playerObject.position.z -= sx * state.side * dt;
+    }
     return Math.hypot(state.fwd, state.side) * dt;
   }
 
-  /** Bumping into something solid bleeds speed instead of keeping full momentum. */
   function bump(keep = 0.5) {
     state.fwd *= keep;
     state.side *= keep;

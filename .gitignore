@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+.venv-img/
 venv/
 dist/
 build/
@@ -14,6 +15,8 @@ viewer/*.premeshopt.glb
 !viewer/characters/clips/
 !viewer/characters/clips/*.glb
 viewer/characters/*.fbx
+viewer/characters/players/_preview/
+viewer/characters/players/_styled/
 scripts/node_modules/
 # Cache most OSM downloads; commit Harmonie for reproducible Pages builds.
 assets/osm/*
@@ -22,4 +25,7 @@ assets/gtfs/
 *.blend1
 *.blend2
 .python-version
+# Rocketbox pack is huge — fetched locally, never committed.
 assets/rocketbox/
+# Local experiment; not part of Metropolis viewer.
+stremio-addon/

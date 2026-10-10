@@ -1,6 +1,8 @@
-# City View
+# Metropolis
 
 Generate walkable Antwerp streets and orbitable district tiles in Blender from facade photos and OpenStreetMap. The hero deliverable is **Klein Antwerpen / Harmonie · 2018**: LOD1 footprints coloured with historic neighbourhood palettes.
+
+The Python package / CLI is still imported as `cityview` (`python3 -m cityview …`); the product name is Metropolis.
 
 Generation can run headless through the local Blender binary, or live through the official Blender Lab MCP add-on (Blender 5.1+).
 
@@ -112,7 +114,7 @@ CI (`.github/workflows/pages.yml`) downloads Blender on Ubuntu, rebuilds `--plac
 
 1. Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**
 2. Push to `main` or `klein-antwerpen-2018`, or run the workflow manually
-3. Site URL: `https://<org>.github.io/city-view/`
+3. Site URL: `https://<org>.github.io/metropolis/`
 
 ## Whole city LOD strategy
 

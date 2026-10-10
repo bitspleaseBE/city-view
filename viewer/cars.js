@@ -53,7 +53,7 @@ async function loadFleetDoc() {
     if (!res.ok) throw new Error(`fleet.json ${res.status}`);
     return await res.json();
   } catch (err) {
-    console.warn("[cityview] Car fleet manifest missing:", err);
+    console.warn("[metropolis] Car fleet manifest missing:", err);
     return null;
   }
 }
@@ -161,7 +161,7 @@ export async function loadCarTemplates(THREE, opts = {}) {
           hasLamps,
         });
       } catch (err) {
-        console.warn(`[cityview] Car model load failed: ${spec.file}`, err);
+        console.warn(`[metropolis] Car model load failed: ${spec.file}`, err);
       }
     }),
   );
@@ -348,7 +348,7 @@ export function wireParkedCarLamps(root, THREE) {
     }
   }
   if (cars.length) {
-    console.info(`[cityview] parked cars: ${cars.length} with night lamps`);
+    console.info(`[metropolis] parked cars: ${cars.length} with night lamps`);
   }
   return {
     count: cars.length,

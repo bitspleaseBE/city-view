@@ -193,7 +193,7 @@ export async function createScooters(scene, THREE, opts = {}) {
     const res = await fetchJsonCached("./roads.json");
     if (res.ok) roads = (await res.json()).roads || [];
   } catch (err) {
-    console.warn("[cityview] scooters: roads.json failed", err);
+    console.warn("[metropolis] scooters: roads.json failed", err);
   }
   const rand = mulberry(opts.seed ?? 20180601);
   const spawn = opts.spawnCenter || { x: 0, z: 0 };
@@ -389,7 +389,7 @@ export async function createScooters(scene, THREE, opts = {}) {
     m.screen.emissiveIntensity = 0.35 + 0.6 * glow;
   }
 
-  console.info(`[cityview] scooters: ${fleet.length} shared e-scooters parked (${near.length} near spawn)`);
+  console.info(`[metropolis] scooters: ${fleet.length} shared e-scooters parked (${near.length} near spawn)`);
 
   return {
     fleet,

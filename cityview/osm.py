@@ -362,7 +362,7 @@ def _fetch_overpass(south: float, west: float, north: float, east: float) -> dic
         req = urllib.request.Request(
             url,
             data=body,
-            headers={"User-Agent": "city-view/0.1 (Antwerp procedural city)"},
+            headers={"User-Agent": "metropolis/0.1 (Antwerp procedural city)"},
             method="POST",
         )
         try:
@@ -376,7 +376,7 @@ def _fetch_overpass(south: float, west: float, north: float, east: float) -> dic
 def _fetch_osm_map(south: float, west: float, north: float, east: float) -> dict[str, Any]:
     # Official map API uses minlon,minlat,maxlon,maxlat.
     url = f"{OSM_MAP_URL}?bbox={west:.6f},{south:.6f},{east:.6f},{north:.6f}"
-    req = urllib.request.Request(url, headers={"User-Agent": "city-view/0.1 (Antwerp procedural city)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "metropolis/0.1 (Antwerp procedural city)"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         xml_text = resp.read().decode()
     return {"elements": _osm_xml_to_elements(xml_text)}

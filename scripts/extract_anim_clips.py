@@ -92,7 +92,7 @@ def strip_to_clips(gltf: dict, binary: bytes) -> tuple[dict, bytes]:
     nodes = [{k: n[k] for k in keep if k in n} for n in gltf["nodes"]]
     scenes = [{k: s[k] for k in ("name", "nodes") if k in s} for s in gltf.get("scenes", [])]
     out = {
-        "asset": {"version": "2.0", "generator": "city-view extract_anim_clips.py"},
+        "asset": {"version": "2.0", "generator": "metropolis extract_anim_clips.py"},
         "scene": gltf.get("scene", 0),
         "scenes": scenes,
         "nodes": nodes,

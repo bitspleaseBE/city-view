@@ -38,7 +38,7 @@ STATION_INFORMATION_URL = (
     "https://gbfs.smartbike.com/antwerp/1.0/nl/station_information.json"
 )
 ALLOWED_HOSTS = frozenset({"gbfs.smartbike.com"})
-USER_AGENT = "city-view/0.1 (Antwerp procedural city)"
+USER_AGENT = "metropolis/0.1 (Antwerp procedural city)"
 ATTRIBUTION = (
     "Velo Antwerpen docking stations: Clear Channel SmartBike GBFS "
     "(https://gbfs.smartbike.com/antwerp/1.0/gbfs.json)."

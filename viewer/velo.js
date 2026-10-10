@@ -212,7 +212,7 @@ export async function createVelo(scene, THREE) {
     const res = await fetch(VELO_URL);
     if (res.ok) doc = await res.json();
   } catch (e) {
-    console.warn("[cityview] velo: could not load", VELO_URL, e);
+    console.warn("[metropolis] velo: could not load", VELO_URL, e);
   }
 
   const stations = (doc.stations || []).map((raw) => ({
@@ -432,7 +432,7 @@ export async function createVelo(scene, THREE) {
   }
 
   console.info(
-    `[cityview] velo: ${stations.length} stations,` +
+    `[metropolis] velo: ${stations.length} stations,` +
       ` ${stations.reduce((n, s) => n + s.bikesAvailable, 0)} bikes available`
   );
 

@@ -11,6 +11,13 @@ Adobe Mixamo civilians for the web viewer. Humanoids + animation clips only — 
 
 Riders: Remy, Amy, James, Michelle. Sidewalk pedestrians use the Rocketbox people below.
 
+## Playable cast (`players/`)
+
+Pieter, Mo and Jacob (never used as pedestrians), each with `_Walking`, `_Riding` and `_Scooter` GLBs:
+Pieter (`Male_Adult_07`) and Mo (`Male_Adult_04`) are Rocketbox avatars baked via
+`scripts/rocketbox_to_player_glb.py` + `scripts/style_player_textures.py`.
+Jacob is a copy of the Mixamo `James` pedestrian (hat + black coat already on the mesh).
+
 ## Convert Walking FBX → GLB
 
 ```bash

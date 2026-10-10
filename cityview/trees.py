@@ -59,7 +59,7 @@ ALLOWED_HOSTS = frozenset(
         "overpass-api.de",
     }
 )
-USER_AGENT = "city-view/0.1 (Antwerp procedural city)"
+USER_AGENT = "metropolis/0.1 (Antwerp procedural city)"
 ATTRIBUTION = (
     "Trees: (c) Stad Antwerpen Groeninventaris (open data licence); "
     "(c) OpenStreetMap contributors (ODbL)."

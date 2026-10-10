@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 220" role="img" aria-label="Metropolis Antwerp">
+  <defs>
+    <linearGradient id="skylineFill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7ec8e8"/>
+      <stop offset="55%" stop-color="#2a6fa3"/>
+      <stop offset="100%" stop-color="#12324a"/>
+    </linearGradient>
+    <clipPath id="antwerpClip">
+      <text x="20" y="188" font-family="Impact, Haettenschweiler, Arial Black, sans-serif" font-size="120" font-weight="900" letter-spacing="2">ANTWERP</text>
+    </clipPath>
+  </defs>
+  <text x="22" y="58" font-family="Impact, Haettenschweiler, Arial Black, sans-serif" font-size="48" fill="#fff" stroke="#080a0d" stroke-width="10" paint-order="stroke fill" letter-spacing="2">METROPOLIS</text>
+  <!-- Skyline cut into ANTWERP -->
+  <g clip-path="url(#antwerpClip)">
+    <rect x="0" y="90" width="720" height="130" fill="url(#skylineFill)"/>
+    <!-- Scheldt water band -->
+    <rect x="0" y="175" width="720" height="45" fill="#1a3d55"/>
+    <!-- Cathedral / towers silhouette -->
+    <path fill="#0b1a26" d="M40 175 L55 120 L62 120 L70 90 L78 120 L88 118 L95 175 Z
+      M120 175 L128 140 L140 130 L148 100 L156 130 L170 138 L178 175 Z
+      M210 175 L220 145 L235 145 L245 110 L255 145 L275 148 L285 175 Z
+      M320 175 L330 150 L350 148 L360 95 L368 95 L375 70 L382 95 L390 95 L400 148 L420 150 L430 175 Z
+      M460 175 L470 155 L490 152 L505 125 L520 152 L545 155 L560 175 Z
+      M580 175 L590 150 L605 148 L615 130 L625 148 L635 150 L640 175 Z"/>
+    <path fill="#c9e7f5" opacity="0.35" d="M0 185 Q80 178 160 186 T320 184 T480 188 T640 182 L640 220 L0 220 Z"/>
+  </g>
+  <text x="20" y="188" font-family="Impact, Haettenschweiler, Arial Black, sans-serif" font-size="120" font-weight="900" fill="none" stroke="#e8f4ff" stroke-width="5" letter-spacing="2">ANTWERP</text>
+  <text x="20" y="188" font-family="Impact, Haettenschweiler, Arial Black, sans-serif" font-size="120" font-weight="900" fill="none" stroke="#080a0d" stroke-width="2" letter-spacing="2">ANTWERP</text>
+</svg>

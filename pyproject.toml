@@ -1,7 +1,7 @@
 [project]
-name = "city-view"
+name = "metropolis"
 version = "0.1.0"
-description = "Generate Antwerp streets and Klein Antwerpen district tiles in Blender"
+description = "Metropolis — generate Antwerp streets and Klein Antwerpen district tiles in Blender"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
@@ -10,6 +10,7 @@ dependencies = []
 textures = ["pillow", "numpy", "scipy"]  # only to re-render assets/textures from the reference photos
 
 [project.scripts]
+metropolis = "cityview.cli:main"
 cityview = "cityview.cli:main"
 
 [build-system]

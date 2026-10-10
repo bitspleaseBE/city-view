@@ -64,7 +64,7 @@ def _read_csv(zf: zipfile.ZipFile, name: str) -> csv.DictReader:
 def _download_gtfs_zip() -> bytes:
     req = urllib.request.Request(
         GTFS_URL,
-        headers={"User-Agent": "city-view/0.1 (Antwerp procedural city)"},
+        headers={"User-Agent": "metropolis/0.1 (Antwerp procedural city)"},
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
         return resp.read()
