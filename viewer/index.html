@@ -1469,6 +1469,13 @@
         camera.quaternion.setFromEuler(lookEuler);
       }
 
+      function toggleRadar() {
+        if (!minimap) return;
+        minimap._visible = !(minimap._visible ?? true);
+        minimap.setVisible(minimap._visible);
+        hud.notify(minimap._visible ? "Radar aan" : "Radar uit", 1800);
+      }
+
       let helpShown = false;
       if (TOUCH) {
         touch = createTouchControls({
@@ -1486,11 +1493,7 @@
             hud.notify(toNight ? "Doorspoelen naar nacht…" : "Doorspoelen naar ochtend…", 2500);
           },
           onToggleHelp: () => hud.toggleHelp(),
-          onToggleMap: () => {
-            if (!minimap) return;
-            minimap._visible = !(minimap._visible ?? true);
-            minimap.setVisible(minimap._visible);
-          },
+          onToggleMap: () => toggleRadar(),
           onLook: applyLookDelta,
           onPinchZoom: () => {},
           canLook: () =>
@@ -1559,10 +1562,7 @@
           return;
         }
         if (e.code === "KeyM") {
-          if (minimap) {
-            minimap._visible = !(minimap._visible ?? true);
-            minimap.setVisible(minimap._visible);
-          }
+          toggleRadar();
           return;
         }
         if (e.code === "KeyV") {
