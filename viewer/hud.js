@@ -72,12 +72,12 @@ export function createHud(opts = {}) {
   const speedSub = speed.querySelector(".sub");
   const help = el("div", "hud-help");
   help.innerHTML = [
-    "<kbd>W A S D</kbd>walk · steer when riding",
-    "<kbd>Shift</kbd>jog · <kbd>Space</kbd>jump",
-    "<kbd>E</kbd>scooter · tram · bus · car",
-    "<kbd>N</kbd>fast-forward to night / day",
-    "<kbd>V</kbd>map view · <kbd>M</kbd>radar",
-    "<kbd>H</kbd>this card · <kbd>F3</kbd>stats",
+    "<kbd>W A S D</kbd>lopen · sturen op step/fiets",
+    "<kbd>Shift</kbd>rennen · <kbd>Space</kbd>springen",
+    "<kbd>E</kbd>step · tram · bus · Velo",
+    "<kbd>N</kbd>naar avond / ochtend",
+    "<kbd>V</kbd>kaart · <kbd>M</kbd>radar",
+    "<kbd>H</kbd>dit overzicht · <kbd>F3</kbd>stats",
   ].join("<br>");
   const stats = el("div", "hud-stats");
 
