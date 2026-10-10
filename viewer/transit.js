@@ -36,6 +36,7 @@ const GHOST_CREEP = 1.8;
 const FIRST_TRAM_DWELL_S = 30; // waiting tram at the spawn halt
 const MAX_STEP = 1 / 30; // s: the sim never integrates a bigger step (stable at any frame rate)
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame (tab switch, hitch)
+const MAX_SUBSTEPS = 2; // cap work when FPS tanks (same death-spiral guard as traffic.js)
 const HARD_BRAKE = 3.0; // m/s^2 a tram / bus can shed speed when a car is right in front
 const PED_HIT_SPEED = 1.8; // m/s: overlap above this knocks a pedestrian down
 const CAR_EVICT_SEC = 3; // a car holding a tram / bus still this long is cleared
@@ -1296,6 +1297,8 @@ export async function createTransit(scene, THREE, opts = {}) {
   let onHitPed = null;
   /** `(speed, vx, vz) => void` when a tram/bus strikes the player. */
   let onHitPlayer = null;
+  /** Shared ped snapshot for all vehicles × substeps this frame. */
+  let framePeds = null;
 
   function setVehicleLabel(v, path) {
     setLabel(THREE, v, path);
@@ -1568,7 +1571,7 @@ export async function createTransit(scene, THREE, opts = {}) {
 
     // Pedestrians in the track / lane: brake. Trams stay on rails (no lateral dodge).
     {
-      const peds = pedProvider ? pedProvider() : null;
+      const peds = framePeds;
       // Always respect people — even while creeping past a stuck car.
       if (peds && peds.length) {
         const half = (BODY_LEN[v.mode] || BODY_LEN.bus) * 0.5;
@@ -1744,10 +1747,12 @@ export async function createTransit(scene, THREE, opts = {}) {
     if (walkObject) {
       playerPos.set(walkObject.position.x, 0, walkObject.position.z);
     }
+    framePeds = pedProvider ? pedProvider() : null;
     const total = Math.min(dt, MAX_FRAME);
-    const n = Math.max(1, Math.ceil(total / MAX_STEP));
+    const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(total / MAX_STEP)));
     const h = total / n;
     for (let i = 0; i < n; i++) step(h, walkObject);
+    framePeds = null;
   }
 
   function tryInteract(player) {

@@ -30,6 +30,10 @@ const BODY_CLEAR_S = 20; // a body may be cleared away once out of sight this lo
 const REDRESS_EVERY_S = 2.5;
 const REDRESS_HIDDEN_M = 28; // out of view and at least this far from the camera
 const REDRESS_FAR_M = 90; // or simply this far away
+const HOT_M = 55; // full anim + height sample
+const WARM_M = 110; // half-rate mixer, fixed pavement height
+const COLD_M = 180; // hide mesh, kinematics only
+const PAVEMENT_Y = 0.12; // sidewalk default when we skip groundAt raycasts
 
 const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -40,8 +44,11 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const BOBBLE_AMP = 0.02;
   const BOBBLE_FREQ = 9.0;
   // Same raycast helper as scooters/shops: pavement ~0.12 m, road ~0.
+  // Prefer a cheap constant for far people — full-scene raycasts were ~2× per ped per frame.
   const groundAt = typeof opts.groundAt === "function" ? opts.groundAt : () => 0;
-  const footY = (x, z, baseY = 0) => groundAt(x, z) + baseY;
+  const footY = (x, z, baseY = 0, precise = true) =>
+    (precise ? groundAt(x, z) : PAVEMENT_Y) + baseY;
+  let _lodParity = 0;
 
   const walks = opts.walks || (await loadWalks());
   const walkRoutes = buildWalkRoutes(walks, SPAWN_CENTER);
@@ -394,7 +401,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   }
 
   /** `dt` (walking updates only) lets someone back on their feet turn to the route, not snap. */
-  function placeMember(m, dt = 0) {
+  function placeMember(m, dt = 0, precise = true) {
     const route = walkRoutes[m.routeIdx];
     const pos = routePosition(route, m.s);
     const baseY = m.mesh.userData.baseY || 0;
@@ -404,7 +411,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     m.routeZ = pos.z + nz * m.side;
     const x = m.routeX + (m.offX || 0);
     const z = m.routeZ + (m.offZ || 0);
-    m.mesh.position.set(x, footY(x, z, baseY), z);
+    m.mesh.position.set(x, footY(x, z, baseY, precise), z);
     const aheadS = Math.min(routeLength(route), Math.max(0, m.s + m.dir * 0.6));
     const ahead = routePosition(route, aheadS);
     const dx = ahead.x - pos.x;
@@ -418,6 +425,18 @@ export async function createPedestrians(scene, THREE, opts = {}) {
         m.mesh.rotation.y = yaw;
       }
     }
+  }
+
+  /** Far LOD: update route xz without raycasts or yaw blending. */
+  function placeMemberCheap(m) {
+    const route = walkRoutes[m.routeIdx];
+    const pos = routePosition(route, m.s);
+    const nx = -pos.tz;
+    const nz = pos.tx;
+    m.routeX = pos.x + nx * m.side;
+    m.routeZ = pos.z + nz * m.side;
+    m.mesh.position.x = m.routeX;
+    m.mesh.position.z = m.routeZ;
   }
 
   const camera = opts.camera || null;
@@ -653,6 +672,13 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       redressIn = REDRESS_EVERY_S;
       redressOne();
     }
+    _lodParity ^= 1;
+    const cam = camera;
+    const cx = cam ? cam.position.x : SPAWN_CENTER.x;
+    const cz = cam ? cam.position.z : SPAWN_CENTER.z;
+    const hot2 = HOT_M * HOT_M;
+    const warm2 = WARM_M * WARM_M;
+    const cold2 = COLD_M * COLD_M;
     for (const g of groups) {
       for (const m of g.members) {
         if (m.down && updateDown(m, dt)) continue;
@@ -660,23 +686,27 @@ export async function createPedestrians(scene, THREE, opts = {}) {
 
         const route = walkRoutes[m.routeIdx];
         const rLen = routeLength(route);
-        if (waitingAtCrossing(m, route, rLen)) {
+        // Advance along the path even when far (cheap); only near people get skinned anim + raycasts.
+        if (!waitingAtCrossing(m, route, rLen)) {
+          setWalkAnim(m, true);
+          m.s += m.speed * m.dir * dt;
+          if (m.s >= rLen || m.s < 0) advanceEnd(m);
+        } else {
           setWalkAnim(m, false);
-          placeMember(m);
-          if (m.mesh.userData.mixer) {
-            m.mesh.userData.mixer.update(dt);
-            const baseY = m.mesh.userData.baseY || 0;
-            m.mesh.position.y = footY(m.mesh.position.x, m.mesh.position.z, baseY);
-          }
-          continue;
-        }
-        setWalkAnim(m, true);
-        m.s += m.speed * m.dir * dt;
-        if (m.s >= rLen || m.s < 0) {
-          advanceEnd(m);
         }
 
-        placeMember(m, dt);
+        const dx = (m.routeX ?? m.mesh.position.x) - cx;
+        const dz = (m.routeZ ?? m.mesh.position.z) - cz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 > cold2) {
+          m.mesh.visible = false;
+          // Keep route position cheaply updated so they reappear in the right place.
+          placeMemberCheap(m);
+          continue;
+        }
+        m.mesh.visible = true;
+        const precise = d2 <= hot2;
+        placeMember(m, dt, precise);
 
         if (m.offX || m.offZ) {
           const keep = Math.max(0, 1 - dt * 0.8);
@@ -687,13 +717,16 @@ export async function createPedestrians(scene, THREE, opts = {}) {
         }
 
         const baseY = m.mesh.userData.baseY || 0;
-        const gy = footY(m.mesh.position.x, m.mesh.position.z, baseY);
+        // placeMember already set Y — do not raycast again.
         if (m.mesh.userData.mixer) {
-          m.mesh.userData.mixer.update(dt);
-          m.mesh.position.y = gy;
-        } else {
+          if (precise || (d2 <= warm2 && _lodParity)) {
+            m.mesh.userData.mixer.update(dt);
+          }
+        } else if (precise) {
           m.phase += dt * m.speed * BOBBLE_FREQ;
-          m.mesh.position.y = gy + BOBBLE_AMP * Math.abs(Math.sin(m.phase));
+          m.mesh.position.y =
+            footY(m.mesh.position.x, m.mesh.position.z, baseY, false) +
+            BOBBLE_AMP * Math.abs(Math.sin(m.phase));
           const swingAmt = 0.2 * Math.sin(m.phase);
           for (let ci = 0; ci < m.mesh.children.length; ci++) {
             const child = m.mesh.children[ci];

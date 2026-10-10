@@ -75,11 +75,12 @@ const STUCK_SEC = 5; // respawn after 5s of unexplained stop - never leave a car
 const QUEUE_STUCK_SEC = 10; // even queueing cars should move eventually
 const MAX_STEP = 0.05; // s: largest integration step (kinematics tuned and soaked at <= 20 Hz)
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame
+const MAX_SUBSTEPS = 2; // never multiply collision work when FPS tanks (prefer soft-lock over death spiral)
 const CYCLE_SEC = 30;
 const AMBER_SEC = 3; // green → amber → red → green (no amber returning to green)
 const METERS_PER_CAR = 480;
-const MIN_CARS = 8;
-const MAX_CARS = 16;
+const MIN_CARS = 6;
+const MAX_CARS = 10;
 const BODY_COLORS = [0xc45c48, 0x3d5a80, 0xd4a373, 0x4a5568, 0xb8b0a4, 0x2f6f5e];
 
 const DRIVEABLE_KINDS = new Set([
@@ -936,7 +937,10 @@ export async function createTraffic(scene, THREE, opts = {}) {
   /** `(speed, vx, vz) => void` — player hit by a car that failed to stop. */
   let onHitPlayer = null;
   const obstacleCache = [];
-  function obstacleList() {
+  /** Ped list reused for every car in a frame (provider is allocation-heavy). */
+  let framePeds = null;
+  let frameObstaclesReady = false;
+  function rebuildObstacleCache() {
     obstacleCache.length = 0;
     const src = obstacleProvider ? obstacleProvider() : null;
     if (src) {
@@ -951,6 +955,10 @@ export async function createTraffic(scene, THREE, opts = {}) {
         obstacleCache.push({ isObstacle: true, pos: v.pos, tan: v.tan, velocity: speed, hl, hw });
       }
     }
+    return obstacleCache;
+  }
+  function obstacleList() {
+    if (!frameObstaclesReady) rebuildObstacleCache();
     return obstacleCache;
   }
 
@@ -1225,10 +1233,16 @@ export async function createTraffic(scene, THREE, opts = {}) {
     if (walkObject) {
       playerPos.set(walkObject.position.x, 0, walkObject.position.z);
     }
+    // One shared snapshot for all cars × substeps this frame.
+    rebuildObstacleCache();
+    frameObstaclesReady = true;
+    framePeds = pedProvider ? pedProvider() : null;
     const total = Math.min(dt, MAX_FRAME);
-    const n = Math.max(1, Math.ceil(total / MAX_STEP));
+    const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(total / MAX_STEP)));
     const h = total / n;
     for (let i = 0; i < n; i++) stepSim(h, walkObject);
+    frameObstaclesReady = false;
+    framePeds = null;
     updateSignalVisuals(signals, simTime, cycleSec);
   }
 
@@ -1467,7 +1481,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
 
       // Pedestrians in the lane: brake like for the player; hard overlaps knock them down.
       {
-        const peds = pedProvider ? pedProvider() : null;
+        const peds = framePeds;
         if (peds && peds.length) {
           for (let p = 0; p < peds.length; p++) {
             const ped = peds[p];

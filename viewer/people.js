@@ -58,7 +58,7 @@ const cluster = (p) => CLUSTER[p.look] || p.look;
  * @param opts.initial people loaded before the first spawn
  * @param opts.resident cap on loaded people (GPU memory); unused ones are evicted to make room
  */
-export async function createPeoplePool(THREE, { initial = 22, resident = 30 } = {}) {
+export async function createPeoplePool(THREE, { initial = 8, resident = 14, rotate = false } = {}) {
   const res = await fetch(new URL("manifest.json", DIR));
   if (!res.ok) throw new Error(`people manifest: HTTP ${res.status}`);
   const people = (await res.json()).people;
@@ -144,14 +144,17 @@ export async function createPeoplePool(THREE, { initial = 22, resident = 30 } = 
   await Promise.all([...first].map(load));
   if (!loaded.size) throw new Error("no people loaded");
 
-  // The rest streams in behind; once the pool is full, an unused person makes way for the next
-  // one in the queue and rejoins its end, so the whole cast keeps rotating through.
+  // Optional stream-in: fill up to `resident`, then stop. Continuous rotate/evict was uploading
+  // ~10 MB textures every few seconds for the whole session and made the tab unplayable.
   const queue = shuffle(people.filter((p) => !loaded.has(p.id)).map((p) => p.id));
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  // Everyone resident is usually being worn, so the longest-resident person is retired: new
-  // households skip them, and once the last wearer is redressed they can be evicted.
   let retiring = null;
   (async () => {
+    while (loaded.size < resident && queue.length) {
+      await load(queue.shift());
+      if (loaded.size < resident) await sleep(800);
+    }
+    if (!rotate) return;
     for (;;) {
       if (!queue.length) {
         await sleep(5000);
@@ -171,7 +174,7 @@ export async function createPeoplePool(THREE, { initial = 22, resident = 30 } = 
         queue.push(out);
       }
       await load(queue.shift());
-      if (loaded.size >= resident) await sleep(4000);
+      if (loaded.size >= resident) await sleep(8000);
     }
   })();
 
