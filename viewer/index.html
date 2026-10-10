@@ -1431,7 +1431,10 @@
           if (veloPrompt) {
             rideEl.style.display = "none";
             showPrompt(veloPrompt);
-          } else if (hud.prompt && hud.prompt.startsWith("Press E")) {
+          } else if (
+            hud.prompt &&
+            (hud.prompt.startsWith("Press E") || hud.prompt.startsWith("E ·") || hud.prompt.startsWith("E om"))
+          ) {
             rideEl.style.display = "none";
             showPrompt(hud.prompt);
           } else if (mode === "walk" && nearACar(p.x, p.z)) {
