@@ -358,7 +358,7 @@ export async function createVelo(scene, THREE) {
 
     if (!near) return { action: "none" };
     if (near.st.bikesAvailable <= 0) {
-      toast = "No bikes left here";
+      toast = "Geen fietsen meer hier";
       toastT = 2.2;
       return { action: "empty" };
     }
@@ -384,19 +384,19 @@ export async function createVelo(scene, THREE) {
     if (ride) {
       const near = nearestStation(player.x, player.z);
       if (near && freeSlots(near.st) > 0) {
-        return `Press E to return Velo · ${near.st.name}`;
+        return `E · Velo terugzetten · ${near.st.name}`;
       }
       if (near && freeSlots(near.st) <= 0) {
-        return `Station full · Press E to hop off`;
+        return `Station vol · E om af te stappen`;
       }
-      return "Press E to hop off";
+      return "E om af te stappen";
     }
     const pk = nearestParked(player.x, player.z);
-    if (pk) return "Press E to take parked Velo";
+    if (pk) return "E · geparkeerde Velo nemen";
     const near = nearestStation(player.x, player.z);
     if (!near) return null;
-    if (near.st.bikesAvailable <= 0) return `No bikes · ${near.st.name}`;
-    return `Press E to take a Velo · ${near.st.name} (${near.st.bikesAvailable} left)`;
+    if (near.st.bikesAvailable <= 0) return `Geen fietsen · ${near.st.name}`;
+    return `E · Velo nemen · ${near.st.name} (${near.st.bikesAvailable} vrij)`;
   }
 
   function update(dt, player) {
