@@ -6,7 +6,7 @@
 import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import { fitHumanoid } from "./humanoid-fit.js";
 import { makeShareScooter } from "./scooters.js";
-import { loadCharacterTemplates } from "./characters.js";
+import { CHARACTERS, STARTER, loadCharacterTemplates, streamCharacterTemplates } from "./characters.js";
 import { shared } from "./lanes.js";
 import { createCellGrid } from "./cell-grid.js";
 import { fetchJsonCached } from "./json-cache.js";
@@ -457,8 +457,8 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   }
 
   const [rideTemplates, scooterTemplates] = await Promise.all([
-    loadCharacterTemplates("Riding"),
-    loadCharacterTemplates("Scooter"),
+    loadCharacterTemplates("Riding", [STARTER]),
+    loadCharacterTemplates("Scooter", [STARTER]),
   ]);
 
   const handoffs = buildHandoffs(paths, THREE);
@@ -626,7 +626,28 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   }
   let dtSwerve = 0;
 
-  for (let i = 0; i < COUNT; i++) spawnOne();
+  const FIRST = Math.min(COUNT, opts.firstCount ?? 3);
+  for (let i = 0; i < FIRST; i++) spawnOne();
+
+  let varietyStarted = false;
+  function streamVariety() {
+    if (varietyStarted) return;
+    varietyStarted = true;
+    const rest = CHARACTERS.filter((n) => n !== STARTER);
+    const add = (list) => (tmpl) => {
+      if (!list.some((t) => t.name === tmpl.name)) list.push(tmpl);
+    };
+    streamCharacterTemplates("Riding", add(rideTemplates), rest);
+    streamCharacterTemplates("Scooter", add(scooterTemplates), rest);
+    let left = COUNT - vehicles.length;
+    const step = () => {
+      if (left <= 0) return;
+      spawnOne();
+      left--;
+      if (left > 0) setTimeout(step, 200);
+    };
+    if (left > 0) setTimeout(step, 200);
+  }
   shared.bikes = vehicles;
 
   console.info(
@@ -966,5 +987,6 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     mixamo: rideTemplates.length > 0 || scooterTemplates.length > 0,
     setNight,
     setCamera,
+    streamVariety,
   };
 }

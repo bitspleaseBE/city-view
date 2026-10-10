@@ -21,7 +21,7 @@
 
 import { shared } from "./lanes.js";
 import { createCellGrid } from "./cell-grid.js";
-import { cloneCarMesh, loadCarTemplates, makeLampParts, pickCarTemplate } from "./cars.js";
+import { STARTER_CARS, cloneCarMesh, loadCarTemplates, makeLampParts, pickCarTemplate } from "./cars.js";
 import { fetchJsonCached } from "./json-cache.js";
 
 const KMH = 1 / 3.6;
@@ -826,7 +826,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
   const signalDisposables = buildSignalVisuals(signals, THREE, root);
   updateSignalVisuals(signals, 0, cycleSec);
   const parts = makeSharedParts(THREE);
-  const templates = (await loadCarTemplates(THREE)) || [];
+  const templates = (await loadCarTemplates(THREE, { only: STARTER_CARS })) || [];
   if (templates.length) {
     console.info(`[cityview] Traffic fleet: ${templates.length} Antwerp-weighted car models`);
   } else {
@@ -1763,6 +1763,32 @@ export async function createTraffic(scene, THREE, opts = {}) {
     return signalPhase(sig, simTime, cycleSec) === "red";
   }
 
+  let restStarted = false;
+  function loadRest() {
+    if (restStarted) return;
+    restStarted = true;
+    loadCarTemplates(THREE, { skip: STARTER_CARS })
+      .then((extra) => {
+        if (!extra?.length) return;
+        for (const t of extra) {
+          if (!templates.some((have) => have.id === t.id)) templates.push(t);
+        }
+        for (const car of cars) {
+          const template = pickCarTemplate(templates);
+          if (!template || template.id === car.mesh.userData.carId) continue;
+          const next = cloneCarMesh(THREE, parts, template);
+          next.position.copy(car.mesh.position);
+          next.quaternion.copy(car.mesh.quaternion);
+          next.scale.copy(car.mesh.scale);
+          car.mesh.parent?.add(next);
+          car.mesh.removeFromParent();
+          car.mesh = next;
+        }
+        console.info(`[cityview] Traffic fleet: ${templates.length} Antwerp-weighted car models`);
+      })
+      .catch((err) => console.warn("[cityview] extra car models failed", err));
+  }
+
   return {
     update,
     dispose,
@@ -1779,5 +1805,6 @@ export async function createTraffic(scene, THREE, opts = {}) {
     count: cars.length,
     pathCount: paths.length,
     signalCount: signals.length,
+    loadRest,
   };
 }

@@ -2052,13 +2052,7 @@
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             groundAt,
           });
-          setLoad(0.92, "Opening the shops");
-          shops = await createShops(scene, THREE, { groundAt, anisotropy: renderer.capabilities.getMaxAnisotropy() });
-          if (shops) {
-            shops.update(gameHour, gameDay);
-            shops.setNight(smooth(0.4, 0.9, tod));
-            terraces = createTerraces(scene, THREE, shops.records, { groundAt });
-          }
+          // Shop signs, terraces and the radar raster start after the city is walkable.
           // ---- Mini map + street name locator ----
           minimap = createMinimap(THREE, {
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
@@ -2190,6 +2184,12 @@
           prevTime = performance.now();
           window.__loading && window.__loading.done();
           setTimeout(() => document.getElementById("hud")?.classList.add("gone"), 9000);
+          requestAnimationFrame(() => {
+            micromobility?.streamVariety?.();
+            traffic?.loadRest?.();
+            minimap?.warmBase?.();
+            settleStreetLife();
+          });
           // Bake heights after first paint so the loader is not stuck on thousands of raycasts.
           bakeHeightGridAsync().catch((e) => console.warn("[cityview] height grid failed", e));
           // One-line GPU census after a couple of frames (Valorant-feel target: draw calls ≪ 1k).
@@ -2204,12 +2204,29 @@
           );
       }
 
+      async function settleStreetLife() {
+        try {
+          const glow = smooth(0.4, 0.9, tod);
+          shops = await createShops(scene, THREE, {
+            groundAt,
+            anisotropy: renderer.capabilities.getMaxAnisotropy(),
+          });
+          if (!shops) return;
+          shops.update(gameHour, gameDay);
+          shops.setNight(glow);
+          terraces = createTerraces(scene, THREE, shops.records, { groundAt });
+          terraces?.setNight?.(glow);
+        } catch (err) {
+          console.warn("[cityview] shops deferred failed", err);
+        }
+      }
+
       (async () => {
         try {
           setLoad(0, "Fetching the streets");
           const buf = await window.__glbPromise;
           // Not earlier: during the city download the characters would only steal its bandwidth.
-          preloadCharacters();
+          preloadCharacters(); // Amy's walk mesh only; the other riders start after the first frame
           setLoad(0.48, "Unpacking the streets");
           await nextFrame();
           await MeshoptDecoder.ready;

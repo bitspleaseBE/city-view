@@ -8,6 +8,9 @@
 
 const FLEET_URL = new URL("./cars/fleet.json", import.meta.url);
 
+/** One common SUV and one city hatch. The other eight models load once the street is up. */
+export const STARTER_CARS = ["model_y.glb", "peugeot_208.glb"];
+
 /** Weighted paint mix seen on Belgian streets (sRGB): greyscale dominates, a few colours. */
 export const CAR_PAINTS = [
   [0xe8e9e6, 20], // white
@@ -79,7 +82,7 @@ function paintMaterial(cache, base, hex) {
  * @param {typeof import('three')} THREE
  * @returns {Promise<CarTemplate[]>}
  */
-export async function loadCarTemplates(THREE) {
+export async function loadCarTemplates(THREE, opts = {}) {
   let GLTFLoader;
   try {
     ({ GLTFLoader } = await import("three/addons/loaders/GLTFLoader.js"));
@@ -91,13 +94,18 @@ export async function loadCarTemplates(THREE) {
   const doc = await loadFleetDoc();
   if (!doc?.models?.length) return [];
 
+  let models = doc.models;
+  if (opts.only?.length) models = models.filter((spec) => opts.only.includes(spec.file));
+  else if (opts.skip?.length) models = models.filter((spec) => !opts.skip.includes(spec.file));
+  if (!models.length) return [];
+
   const loader = new GLTFLoader();
   const base = new URL("./cars/", import.meta.url);
   /** @type {CarTemplate[]} */
   const out = [];
 
   await Promise.all(
-    doc.models.map(async (spec) => {
+    models.map(async (spec) => {
       try {
         const url = new URL(spec.file, base).href;
         const gltf = await loader.loadAsync(url);
