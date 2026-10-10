@@ -384,21 +384,59 @@
         const fill = document.getElementById("ld-fill");
         const stage = document.getElementById("ld-stage");
         const pct = document.getElementById("ld-pct");
+        // Displayed progress chases a target and creeps during long silent stages so the bar
+        // feels linear in time (download used to burn 80% of the bar in a few seconds, then stall).
+        let target = 0;
         let shown = 0;
+        let ceil = 0.08;
+        let finishing = false;
+        let lastTick = performance.now();
+        const paint = () => {
+          root.classList.remove("indet");
+          fill.style.transform = "scaleX(" + Math.max(0.03, shown).toFixed(3) + ")";
+          pct.textContent = Math.round(shown * 100) + "%";
+        };
+        let doneAt = 0;
+        const tick = (now) => {
+          if (!root.isConnected) return;
+          const dt = Math.min(0.08, (now - lastTick) / 1000);
+          lastTick = now;
+          if (shown < target) {
+            // Catch up to the stage target quickly; finish even faster once klaar.
+            shown = Math.min(target, shown + dt * (finishing ? 1.4 : 0.7));
+          } else if (!finishing && shown < ceil && shown < 0.985) {
+            // Keep moving a little while the next await is silent.
+            shown = Math.min(ceil, shown + dt * 0.04);
+          }
+          paint();
+          if (finishing && shown >= 1) {
+            if (!doneAt) {
+              doneAt = now;
+              root.classList.add("done");
+            } else if (now - doneAt > 700) {
+              root.remove();
+              return;
+            }
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
         window.__loading = {
           set(frac, label) {
-            shown = Math.max(shown, Math.min(1, frac));
-            root.classList.remove("indet");
-            fill.style.transform = "scaleX(" + Math.max(0.03, shown).toFixed(3) + ")";
-            pct.textContent = Math.round(shown * 100) + "%";
+            const f = Math.max(target, Math.min(1, frac));
+            target = f;
+            // Leave headroom for creep until the next milestone (never past 98.5% before done).
+            ceil = Math.min(0.985, Math.max(ceil, f + 0.07));
             if (label) stage.textContent = label;
           },
           done() {
-            this.set(1, "Klaar");
-            root.classList.add("done");
-            setTimeout(() => root.remove(), 1000);
+            finishing = true;
+            target = 1;
+            ceil = 1;
+            stage.textContent = "Klaar";
           },
           fail(msg) {
+            finishing = true;
             root.classList.remove("indet");
             root.classList.add("failed");
             stage.textContent = msg;
@@ -421,8 +459,9 @@
             chunks.push(value);
             got += value.length;
             // ~36 MB Meshopt city; asymptotic fallback when Content-Length is missing/wrong.
+            // Download is only ~42% of the bar — parse / traffic / people take the rest of the wait.
             const f = total && got <= total ? got / total : 1 - Math.exp(-got / 36e6);
-            window.__loading.set(f * 0.8, "Straten ophalen");
+            window.__loading.set(f * 0.42, "Straten ophalen");
           }
           const buf = new Uint8Array(got);
           let off = 0;
@@ -1852,7 +1891,7 @@
           paintParkedCars(cityRoot);
           parkedCars = wireParkedCarLamps(cityRoot, THREE);
           cityRoot.updateMatrixWorld(true);
-          setLoad(0.9, "Straten opbouwen");
+          setLoad(0.55, "Straten opbouwen");
           await nextFrame();
           if (new URLSearchParams(location.search).get("merge") !== "0") {
             const m = mergeStaticMeshes(cityRoot);
@@ -1867,12 +1906,14 @@
           if (spawnNode) applySpawnFromNode(spawnNode);
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
-          setLoad(0.94, "Verkeer en trams starten");
-          const stopCharProgress = onCharacterProgress((f) => setLoad(0.94 + 0.03 * f, "Mensen buiten brengen"));
+          setLoad(0.62, "Verkeer starten");
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
+          setLoad(0.68, "Trams en bussen starten");
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
           // ---- Pedestrians (humanoids walking on sidewalks) ----
+          setLoad(0.74, "Mensen buiten brengen");
+          const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Mensen buiten brengen"));
           pedestrians = await createPedestrians(scene, THREE, {
             count: 40,
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
@@ -1880,6 +1921,7 @@
             camera,
             groundAt,
           });
+          stopCharProgress();
           cash = createCashDrops(scene, THREE);
           pedestrians.setOnKilled(({ x, y, z, yaw }) => {
             // Beside the body, like a dropped wallet.
@@ -1890,13 +1932,14 @@
           if (pedestrians.setCrossingGate && traffic.pedMayCross) {
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
+          setLoad(0.88, "Fietsen en steps");
           micromobility = await createMicromobility(scene, THREE, { count: 28 });
-          stopCharProgress();
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             groundAt,
           });
+          setLoad(0.92, "Winkels openen");
           shops = await createShops(scene, THREE, { groundAt, anisotropy: renderer.capabilities.getMaxAnisotropy() });
           if (shops) {
             shops.update(gameHour, gameDay);
@@ -2005,7 +2048,7 @@
                 : "Zonnige dag — klik om te lopen";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
-          setLoad(0.97, "Lichten opwarmen");
+          setLoad(0.96, "Lichten opwarmen");
           await nextFrame();
           await warmUpRenderer();
           if (touch) {
@@ -2035,7 +2078,7 @@
           const buf = await window.__glbPromise;
           // Not earlier: during the city download the characters would only steal its bandwidth.
           preloadCharacters();
-          setLoad(0.82, "Straten uitpakken");
+          setLoad(0.48, "Straten uitpakken");
           await nextFrame();
           await MeshoptDecoder.ready;
           const gltf = await loader.parseAsync(buf, "./");
