@@ -713,7 +713,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     if (rider?.userData?.action) rider.userData.action.setEffectiveTimeScale(0);
   }
 
-  function updateCrash(v, dt) {
+  function updateCrash(v, dt, obstacles = []) {
     const c = v.crash;
     c.t += dt;
     const airborne = c.y > 0 || c.vy > 0;
@@ -723,6 +723,15 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       v.mesh.position.z += c.vz * dt;
       v.pos.x = v.mesh.position.x;
       v.pos.z = v.mesh.position.z;
+      // Do not slide the wreck back through a tram/bus body.
+      if (hardHit(v, obstacles)) {
+        c.vx *= -0.15;
+        c.vz *= -0.15;
+        v.mesh.position.x += c.vx * dt;
+        v.mesh.position.z += c.vz * dt;
+        v.pos.x = v.mesh.position.x;
+        v.pos.z = v.mesh.position.z;
+      }
       if (!airborne) {
         const slow = Math.max(0, hs - 6 * dt) / hs;
         c.vx *= slow;
@@ -757,7 +766,7 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     dtSwerve = dt;
     for (const v of vehicles) {
       if (v.crash) {
-        updateCrash(v, dt);
+        updateCrash(v, dt, obstacles);
         continue;
       }
 
