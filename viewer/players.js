@@ -88,6 +88,14 @@ export function createPlayerAvatar(THREE, scene) {
   /** @type {null | { lThigh: object, rThigh: object, lCalf: object, rCalf: object, spine: object, head: object }} */
   let bodyBones = null;
   let airBlend = 0;
+  let airPoseSaved = false;
+  const _airBase = {
+    lThigh: new THREE.Quaternion(),
+    rThigh: new THREE.Quaternion(),
+    lCalf: new THREE.Quaternion(),
+    rCalf: new THREE.Quaternion(),
+    spine: new THREE.Quaternion(),
+  };
   const _headPrev = new THREE.Quaternion();
   let headReady = false;
 
@@ -214,49 +222,42 @@ export function createPlayerAvatar(THREE, scene) {
       head: findNamed(rig, "Bip01_Head", "Bip01 Head", "Head", "mixamorigHead"),
     };
     headReady = false;
+    airPoseSaved = false;
   }
 
   /**
-   * Bind facing differs per cast (Pieter looks along +Z, Mo along +X). Turn the
-   * mesh so that facing lines up with travel (−Z when the root yaw is 0).
+   * Knees up, like clearing a low fence, then hold that shape in the air.
+   * The mixer skips rewriting a frozen clip, so a multiply would stack every
+   * frame and pitch him onto his back. Re-apply the flex from the pose we
+   * captured on takeoff.
    */
-  function alignBindFacing(rig) {
-    const left = findNamed(rig, "Bip01_L_Thigh", "Bip01 L Thigh", "LeftUpLeg", "mixamorigLeftUpLeg");
-    const right = findNamed(rig, "Bip01_R_Thigh", "Bip01 R Thigh", "RightUpLeg", "mixamorigRightUpLeg");
-    if (!left || !right) {
-      rig.rotation.y = Math.PI;
-      return;
+  function captureAirPose() {
+    if (!bodyBones) return;
+    for (const key of Object.keys(_airBase)) {
+      if (bodyBones[key]) _airBase[key].copy(bodyBones[key].quaternion);
     }
-    left.updateWorldMatrix(true, false);
-    right.updateWorldMatrix(true, false);
-    const sx = left.matrixWorld.elements[12] - right.matrixWorld.elements[12];
-    const sz = left.matrixWorld.elements[14] - right.matrixWorld.elements[14];
-    // up × (left − right) is the direction the chest faces.
-    const fx = sz;
-    const fz = -sx;
-    if (fx * fx + fz * fz < 1e-6) {
-      rig.rotation.y = Math.PI;
-      return;
-    }
-    rig.rotation.y = -Math.atan2(fx, fz) + Math.PI;
+    airPoseSaved = true;
   }
-
-  /** Knees up, like clearing a low fence, then hold that shape in the air. */
-  function polishAirPose(k) {
-    if (!bodyBones || k < 1e-3) return;
-    const tuck = 1.05 * k;
-    const bend = 1.2 * k;
-    const lean = 0.28 * k;
-    _qLift.setFromAxisAngle(_vBone.set(0, 0, 1), tuck);
-    if (bodyBones.lThigh) bodyBones.lThigh.quaternion.premultiply(_qLift);
-    if (bodyBones.rThigh) bodyBones.rThigh.quaternion.premultiply(_qLift);
-    _qLift.setFromAxisAngle(_vBone.set(0, 0, 1), bend);
-    if (bodyBones.lCalf) bodyBones.lCalf.quaternion.premultiply(_qLift);
-    if (bodyBones.rCalf) bodyBones.rCalf.quaternion.premultiply(_qLift);
-    if (bodyBones.spine) {
-      _qLift.setFromAxisAngle(_vBone.set(0, 0, 1), lean);
-      bodyBones.spine.quaternion.premultiply(_qLift);
+  function restoreAirPose() {
+    if (!airPoseSaved || !bodyBones) return;
+    for (const key of Object.keys(_airBase)) {
+      if (bodyBones[key]) bodyBones[key].quaternion.copy(_airBase[key]);
     }
+    airPoseSaved = false;
+  }
+  function polishAirPose(k) {
+    if (!bodyBones || !airPoseSaved || k < 1e-3) return;
+    const flex = (key, ang) => {
+      const bone = bodyBones[key];
+      if (!bone) return;
+      _qLift.setFromAxisAngle(_vBone.set(0, 0, 1), ang);
+      bone.quaternion.copy(_airBase[key]).multiply(_qLift);
+    };
+    flex("lThigh", 0.85 * k);
+    flex("rThigh", 0.85 * k);
+    flex("lCalf", 1.05 * k);
+    flex("rCalf", 1.05 * k);
+    flex("spine", 0.22 * k);
   }
 
   /**
@@ -444,9 +445,9 @@ export function createPlayerAvatar(THREE, scene) {
     // Pedestrian loader uses >0.01; the old >0.3 gate left Mixamo James at 1.8 cm.
     const s = measureY > 0.01 ? targetH / measureY : 1;
     visual.scale.setScalar(s);
-    // Player motion with yaw=0 walks toward −Z. Pieter's bind faces +Z; Mo's faces +X.
-    visual.updateMatrixWorld(true);
-    alignBindFacing(visual);
+    // Player motion with yaw=0 walks toward −Z. Both binds need the half-turn;
+    // a thigh cross-product here faced Pieter at the camera.
+    visual.rotation.y = Math.PI;
     visual.updateMatrixWorld(true);
     if (foot) {
       foot.updateWorldMatrix(true, false);
@@ -558,8 +559,10 @@ export function createPlayerAvatar(THREE, scene) {
         const dur = actions.walk.getClip()?.duration || 1;
         const phase = (actions.walk.time / dur) * Math.PI * 2;
         polishWalkPose(visual, phase, !airborne && Math.abs(moveSpeed) >= 0.08);
+        if (airborne && !airPoseSaved) captureAirPose();
         const tuck = airBlend * airBlend * (3 - 2 * airBlend);
-        polishAirPose(tuck);
+        if (tuck > 1e-3 && airPoseSaved) polishAirPose(tuck);
+        else if (!airborne) restoreAirPose();
         stabilizeHead();
       } else if (kind === "velo" || kind === "scooter") {
         // Ride clips don't put Rocketbox/Mixamo wrists on the bars — IK does.
