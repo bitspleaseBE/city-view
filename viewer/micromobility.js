@@ -16,9 +16,14 @@ const SPAWN_GAP = 7; // m between riders at spawn
 const LOOK_AHEAD = 9; // m: riders react to anything this far ahead in their lane
 const LOOK_AHEAD_HARD = 22; // m: trams / buses are long — brake earlier
 const LANE_HALF = 0.55; // m: half a bike's swept width
+const HARD_SIDE = 2.4; // m: notice a tram/bus on a parallel track before riding into it
 const STOP_GAP = 1.6; // m nose-to-tail when queued
 const SWERVE = 0.75; // m to the right when an oncoming rider shares the lane
 const OVERTAKE = 1.3; // m to the left when passing something that blocks the lane
+const HARD_HIT_SPEED = 1.5; // m/s closing → knock-down (not a soft brush)
+const CRASH_KILL_SPEED = 7.5; // m/s closing with a tram/bus → lethal
+const CRASH_LIE_S = 3.2; // s on the deck before scramble / clear
+const CRASH_DEAD_S = 9; // s before a killed rider is cleared
 
 /** Shared lamp materials so setNight can brighten every rider at once. */
 let _lampMat = null;
@@ -548,11 +553,16 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       const reach = (ob.hard ? LOOK_AHEAD_HARD : LOOK_AHEAD) + hl;
       if (ahead < -hl || ahead > reach) return;
       const lat = Math.abs(dx * tz - dz * tx);
-      if (lat > LANE_HALF + hw) return;
+      // Soft lane box for cars; hard transit is noticed from the neighbouring track too
+      // so riders brake instead of overtaking into a tram that looks "beside" them.
+      const side = ob.hard ? HARD_SIDE + hw : LANE_HALF + hw;
+      if (lat > side) return;
       const otx = ob.tx || 0;
       const otz = ob.tz || 0;
       if (otx * tx + otz * tz < -0.3) oncoming = true;
-      gap = Math.min(gap, ahead - hl);
+      // Closing on the box: prefer the nose gap; if already alongside, treat as zero gap.
+      const nose = ahead - hl;
+      gap = Math.min(gap, lat > LANE_HALF + hw * 0.85 ? Math.max(0.2, nose) : nose);
       if (ob.hard) hardBlock = true;
     };
     for (const o of vehicles) if (o !== v) consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
@@ -615,8 +625,10 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     }
   }
 
-  /** True when the rider's body is inside a hard tram/bus footprint. */
-  function insideHard(v, obstacles) {
+  /** Nearest hard tram/bus the rider's body is inside, or null. */
+  function hardHit(v, obstacles) {
+    let best = null;
+    let bestD = Infinity;
     for (const ob of obstacles) {
       if (!ob.hard || ob.hl == null) continue;
       const dx = v.pos.x - ob.x;
@@ -625,13 +637,18 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       const otz = ob.tz || 0;
       const along = dx * otx + dz * otz;
       const lat = Math.abs(dx * otz - dz * otx);
-      if (Math.abs(along) < (ob.hl ?? 1) * 0.92 && lat < (ob.hw ?? 1) * 0.92) return true;
+      if (Math.abs(along) >= (ob.hl ?? 1) * 0.95 || lat >= (ob.hw ?? 1) * 0.95) continue;
+      const d = Math.abs(along) + lat;
+      if (d < bestD) {
+        bestD = d;
+        best = ob;
+      }
     }
-    return false;
+    return best;
   }
 
-  /** After a tram/bus strike: drop the rider elsewhere so they do not stay inside the consist. */
-  function clearAccident(v) {
+  /** Put the rider back on a free path after an accident (or after lying dead is cleared). */
+  function respawnRider(v) {
     const path = paths[(Math.random() * paths.length) | 0];
     v.path = path;
     v.reverse = legalDirs(path)[0];
@@ -640,13 +657,104 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     v.swerve = 0;
     v.overtake = 0;
     v.stuck = 0;
+    v.crash = null;
+    v.mesh.rotation.x = 0;
+    v.mesh.rotation.z = 0;
+    v.mesh.visible = true;
+    const rider = v.mesh.userData.rider;
+    if (rider) {
+      rider.visible = true;
+      if (rider.userData?.action) rider.userData.action.setEffectiveTimeScale(1);
+    }
     place(v);
+  }
+
+  /**
+   * Real-world hit: tip the bike, throw the rider, damage by closing speed.
+   * Trams never swerve — the bike takes the hit; violent ones kill and clear later.
+   */
+  function startCrash(v, ob) {
+    const otx = ob.tx || 0;
+    const otz = ob.tz || 0;
+    // Throw off the track: bike heading plus a shove from the consist's flank.
+    const dx = v.pos.x - ob.x;
+    const dz = v.pos.z - ob.z;
+    let nx = dx - (dx * otx + dz * otz) * otx;
+    let nz = dz - (dx * otx + dz * otz) * otz;
+    const nl = Math.hypot(nx, nz) || 1;
+    nx /= nl;
+    nz /= nl;
+    const speed = Math.max(v.cur, 0);
+    const closing = speed + Math.max(0, Number(ob.speed) || 0);
+    const kick = 2.2 + closing * 0.55;
+    const dead = closing >= CRASH_KILL_SPEED;
+    v.cur = 0;
+    v.swerve = 0;
+    v.overtake = 0;
+    v.stuck = 0;
+    v.crash = {
+      t: 0,
+      dead,
+      vx: v.tan.x * Math.max(speed, 1.2) * 0.35 + nx * kick,
+      vz: v.tan.z * Math.max(speed, 1.2) * 0.35 + nz * kick,
+      vy: 1.1 + closing * 0.18,
+      y: 0.15,
+      roll: 0,
+      spin: 3.8 + closing * 0.35,
+      lie: dead ? CRASH_DEAD_S : CRASH_LIE_S,
+    };
+    const rider = v.mesh.userData.rider;
+    if (rider?.userData?.action) rider.userData.action.setEffectiveTimeScale(0);
+  }
+
+  function updateCrash(v, dt) {
+    const c = v.crash;
+    c.t += dt;
+    const airborne = c.y > 0 || c.vy > 0;
+    const hs = Math.hypot(c.vx, c.vz);
+    if (hs > 0.05) {
+      v.mesh.position.x += c.vx * dt;
+      v.mesh.position.z += c.vz * dt;
+      v.pos.x = v.mesh.position.x;
+      v.pos.z = v.mesh.position.z;
+      if (!airborne) {
+        const slow = Math.max(0, hs - 6 * dt) / hs;
+        c.vx *= slow;
+        c.vz *= slow;
+      }
+    }
+    if (airborne) {
+      c.vy -= 9.81 * dt;
+      c.y = Math.max(0, c.y + c.vy * dt);
+      if (c.y === 0) c.vy = 0;
+    }
+    // Tip onto the side while thrown.
+    if (c.roll < Math.PI / 2) c.roll = Math.min(Math.PI / 2, c.roll + c.spin * dt);
+    v.mesh.rotation.z = c.roll;
+    v.mesh.position.y = c.y + Math.sin(c.roll) * 0.35;
+    if (c.roll >= Math.PI / 2 - 1e-3 && hs < 0.08 && !airborne) {
+      c.lie -= dt;
+      if (c.lie <= 0) {
+        if (c.dead) {
+          // Violent hit: clear the wreck and put a fresh rider elsewhere.
+          respawnRider(v);
+        } else {
+          // Survived: scramble back onto the network (no ghosting through the tram).
+          respawnRider(v);
+        }
+      }
+    }
   }
 
   function update(dt, obstacles = []) {
     if (!(dt > 0)) return;
     dtSwerve = dt;
     for (const v of vehicles) {
+      if (v.crash) {
+        updateCrash(v, dt);
+        continue;
+      }
+
       const want = targetSpeed(v, obstacles);
       const rate = want < v.cur ? 6.0 : 1.6; // brake hard, pull away gently
       v.cur += Math.max(-rate * dt, Math.min(rate * dt, want - v.cur));
@@ -661,10 +769,14 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       }
       place(v);
 
-      // Still inside a tram/bus after braking → accident: clear the rider (no ghosting).
-      if (insideHard(v, obstacles)) {
-        clearAccident(v);
-        continue;
+      // Still inside a tram/bus after braking → accident: fly off, maybe die.
+      const hit = hardHit(v, obstacles);
+      if (hit) {
+        const closing = Math.max(v.cur, 0) + Math.max(0, Number(hit.speed) || 0);
+        if (closing >= HARD_HIT_SPEED || v.cur < 0.4) {
+          startCrash(v, hit);
+          continue;
+        }
       }
 
       // Spin wheels
