@@ -1524,6 +1524,8 @@ export async function createTransit(scene, THREE, opts = {}) {
       for (let j = 0; j < bikes.length; j++) {
         const b = bikes[j];
         if (!b?.pos || !b.tan) continue;
+        // Still brake for the impact instant; ignore wrecks once they have been thrown clear.
+        if (b.crash && b.crash.t > 0.8) continue;
         const dx = b.pos.x - v.pos.x;
         const dz = b.pos.z - v.pos.z;
         if (dx * dx + dz * dz > 28 * 28) continue;
