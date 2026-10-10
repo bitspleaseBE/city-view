@@ -340,6 +340,10 @@
       body.locked #crosshair {
         display: block;
       }
+      body.night #crosshair {
+        background: rgba(255, 255, 255, 0.95);
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75), 0 0 6px rgba(0, 0, 0, 0.55);
+      }
       body.free-view #crosshair,
       body.on-transit #crosshair {
         display: none !important;
@@ -791,6 +795,7 @@
         skirtMat && skirtMat.color.set(GROUND_SKIRT).lerp(_tmpCol.set(0x23252b), night);
 
         const isNight = t > 0.5;
+        document.body.classList.toggle("night", isNight);
         btnNight.textContent = isNight ? "Dag" : "Nacht";
         btnNight.setAttribute("aria-pressed", String(isNight));
         btnNight.classList.toggle("active", isNight);
@@ -1087,6 +1092,8 @@
 
       // Free view: locked top-down (no pitch/orbit). WASD / drag pans on XZ, wheel zooms height.
       const freeCam = { x: 0, z: 0, height: 320, minH: 35, maxH: 700 };
+      let kaartStreetClock = 0;
+      let kaartStreetLast = "";
       const walkSaved = { x: 0, z: 0, yaw: 0 };
       const UP_WORLD = new THREE.Vector3(0, 1, 0);
       const UP_TOPDOWN = new THREE.Vector3(0, 0, -1); // north (-Z) is screen-up
@@ -1220,7 +1227,8 @@
           applyFreeCamera();
           hint.textContent = TOUCH ? HINT.mapTouch : HINT.map;
           {
-            const street = streetLocator?.locate?.(freeCam.x, freeCam.z);
+            const street = streetLocator?.locate?.(freeCam.x, freeCam.z) || "";
+            kaartStreetLast = street;
             status.textContent = street ? `Kaart — ${street}` : "Kaart";
           }
           touch?.setModeLabel("free");
@@ -2125,6 +2133,14 @@
           // Screen-up is north (-Z); W pans toward it.
           panFree(((keys.d ? 1 : 0) - (keys.a ? 1 : 0)) * panStep, ((keys.s ? 1 : 0) - (keys.w ? 1 : 0)) * panStep);
           applyFreeCamera();
+          if ((kaartStreetClock -= dt) <= 0) {
+            kaartStreetClock = 0.45;
+            const street = streetLocator?.locate?.(freeCam.x, freeCam.z) || "";
+            if (street !== kaartStreetLast) {
+              kaartStreetLast = street;
+              status.textContent = street ? `Kaart — ${street}` : "Kaart";
+            }
+          }
         }
 
         const walker =
@@ -2160,7 +2176,8 @@
               softClampXZ(freeCam, playBounds);
               softClampXZ(walkSaved, playBounds);
               snapWalkSavedOutdoors();
-              const street = streetLocator?.locate?.(walkSaved.x, walkSaved.z);
+              const street = streetLocator?.locate?.(walkSaved.x, walkSaved.z) || "";
+              kaartStreetLast = street;
               status.textContent = street ? `Kaart — ${street}` : "Kaart";
               hud.notify(street ? `Hier neergezet · ${street}` : "Hier neergezet — V om te lopen", 2800);
               if (street && minimap.showStreetName) minimap.showStreetName(street, "Harmonie", 3200);
