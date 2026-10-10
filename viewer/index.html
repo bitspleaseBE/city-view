@@ -506,7 +506,6 @@
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
       import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
-      import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
       import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
       import { createTraffic } from "./traffic.js";
       import { createTransit } from "./transit.js";
@@ -618,23 +617,16 @@
       renderer.toneMappingExposure = 1;
       document.body.appendChild(renderer.domElement);
 
-      // Cheap IBL so glass/metal catch sky instead of looking like flat stickers.
-      const pmrem = new THREE.PMREMGenerator(renderer);
-      const roomEnv = new RoomEnvironment();
-      scene.environment = pmrem.fromScene(roomEnv, 0.04).texture;
-      roomEnv.dispose(); // the studio scene is only needed to bake the cube map
-      pmrem.dispose();
+      // No IBL / fill light: each extra light + env map taxes every PBR material. Hemi + sun
+      // only — competitive-style lighting, hotter so the street still reads without ACES/IBL.
+      scene.environment = null;
 
-      // Slightly hotter lights so the scene stays bright without ACES tone-mapping.
-      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 1.05);
+      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 1.2);
       scene.add(hemi);
-      const sun = new THREE.DirectionalLight(0xfff2d6, 1.55);
+      const sun = new THREE.DirectionalLight(0xfff2d6, 1.75);
       sun.position.set(220, 320, -160);
       scene.add(sun);
       scene.add(sun.target);
-      const fill = new THREE.DirectionalLight(0xcfe4ff, 0.35);
-      fill.position.set(-160, 120, 200);
-      scene.add(fill);
 
       // Visible sun disc + soft haze
       const sunMesh = new THREE.Mesh(
@@ -709,7 +701,7 @@
       const VEG_NIGHT = new THREE.Color(0x0a120c);
       const TRUNK_NIGHT = new THREE.Color(0x0c0908);
       const lampHeads = []; // world positions of street-lamp heads
-      const LAMP_LIGHTS = 4;
+      const LAMP_LIGHTS = 2; // nearest lamps only — each PointLight is a full extra light pass
       const LAMP_INTENSITY = 38;
       const lampLights = [];
       let lampGlow = 0;
@@ -789,15 +781,13 @@
         renderer.setClearColor(_tmpCol, 1);
         scene.fog.density = baseFogDensity * (1 + 0.5 * night);
 
-        scene.environmentIntensity = 1 - 0.86 * smooth(0.05, 0.8, t);
-
         hemi.color.copy(HEMI_SKY_DAY).lerp(HEMI_SKY_NIGHT, night);
         hemi.groundColor.copy(HEMI_GND_DAY).lerp(HEMI_GND_NIGHT, night);
-        hemi.intensity = 1.05 - 0.72 * night;
+        hemi.intensity = 1.2 - 0.85 * night;
 
         // One directional light plays the sun by day and the moon by night.
         sun.color.copy(SUN_COL).lerp(SUN_DUSK, dusk).lerp(MOON_COL, smooth(0.5, 0.9, t));
-        sun.intensity = 1.55 * dayAmt + 0.35 * smooth(0.5, 1.0, t);
+        sun.intensity = 1.75 * dayAmt + 0.4 * smooth(0.5, 1.0, t);
         sun.position.lerpVectors(sunArcPos, MOON_POS, smooth(0.2, 0.8, t));
         sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
         sunHaze.position.copy(sunMesh.position);
@@ -805,7 +795,6 @@
         sunMesh.scale.setScalar(1 - 0.45 * smooth(0.4, 0.9, t));
         sunHaze.material.color.set(0xffe8b0).lerp(_tmpCol.set(0x8fa6d8), smooth(0.4, 0.9, t));
         sunHaze.material.opacity = 0.18 + 0.1 * dusk;
-        fill.intensity = 0.35 - 0.2 * night;
 
         // Façade windows + lamp heads glow; cars and trams follow.
         const glow = smooth(0.4, 0.9, t);
