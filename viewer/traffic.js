@@ -173,6 +173,7 @@ function buildPaths(roads, THREE) {
     paths.push({
       id: road.id,
       kind,
+      dual: !!road.dualCarriageway,
       dir, // legal car direction along `points`: 1 forward only, -1 reverse only, 0 both
       busDir: Number.isFinite(road.onewayBus) ? directionCode(road.onewayBus) : dir,
       limitKmh,
@@ -850,13 +851,39 @@ export async function createTraffic(scene, THREE, opts = {}) {
    * Only roads the vehicle may legally drive that way count (`mode` "bus" honours
    * oneway:bus), so a bus never snaps into the lane of a one-way carriageway it would be
    * driving the wrong way down.
+   *
+   * Buses search a wider corridor, ignore short residential spurs, and prefer
+   * boulevard/secondary ribbons (GTFS shapes on Mechelsesteenweg often sit on the
+   * building-side asphalt strip past the sidewalk instead of the main carriageway).
    */
+  const BUS_KIND_RANK = {
+    motorway: 6,
+    trunk: 5,
+    primary: 4,
+    secondary: 3,
+    tertiary: 2,
+    unclassified: 1,
+    residential: 0,
+    living_street: -1,
+  };
+  /** Dual-carriageway link roads (e.g. Mechelsesteenweg spur 4480699) — not bus lanes. */
+  const BUS_MIN_LOCAL_M = 40;
   function laneAt(x, z, tx, tz, out, mode = "car") {
-    let bestD = 4.5;
+    const maxD = mode === "bus" ? 10.0 : 4.5;
+    let bestScore = maxD;
     let found = false;
     for (let i = 0; i < paths.length; i++) {
       const path = paths[i];
+      if (
+        mode === "bus" &&
+        (path.kind === "residential" || path.kind === "living_street") &&
+        path.length < BUS_MIN_LOCAL_M
+      ) {
+        continue;
+      }
       const pts = path.points;
+      const rank = BUS_KIND_RANK[path.kind] ?? 0;
+      const dualBonus = path.dual ? 0.8 : 0;
       for (let k = 0; k < pts.length - 1; k++) {
         const a = pts[k];
         const b = pts[k + 1];
@@ -868,7 +895,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
         const px = a.x + dx * t;
         const pz = a.z + dz * t;
         const d = Math.hypot(x - px, z - pz);
-        if (d >= bestD) continue;
+        if (d >= maxD) continue;
         const len = Math.sqrt(l2);
         let ux = dx / len;
         let uz = dz / len;
@@ -880,8 +907,12 @@ export async function createTraffic(scene, THREE, opts = {}) {
           ux = -ux;
           uz = -uz;
         }
+        // Cars: nearest road. Buses: distance minus class rank so a secondary several
+        // metres away beats a residential spur under the GTFS polyline.
+        const score = mode === "bus" ? d - rank * 1.4 - dualBonus : d;
+        if (score >= bestScore) continue;
         const lane = path.laneOffset ?? LANE_OFFSET;
-        bestD = d;
+        bestScore = score;
         out.x = px - uz * lane;
         out.z = pz + ux * lane;
         found = true;
