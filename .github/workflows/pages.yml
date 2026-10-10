@@ -63,6 +63,11 @@ jobs:
           ls -lh viewer/klein_antwerpen.glb
           node scripts/compress_glb.mjs viewer/klein_antwerpen.glb
           ls -lh viewer/klein_antwerpen.glb
+          shopt -s nullglob
+          for f in viewer/landmarks/*.glb; do
+            node scripts/compress_glb.mjs "$f"
+          done
+          ls -lh viewer/landmarks || true
           python3 - <<'PY'
           import json, struct
           from pathlib import Path

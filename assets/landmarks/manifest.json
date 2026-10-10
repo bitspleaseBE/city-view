@@ -13,7 +13,16 @@
       ],
       "massing": "neo_gothic_tower_left",
       "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Gr%C3%A9trystraat_-_103291_-_onroerenderfgoed.jpg",
-      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
+      "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons — De Braey 1906–1909",
+      "custom": "bonifacius",
+      "anchor": [
+        51.2025249,
+        4.4170279
+      ],
+      "levels": 1,
+      "height_m": 12.4,
+      "roof_height_m": 5.0,
+      "roof_shape": "gabled"
     },
     "501410385": {
       "id": "501410385",
@@ -28,7 +37,8 @@
       ],
       "massing": "neo_romanesque_tower_left",
       "source_url": "https://commons.wikimedia.org/wiki/File:Heilige_Geestkerk_buiten.jpg",
-      "attribution": "Wikimedia Commons"
+      "attribution": "Wikimedia Commons",
+      "stream": true
     },
     "353285592": {
       "id": "353285592",
@@ -43,7 +53,16 @@
       ],
       "massing": "church_default",
       "source_url": "https://commons.wikimedia.org/wiki/File:Basiliek_van_het_Heilig_Hart_te_Berchem_(Antwerpen)_-_Gebouwd_door_Jules_Bilmeyer_en_Joseph_van_Riel_(10902).jpg",
-      "attribution": "Wikimedia Commons"
+      "attribution": "Wikimedia Commons",
+      "custom": "heilig_hart",
+      "anchor": [
+        51.1973144,
+        4.4115236
+      ],
+      "levels": 1,
+      "height_m": 14.5,
+      "roof_height_m": 6.4,
+      "roof_shape": "gabled"
     },
     "780448684": {
       "id": "780448684",
@@ -182,6 +201,86 @@
       "inventaris": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7571",
       "source_url": "https://commons.wikimedia.org/wiki/File:Antwerpen_Sint-Vincentiusstraat_12_-_104483_-_onroerenderfgoed.jpg",
       "attribution": "Agentschap Onroerend Erfgoed / Wikimedia Commons"
+    },
+    "503713425": {
+      "id": "503713425",
+      "name": "Koetshuis Harmoniestraat 24",
+      "kind": "house",
+      "custom": "harmonie_koetshuis",
+      "anchor": [
+        51.2032486,
+        4.4096273
+      ],
+      "levels": 2,
+      "height_m": 6.6,
+      "roof_height_m": 4.2,
+      "roof_shape": "gabled",
+      "source_url": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/6850",
+      "attribution": "Inventaris Onroerend Erfgoed — Thielens 1902, mosaics Verbuecken"
+    },
+    "501637650": {
+      "id": "501637650",
+      "name": "Peter Benoitstraat 34",
+      "kind": "house",
+      "custom": "benoit_34",
+      "anchor": [
+        51.2046085,
+        4.4086478
+      ],
+      "levels": 4,
+      "height_m": 11.4,
+      "roof_height_m": 3.6,
+      "roof_shape": "gabled",
+      "source_url": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7453",
+      "attribution": "Inventaris Onroerend Erfgoed — Thielens 1898"
+    },
+    "501637651": {
+      "id": "501637651",
+      "name": "Peter Benoitstraat 38",
+      "kind": "house",
+      "custom": "benoit_38",
+      "anchor": [
+        51.2044989,
+        4.4087471
+      ],
+      "levels": 4,
+      "height_m": 11.2,
+      "roof_height_m": 3.8,
+      "roof_shape": "mansard",
+      "source_url": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7455",
+      "attribution": "Inventaris Onroerend Erfgoed — Thielens 1901"
+    },
+    "501637652": {
+      "id": "501637652",
+      "name": "Peter Benoitstraat 40",
+      "kind": "house",
+      "custom": "benoit_40",
+      "anchor": [
+        51.2044432,
+        4.4087981
+      ],
+      "levels": 4,
+      "height_m": 11.4,
+      "roof_height_m": 3.4,
+      "roof_shape": "gabled",
+      "source_url": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/7456",
+      "attribution": "Inventaris Onroerend Erfgoed — Thielens 1901"
+    },
+    "432190363": {
+      "id": "432190363",
+      "name": "Klooster van het Heilig Hart",
+      "kind": "school",
+      "custom": "heilig_hart_klooster",
+      "anchor": [
+        51.1972903,
+        4.4121708
+      ],
+      "levels": 3,
+      "height_m": 11.0,
+      "roof_height_m": 3.2,
+      "roof_shape": "hipped",
+      "source_url": "https://inventaris.onroerenderfgoed.be/erfgoedobjecten/10902",
+      "attribution": "Inventaris Onroerend Erfgoed — Bilmeyer & Van Riel 1879–1889"
     }
   },
   "by_name": {

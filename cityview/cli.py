@@ -11,6 +11,7 @@ from pathlib import Path
 from cityview.building_types import BUILDING_TYPES_PATH, attach_palettes, load_building_types, write_building_types
 from cityview.gtfs_delijn import enrich_layout_transit
 from cityview.jobs import add_photo_building, load_scene, resolve_photo, write_job
+from cityview.landmarks import viewer_landmark_index
 from cityview.osm import fetch_osm, layout_from_osm
 from cityview.paths import (
     BENCHES_CACHE,
@@ -71,6 +72,30 @@ def compress_viewer_glb(path: Path) -> None:
         return
     print(f"Compressing {path} …")
     subprocess.run([node, str(script), str(path)], check=True, cwd=ROOT)
+
+
+def _publish_landmark_glbs(output_dir: Path) -> None:
+    src = output_dir / "landmarks"
+    if not src.is_dir():
+        return
+    dest = VIEWER / "landmarks"
+    dest.mkdir(parents=True, exist_ok=True)
+    for old in dest.glob("*.glb"):
+        old.unlink()
+    for glb in sorted(src.glob("*.glb")):
+        target = dest / glb.name
+        shutil.copy2(glb, target)
+        print(f"Copied {glb} -> {target}")
+        compress_viewer_glb(target)
+
+
+def _write_landmark_index(layout: dict, origin: tuple | None = None) -> None:
+    if origin is not None and not layout.get("origin"):
+        layout = {**layout, "origin": [origin[0], origin[1]]}
+    payload = viewer_landmark_index(layout)
+    path = VIEWER / "landmarks.json"
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"Wrote {path} ({len(payload['landmarks'])} streamed landmarks)")
 
 
 def run_blender(job_path: Path, script: Path) -> None:
@@ -266,6 +291,8 @@ def city_command(args: argparse.Namespace) -> int:
         compress_viewer_glb(VIEWER / viewer_glb)
         if viewer_glb != "klein_antwerpen.glb" and style_policy == "historic":
             compress_viewer_glb(VIEWER / "klein_antwerpen.glb")
+        _publish_landmark_glbs(output_dir)
+    _write_landmark_index(layout, origin)
     if spawn:
         spawn_path = VIEWER / "spawn.json"
         spawn_path.write_text(json.dumps(spawn, indent=2) + "\n")

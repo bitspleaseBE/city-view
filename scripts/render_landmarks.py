@@ -42,6 +42,14 @@ SHOTS = {
     "gulden_spoor_gate": [("street", 0.25, 8.0, 1.7, 0.4, 0.0, 6.0, 18)],
     "albertpark_kiosk": [("path", 0.0, 0.0, 1.7, 0.0, 0.0, 4.2, 30)],
     "benoit_monument": [("square", 0.0, 0.0, 1.7, 0.0, 0.0, 1.4, 30)],
+    # Stand-off stays inside the real street (the opposite houses are ~11–13 m away).
+    "harmonie_koetshuis": [("street", 0.5, 16.0, 1.6, 0.5, 0.0, 5.8, 28)],
+    "benoit_34": [("street", 0.5, 9.5, 1.6, 0.45, 0.0, 7.2, 32)],
+    "benoit_38": [("street", 0.38, 11.0, 1.7, 0.4, 0.0, 11.0, 28)],
+    "benoit_40": [("street", 0.5, 9.5, 1.6, 0.48, 0.0, 7.2, 32)],
+    "bonifacius": [("street", 0.42, 9.0, 1.6, 0.38, -4.0, 11.0, 22)],
+    "heilig_hart": [("street", 0.5, 12.0, 7.0, 0.5, -1.0, 13.0, 28)],
+    "heilig_hart_klooster": [("street", 0.55, 8.5, 1.6, 0.5, -2.0, 7.5, 24)],
 }
 
 

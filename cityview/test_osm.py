@@ -2,6 +2,7 @@ import unittest
 
 from cityview.geo import project
 from cityview.osm import (
+    _make_building,
     building_type_for,
     height_for,
     join_pois_to_buildings,
@@ -30,6 +31,15 @@ class OsmLayoutTests(unittest.TestCase):
 
     def test_historic_church_style(self):
         self.assertEqual(style_for(42, {"building": "church"}, policy="historic"), "church")
+
+    def test_monastery_is_not_a_second_church(self):
+        # Heilig Hart klooster is tagged place_of_worship as well as monastery.
+        tags = {"building": "monastery", "amenity": "place_of_worship"}
+        self.assertEqual(building_type_for(432190363, tags, "historic"), "school")
+        ring = [[0.0, 0.0], [40.0, 0.0], [40.0, 16.0], [0.0, 16.0]]
+        bldg = _make_building(432190363, ring, tags, "historic")
+        self.assertEqual(bldg["building_type"], "school")
+        self.assertLess(bldg["height"], 20.0)
 
     def test_basilica_is_church(self):
         self.assertEqual(
