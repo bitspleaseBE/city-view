@@ -587,6 +587,10 @@ export function createMinimap(THREE, opts = {}) {
     canvas.style.background = `rgba(0,0,0,${0.35 + 0.35 * nightGlow})`;
     canvas.style.border = `1px solid rgba(255,255,255,${0.25 - 0.08 * nightGlow})`;
     radar.style.boxShadow = `0 0 0 3px rgba(0,0,0,${0.55 + 0.25 * nightGlow}),0 6px 18px rgba(0,0,0,${0.35 + 0.25 * nightGlow})`;
+    // Stronger outline so white street captions stay readable on dark façades at night.
+    const bloom = 8 + 14 * nightGlow;
+    const soft = 0.55 + 0.4 * nightGlow;
+    streetLabel.style.textShadow = `0 0 3px #000,0 2px 3px #000,0 0 ${bloom}px rgba(0,0,0,${soft})`;
   }
 
   return {
