@@ -257,14 +257,14 @@ export async function createScooters(scene, THREE, opts = {}) {
       s.parked = true;
       const cost = ride.cost;
       ride = null;
-      toast = `Parked ${s.brand} · ride €${cost.toFixed(2)}`;
+      toast = `${s.brand} geparkeerd · rit €${cost.toFixed(2)}`;
       toastT = 3;
       return { action: "park", brand: s.brand, cost };
     }
     const n = nearest(player.x, player.z);
     if (!n) return { action: "none" };
     if (n.s.battery < 8) {
-      toast = `${n.s.brand} battery empty`;
+      toast = `${n.s.brand} · batterij leeg`;
       toastT = 2.5;
       return { action: "empty" };
     }
@@ -321,11 +321,11 @@ export async function createScooters(scene, THREE, opts = {}) {
   }
 
   function getPrompt(player) {
-    if (ride) return "E · park scooter here";
+    if (ride) return "E · step hier parkeren";
     const n = nearest(player.x, player.z);
     if (!n) return null;
-    if (n.s.battery < 8) return `${n.s.brand} · battery empty`;
-    return `E · ride ${n.s.brand} scooter · ${n.s.battery}% · €${PRICE_UNLOCK.toFixed(2)} + €${PRICE_MIN.toFixed(2)}/min`;
+    if (n.s.battery < 8) return `${n.s.brand} · batterij leeg`;
+    return `E · ${n.s.brand}-step · ${n.s.battery}% · €${PRICE_UNLOCK.toFixed(2)} ontgrendelen + €${PRICE_MIN.toFixed(2)}/min`;
   }
 
   let cullClock = 0;
