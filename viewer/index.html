@@ -431,13 +431,13 @@
         window.__glbPromise.catch(() => {}); // surfaced by the viewer module
       })();
     </script>
-    <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E Velo / scooter / tram · V free · N day/night</div>
+    <div id="hint">Lopen: klik + WASD · Shift sprint · Spatie spring · E Velo / scooter / tram · V kaart · N dag/nacht</div>
     <div id="modes">
       <button type="button" id="btn-walk" class="active">Lopen</button>
       <button type="button" id="btn-free">Kaart</button>
       <button type="button" id="btn-night" aria-pressed="false">Nacht</button>
     </div>
-    <div id="status">Loading sunny Klein Antwerpen…</div>
+    <div id="status">Zonnig Klein Antwerpen laden…</div>
     <div id="ride">
       <p class="line" id="ride-line">Tram</p>
       <p class="next" id="ride-next">Volgende: —</p>
@@ -487,6 +487,17 @@
 
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
+      const HINT = {
+        walk: "Lopen: klik + WASD · Shift sprint · Spatie spring · E Velo / tram · Esc · V kaart · N nacht · M radar",
+        walkShort: "Lopen: klik + WASD · E Velo / tram · Esc · V kaart · N nacht",
+        walkCue: "Lopen: klik + WASD · E Velo / tram · V kaart · N nacht · M radar",
+        walkLocked: "WASD · muis kijken · Spatie spring · E Velo / tram · Esc · V kaart · N nacht · M radar",
+        walkTouch: "Lopen: stick bewegen · sleep kijken · Ga interactie · Sprint / Spring",
+        map: "Kaart (bovenaanzicht): WASD pan · Shift snel · scroll zoom · klik radar teleporteren · V lopen · N nacht",
+        mapTouch: "Kaart: sleep pan · knijp zoom · tik radar om te teleporteren",
+        velo: "Fietsen — WASD · E afstappen / terugzetten aan een station",
+        tram: "Op lijn — E halt aanvragen · uitstappen volgende halte",
+      };
       const btnWalk = document.getElementById("btn-walk");
       const btnFree = document.getElementById("btn-free");
       const btnNight = document.getElementById("btn-night");
@@ -1182,9 +1193,7 @@
           }
           walkControls.getObject().position.y = eyeHeight;
           clampWalkerXZ(walkControls.getObject().position);
-          hint.textContent = TOUCH
-            ? "Walk: stick move · drag look · Go interact · Sprint / Jump"
-            : "Walk: click + WASD · Shift sprint · Space jump · E Velo / tram · Esc · V free · N night · M map";
+          hint.textContent = TOUCH ? HINT.walkTouch : HINT.walk;
           status.textContent = "Lopen — Halte Gounod";
           touch?.setModeLabel("walk");
         } else {
@@ -1204,9 +1213,7 @@
           freeCam.z = walkSaved.z;
           softClampXZ(freeCam, playBounds);
           applyFreeCamera();
-          hint.textContent = TOUCH
-            ? "Map view: drag pan · pinch zoom · tap radar to teleport"
-            : "Free view (top-down): WASD pan · Shift fast · scroll zoom · click map teleport · V walk · N night";
+          hint.textContent = TOUCH ? HINT.mapTouch : HINT.map;
           status.textContent = "Kaart";
           touch?.setModeLabel("free");
         }
@@ -1218,8 +1225,8 @@
         clampWalkerXZ(walkControls.getObject().position);
         rideEl.style.display = "none";
         promptEl.style.display = "none";
-        hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
-        status.textContent = "Back on the street";
+        hint.textContent = HINT.walkShort;
+        status.textContent = "Terug op straat";
         if (mode === "walk" && !walkControls.isLocked) {
           // Keep unlocked until click — pointer lock after ride is flaky mid-frame.
         }
@@ -1262,31 +1269,31 @@
             rideLine.textContent = "Velo";
             rideNext.textContent = result.name;
             promptEl.style.display = "none";
-            hint.textContent = "Cycling — WASD · E hop off / return at a station";
+            hint.textContent = HINT.velo;
             status.textContent =
               result.capacity === "—"
-                ? `On a Velo · ${result.name}`
-                : `On a Velo · ${result.bikes}/${result.capacity} left at ${result.name}`;
+                ? `Op een Velo · ${result.name}`
+                : `Op een Velo · ${result.bikes}/${result.capacity} vrij aan ${result.name}`;
             return;
           }
           if (result.action === "return") {
             avatar.visible = mode !== "walk";
             rideEl.style.display = "none";
             promptEl.style.display = "none";
-            hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
-            status.textContent = `Returned Velo at ${result.name}`;
+            hint.textContent = HINT.walkShort;
+            status.textContent = `Velo teruggezet aan ${result.name}`;
             return;
           }
           if (result.action === "dismount") {
             avatar.visible = mode !== "walk";
             rideEl.style.display = "none";
             promptEl.style.display = "none";
-            hint.textContent = "Walk: click + WASD · E Velo / tram · Esc · V free · N night";
-            status.textContent = "Hopped off — E remounts the parked bike";
+            hint.textContent = HINT.walkShort;
+            status.textContent = "Afgestapt — E neemt de geparkeerde fiets weer";
             return;
           }
           if (result.action === "empty") {
-            status.textContent = "No bikes left here";
+            status.textContent = "Geen fietsen meer hier";
             return;
           }
           if (onVelo) return;
@@ -1305,7 +1312,7 @@
           rideLine.textContent = `${result.mode === "bus" ? "Bus" : "Tram"} ${result.line}`;
           rideNext.textContent = `Volgende halte: ${result.nextHalt}`;
           promptEl.style.display = "none";
-          hint.textContent = "Op lijn — E halt aanvragen · uitstappen volgende halte";
+          hint.textContent = HINT.tram;
           status.textContent = `Aan boord · volgende ${result.nextHalt}`;
         } else if (result.action === "request_alight") {
           rideNext.textContent = `Uitstappen: ${result.nextHalt}`;
@@ -1518,11 +1525,11 @@
         if (!(touch && touch.isActive())) document.body.classList.remove("locked");
       });
       walkControls.addEventListener("lock", () => {
-        hint.textContent = "WASD · mouse look · Space jump · E Velo / tram · Esc · V free · N night · M map";
+        hint.textContent = HINT.walkLocked;
       });
       walkControls.addEventListener("unlock", () => {
         if (mode === "walk" && !TOUCH) {
-          hint.textContent = "Walk: click + WASD · E Velo / tram · V free · N night · M map";
+          hint.textContent = HINT.walkCue;
         }
       });
 
@@ -1534,7 +1541,7 @@
         }
         if (e.code === "KeyN") {
           toggleTimeOfDay();
-          hud.notify(todFromHour(gameHour) < 0.5 ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
+          hud.notify(todFromHour(gameHour) < 0.5 ? "Doorspoelen naar nacht…" : "Doorspoelen naar ochtend…", 2500);
           return;
         }
         if (e.code === "KeyH") {
