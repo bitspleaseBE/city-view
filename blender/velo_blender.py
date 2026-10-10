@@ -80,20 +80,51 @@ def _tube(bm, base: Matrix, a, b, radius: float, segs: int = 8) -> None:
 
 
 def _wheel(bm_tire, bm_rim, base: Matrix, center, radius: float = 0.2) -> None:
-    """Tire + hub. Wheel in YZ plane (axle along X) for bike facing +X."""
+    """Tire, rim, and hub in the bike's plane.
+
+    The frame lies in XZ (bike faces +X). The wheel must share that plane so a
+    side view shows a circle, with the axle running left–right along Y.
+    """
     cx, cy, cz = center
-    # Tire as thin torus approximation
-    segs = 16
+    segs = 18
     for i in range(segs):
         a0 = (i / segs) * math.tau
         a1 = ((i + 1) / segs) * math.tau
-        y0, z0 = radius * math.cos(a0), radius * math.sin(a0)
-        y1, z1 = radius * math.cos(a1), radius * math.sin(a1)
-        _tube(bm_tire, base, (cx, cy + y0, cz + z0), (cx, cy + y1, cz + z1), 0.02, segs=6)
-    _cyl(bm_rim, base, 0.028, 0.04, (cx, cy, cz), segs=8)
-    # Rotated hub: cone is Z-up; axle should be X — rotate
-    # Simpler hub as thin box along X:
-    _box(bm_rim, base, (0.045, 0.05, 0.05), (cx, cy, cz))
+        x0, z0 = radius * math.cos(a0), radius * math.sin(a0)
+        x1, z1 = radius * math.cos(a1), radius * math.sin(a1)
+        _tube(bm_tire, base, (cx + x0, cy, cz + z0), (cx + x1, cy, cz + z1), 0.018, segs=5)
+        # Silver rim just inside the tire, same plane.
+        rim_r = radius * 0.86
+        _tube(
+            bm_rim,
+            base,
+            (cx + rim_r * math.cos(a0), cy, cz + rim_r * math.sin(a0)),
+            (cx + rim_r * math.cos(a1), cy, cz + rim_r * math.sin(a1)),
+            0.006,
+            segs=4,
+        )
+    for i in range(8):
+        a = (i / 8) * math.tau
+        _tube(
+            bm_rim,
+            base,
+            (cx, cy, cz),
+            (cx + radius * 0.82 * math.cos(a), cy, cz + radius * 0.82 * math.sin(a)),
+            0.0035,
+            segs=4,
+        )
+    # create_cone depth is local Z; tip it onto Y so the hub is the axle.
+    hub = base @ Matrix.Translation(Vector((cx, cy, cz))) @ Matrix.Rotation(math.pi / 2.0, 4, "X")
+    bmesh.ops.create_cone(
+        bm_rim,
+        cap_ends=True,
+        cap_tris=False,
+        segments=8,
+        radius1=0.02,
+        radius2=0.02,
+        depth=0.045,
+        matrix=hub,
+    )
 
 
 class Parts:
@@ -149,16 +180,16 @@ def _velo_bike(p: Parts, base: Matrix) -> None:
     Bike faces local +X; docked with a π/2 yaw so the front wheel sits in the street-side fork.
     """
     tire = p.bm("tire")
-    rim = p.bm("metal")
+    silver = p.bm("silver")
     frame = p.bm("frame")
     mud = p.bm("mudguard")
     red = p.bm("signal_red")
 
     wr = 0.2
-    _wheel(tire, rim, base, (0.33, 0.0, wr), wr)   # front
-    _wheel(tire, rim, base, (-0.33, 0.0, wr), wr)  # rear
+    _wheel(tire, silver, base, (0.33, 0.0, wr), wr)   # front
+    _wheel(tire, silver, base, (-0.33, 0.0, wr), wr)  # rear
 
-    # Step-through tube polyline (side view in XZ, Y=0)
+    # Step-through tube polyline (side view in XZ, Y=0). Thick enough to read as red at street distance.
     pts = [
         (0.3, 0.0, 0.14),   # near front hub up
         (0.22, 0.0, 0.36),  # head cluster
@@ -168,27 +199,42 @@ def _velo_bike(p: Parts, base: Matrix) -> None:
         (-0.3, 0.0, 0.2),   # toward rear hub
     ]
     for a, b in zip(pts, pts[1:]):
-        _tube(frame, base, a, b, 0.016, segs=7)
-    # Seat stay
-    _tube(frame, base, (-0.22, 0.0, 0.36), (-0.33, 0.0, wr), 0.012, segs=6)
-    # Fork blades
-    _tube(rim, base, (0.24, -0.03, 0.4), (0.33, -0.03, wr), 0.01, segs=5)
-    _tube(rim, base, (0.24, 0.03, 0.4), (0.33, 0.03, wr), 0.01, segs=5)
+        _tube(frame, base, a, b, 0.022, segs=7)
+    # Seat stay + red fork (the fork is part of the red frame, not the dark dock metal)
+    _tube(frame, base, (-0.22, 0.0, 0.36), (-0.33, 0.0, wr), 0.016, segs=6)
+    _tube(frame, base, (0.24, -0.03, 0.4), (0.33, -0.03, wr), 0.013, segs=5)
+    _tube(frame, base, (0.24, 0.03, 0.4), (0.33, 0.03, wr), 0.013, segs=5)
     # Seat post + saddle
-    _tube(rim, base, (-0.22, 0.0, 0.36), (-0.22, 0.0, 0.58), 0.011, segs=6)
+    _tube(silver, base, (-0.22, 0.0, 0.36), (-0.22, 0.0, 0.58), 0.012, segs=6)
     _box(tire, base, (0.18, 0.1, 0.035), (-0.22, 0.0, 0.62))
     # Stem + bars
-    _tube(rim, base, (0.22, 0.0, 0.4), (0.22, 0.0, 0.6), 0.011, segs=6)
-    _tube(rim, base, (0.22, -0.22, 0.62), (0.22, 0.22, 0.62), 0.01, segs=6)
+    _tube(silver, base, (0.22, 0.0, 0.4), (0.22, 0.0, 0.6), 0.012, segs=6)
+    _tube(silver, base, (0.22, -0.22, 0.62), (0.22, 0.22, 0.62), 0.011, segs=6)
     # Front rack
-    _box(rim, base, (0.16, 0.28, 0.012), (0.4, 0.0, 0.48))
-    _tube(rim, base, (0.36, -0.1, 0.48), (0.36, -0.1, 0.34), 0.008, segs=5)
-    _tube(rim, base, (0.36, 0.1, 0.48), (0.36, 0.1, 0.34), 0.008, segs=5)
-    # Thin white rear mudguard
-    _box(mud, base, (0.2, 0.08, 0.09), (-0.4, 0.0, 0.3))
-    _box(red, base, (0.04, 0.04, 0.04), (-0.48, 0.0, 0.3))
+    _box(silver, base, (0.16, 0.28, 0.012), (0.4, 0.0, 0.48))
+    _tube(silver, base, (0.36, -0.1, 0.48), (0.36, -0.1, 0.34), 0.008, segs=5)
+    _tube(silver, base, (0.36, 0.1, 0.48), (0.36, 0.1, 0.34), 0.008, segs=5)
+    # White rear mudguard: a shallow shell over the top of the rear wheel (XZ plane).
+    rear_x, rear_z = -0.33, wr
+    guard_r = wr + 0.04
+    guard_n = 7
+    for yoff in (-0.03, 0.0, 0.03):
+        for i in range(guard_n):
+            t0 = i / guard_n
+            t1 = (i + 1) / guard_n
+            a0 = math.pi * 0.22 + t0 * math.pi * 0.72
+            a1 = math.pi * 0.22 + t1 * math.pi * 0.72
+            _tube(
+                mud,
+                base,
+                (rear_x + guard_r * math.cos(a0), yoff, rear_z + guard_r * math.sin(a0)),
+                (rear_x + guard_r * math.cos(a1), yoff, rear_z + guard_r * math.sin(a1)),
+                0.008,
+                segs=4,
+            )
+    _box(red, base, (0.035, 0.05, 0.035), (rear_x + guard_r * math.cos(math.pi * 0.9), 0.0, rear_z + guard_r * math.sin(math.pi * 0.9)))
     # Crank hint
-    _box(rim, base, (0.04, 0.05, 0.05), (-0.02, 0.0, 0.2))
+    _box(silver, base, (0.04, 0.05, 0.05), (-0.02, 0.0, 0.2))
 
 
 def add_velo_stations(layout: dict, rails, mats: dict) -> dict:
@@ -231,6 +277,7 @@ def add_velo_stations(layout: dict, rails, mats: dict) -> dict:
     name_map = {
         "metal": "velo_dock_metal",
         "frame": "velo_frame_red",
+        "silver": "velo_silver",
         "mudguard": "velo_mudguard",
         "tire": "velo_tire",
         "signal_red": "velo_accent_red",
