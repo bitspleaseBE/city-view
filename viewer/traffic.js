@@ -12,10 +12,11 @@
  * Speeds: each road carries `speedKmh` (OSM maxspeed, else a Belgian urban
  * default by highway class) exported into roads.json. Cars cruise slightly
  * under that limit (per-driver variance) and brake kinematically for leaders,
- * red lights, crossing traffic, trams/buses and the player. Waiting at a red is never
- * treated as "stuck". Cars NEVER pass through each other: a car that is genuinely
- * blocked for too long (gridlock, bad geometry) is despawned and respawned on a free
- * road instead of sliding through its blocker and leaving a ghost behind.
+ * red lights, crossing traffic, trams/buses, the player and pedestrians. Waiting at a
+ * red is never treated as "stuck". Cars NEVER pass through each other: a car that is
+ * genuinely blocked for too long (gridlock, bad geometry) is despawned and respawned on
+ * a free road instead of sliding through its blocker and leaving a ghost behind. Cars
+ * brake for people in their lane; a hard overlap still knocks them down via `onHitPed`.
  */
 
 import { shared } from "./lanes.js";
@@ -66,6 +67,8 @@ const RED_QUEUE_PATIENCE_SEC = 12; // queue longer than 12s = gridlock
 const RED_PATIENCE_SEC = 40; // a light that never turns green is ignored after this
 const FOLLOW_DIST = 9;
 const PLAYER_STOP_DIST = 4;
+const PED_STOP_DIST = 5.5; // brake earlier for walkers than for a standing player
+const PED_HIT_SPEED = 1.8; // m/s: below this a nose-overlap is a shove the ped sim handles
 const SNAP_M = 11;
 const LANE_OFFSET = 1.15;
 const STUCK_SEC = 5; // respawn after 5s of unexplained stop - never leave a car dead
@@ -924,6 +927,12 @@ export async function createTraffic(scene, THREE, opts = {}) {
 
   // Trams / buses are drawn by transit.js; cars give way to them via this provider.
   let obstacleProvider = null;
+  /** `() => [{ x, z, r }, …]` upright pedestrians in the street. */
+  let pedProvider = null;
+  /** `(x, z, vx, vz, r) => void` — knock a ped down when a car cannot stop in time. */
+  let onHitPed = null;
+  /** `(speed, vx, vz) => void` — player hit by a car that failed to stop. */
+  let onHitPlayer = null;
   const obstacleCache = [];
   function obstacleList() {
     obstacleCache.length = 0;
@@ -1436,12 +1445,56 @@ export async function createTraffic(scene, THREE, opts = {}) {
               desire = safe;
               reason = "player";
             }
+            // Could not stop: the car strikes the player.
+            if (
+              onHitPlayer &&
+              car.velocity > PED_HIT_SPEED &&
+              ahead < CAR_LEN * 0.55 + 0.6 &&
+              side < 1.15
+            ) {
+              onHitPlayer(car.velocity, car.tan.x * car.velocity, car.tan.z * car.velocity);
+            }
           }
         }
       }
 
-      // Queueing behind a car that is itself waiting at a red / for the player is fine.
-      if ((reason === "car" || reason === "cross") && leader && (leader.wait === "red" || leader.wait === "queue" || leader.wait === "player")) {
+      // Pedestrians in the lane: brake like for the player; hard overlaps knock them down.
+      {
+        const peds = pedProvider ? pedProvider() : null;
+        if (peds && peds.length) {
+          for (let p = 0; p < peds.length; p++) {
+            const ped = peds[p];
+            const dx = ped.x - car.pos.x;
+            const dz = ped.z - car.pos.z;
+            if (dx * dx + dz * dz > (PED_STOP_DIST + 12) ** 2) continue;
+            const ahead = dx * car.tan.x + dz * car.tan.z;
+            const side = Math.abs(dx * car.tan.z + dz * -car.tan.x);
+            const pr = ped.r ?? 0.35;
+            if (ahead > 0.15 && side < 2.2 + pr) {
+              const safe = stopSpeed(ahead - CAR_LEN * 0.5 - pr - 0.6);
+              if (safe < desire) {
+                desire = Math.max(0, safe);
+                reason = "ped";
+              }
+              if (
+                onHitPed &&
+                car.velocity > PED_HIT_SPEED &&
+                ahead < CAR_LEN * 0.5 + pr + 0.45 &&
+                side < 1.05 + pr
+              ) {
+                onHitPed(ped.x, ped.z, car.tan.x * car.velocity, car.tan.z * car.velocity, 0.95);
+              }
+            }
+          }
+        }
+      }
+
+      // Queueing behind a car that is itself waiting at a red / for the player / a ped is fine.
+      if (
+        (reason === "car" || reason === "cross") &&
+        leader &&
+        (leader.wait === "red" || leader.wait === "queue" || leader.wait === "player" || leader.wait === "ped")
+      ) {
         reason = "queue";
       }
 
@@ -1561,7 +1614,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
   function stats() {
     let moving = 0;
     let sum = 0;
-    const waits = { red: 0, queue: 0, car: 0, cross: 0, transit: 0, player: 0, "?": 0 };
+    const waits = { red: 0, queue: 0, car: 0, cross: 0, transit: 0, player: 0, ped: 0, "?": 0 };
     for (const c of cars) {
       if (c.velocity > 0.5) moving++;
       sum += c.velocity;
@@ -1606,6 +1659,21 @@ export async function createTraffic(scene, THREE, opts = {}) {
     obstacleProvider = typeof provider === "function" ? provider : null;
   }
 
+  /** `() => [{ x, z, r }]` — upright pedestrians cars should brake for. */
+  function setPedestrians(provider) {
+    pedProvider = typeof provider === "function" ? provider : null;
+  }
+
+  /** Called when a car strikes a pedestrian it could not stop for. */
+  function setOnHitPed(fn) {
+    onHitPed = typeof fn === "function" ? fn : null;
+  }
+
+  /** Called when a car strikes the player it could not stop for. */
+  function setOnHitPlayer(fn) {
+    onHitPlayer = typeof fn === "function" ? fn : null;
+  }
+
   /**
    * Pedestrian walk light for a ``cross{osmId}`` route: true when cars on that
    * approach are red (same rule as the ped signal head). Unlinked zebras always allow.
@@ -1623,6 +1691,9 @@ export async function createTraffic(scene, THREE, opts = {}) {
     dispose,
     stats,
     setObstacles,
+    setPedestrians,
+    setOnHitPed,
+    setOnHitPlayer,
     setNight,
     pedMayCross,
     cars,

@@ -732,7 +732,7 @@
         get cash() { return cash; },
         get outdoors() { return outdoors; },
         get crash() { return playerCrash; },
-        crashScooter: (speed) => crashScooter(speed),
+        crashScooter: (speed) => crashRide(speed),
       };
 
       function applyTimeOfDay(t) {
@@ -920,9 +920,10 @@
         const hit = _groundRay.intersectObject(cityRoot, true)[0];
         return hit && hit.point.y < 0.6 ? hit.point.y : 0;
       }
-      const _riderObstacles = [{ x: 0, z: 0, r: 0.45 }];
+      const _riderObstacles = [];
       const _beforeStep = { x: 0, z: 0 };
       const _afterWall = { x: 0, z: 0 };
+      let _lastVehicleHitMs = 0;
 
       /** Speed component into the building face next to `from` (ring of samples → wall normal). */
       function speedIntoWall(from, yaw, speed) {
@@ -1062,22 +1063,62 @@
       scene.add(walkControls.getObject());
       const playerMotion = createPlayerMotion(THREE, camera, walkControls);
       const playerCrash = createPlayerCrash(THREE, camera, { eye: eyeHeight, canvas: renderer.domElement });
-      const CRASH_IMPACT = 3.2; // m/s straight into something solid throws you off the scooter
+      const CRASH_IMPACT = 3.2; // m/s straight into something solid throws you off
       const CRASH_PERSON = 3.0; // m/s into a pedestrian: you both go down
 
-      /** Thrown off the scooter: the ride ends, the scooter skids away, you land hurt. */
-      function crashScooter(speed) {
+      /** Thrown off a scooter / Velo / struck by traffic: land hurt, or die if it was violent. */
+      function crashRide(speed, label) {
+        if (playerCrash.active || playerCrash.dead) return;
         const w = walkControls.getObject();
         const yaw = playerMotion.yaw();
-        const res = scooters.crash({ x: w.position.x, z: w.position.z, yaw, speed });
+        if (scooters && scooters.isRiding()) {
+          const res = scooters.crash({ x: w.position.x, z: w.position.z, yaw, speed });
+          if (res) hud.spend(res.cost, `${res.brand}-rit`);
+        }
+        if (velo && velo.isRiding && velo.isRiding()) {
+          velo.tryInteract({ x: w.position.x, z: w.position.z });
+        }
         rideEl.style.display = "none";
         promptEl.style.display = "none";
-        if (res) hud.spend(res.cost, `${res.brand}-rit`);
         const dmg = playerCrash.start(w.position, yaw, speed);
         playerMotion.stop();
         keys.space = false;
-        hud.notify(`Van de step gevallen bij ${Math.round(speed * 3.6)} km/u · −${dmg} gezondheid`, 5000);
+        const kmh = Math.round(speed * 3.6);
+        if (playerCrash.dead) {
+          hud.notify(label || `Dodelijke klap bij ${kmh} km/u`, 6000);
+        } else {
+          hud.notify(
+            (label || `Gevallen bij ${kmh} km/u`) + ` · −${dmg} gezondheid`,
+            5000,
+          );
+        }
       }
+      function crashScooter(speed) {
+        crashRide(speed, `Van de step gevallen bij ${Math.round(speed * 3.6)} km/u`);
+      }
+      /** Car / tram / bus that could not stop in time. */
+      function hitByVehicle(speed) {
+        const now = performance.now();
+        if (now - _lastVehicleHitMs < 900) return;
+        if (playerCrash.active || playerCrash.dead) return;
+        if (transit.isRiding && transit.isRiding()) return;
+        _lastVehicleHitMs = now;
+        crashRide(Math.max(speed, 3.5), `Aangereden bij ${Math.round(speed * 3.6)} km/u`);
+      }
+      playerCrash.setOnDeath(() => {
+        hud.notify("Je bent dood · opnieuw beginnen…", 4500);
+        setTimeout(() => {
+          if (!playerCrash.dead) return;
+          const w = walkControls.getObject();
+          const yaw = playerMotion.yaw();
+          w.position.copy(spawnPos);
+          w.position.y = eyeHeight;
+          playerCrash.respawn(w.position, yaw);
+          playerMotion.stop();
+          hud.setHealth(100);
+          hud.notify("Opnieuw op de been", 2800);
+        }, 2800);
+      });
       // Simple humanoid capsule so Free view can frame the walker.
       const avatar = new THREE.Group();
       const bodyMat = new THREE.MeshLambertMaterial({ color: 0x3a4658 });
@@ -1902,6 +1943,18 @@
           }
           // Cars give way to trams/buses instead of driving through them.
           if (traffic.setObstacles) traffic.setObstacles(() => transit.vehicles || []);
+          // Cars / buses / trams brake for walkers; hard overlaps knock them (or you) down.
+          const pedList = () => (pedestrians && pedestrians.roadPeople ? pedestrians.roadPeople() : []);
+          if (traffic.setPedestrians) traffic.setPedestrians(pedList);
+          if (transit.setPedestrians) transit.setPedestrians(pedList);
+          if (traffic.setOnHitPed) {
+            traffic.setOnHitPed((x, z, vx, vz, r) => pedestrians && pedestrians.hitTest(x, z, vx, vz, r));
+          }
+          if (transit.setOnHitPed) {
+            transit.setOnHitPed((x, z, vx, vz, r) => pedestrians && pedestrians.hitTest(x, z, vx, vz, r));
+          }
+          if (traffic.setOnHitPlayer) traffic.setOnHitPlayer((speed) => hitByVehicle(speed));
+          if (transit.setOnHitPlayer) transit.setOnHitPlayer((speed) => hitByVehicle(speed));
           const nCars = traffic.count ?? 0;
           const nTransit = transit.count ?? 0;
           const nPeds = pedestrians?.groups?.reduce((n, g) => n + g.members.length, 0) ?? 0;
@@ -2086,7 +2139,7 @@
           _afterWall.z = w.position.z;
           if (!onScooter && !ridingVelo) pushOutOfSolids(w.position);
           collideWorld(w.position, onScooter || ridingVelo);
-          if (onScooter && dt > 0) {
+          if ((onScooter || ridingVelo) && dt > 0) {
             const yaw = playerMotion.yaw();
             const fx = -Math.sin(yaw);
             const fz = -Math.cos(yaw);
@@ -2103,7 +2156,12 @@
                 w.position.x = _beforeStep.x;
                 w.position.z = _beforeStep.z;
               }
-              crashScooter(rideSpeed);
+              crashRide(
+                rideSpeed,
+                onScooter
+                  ? `Van de step gevallen bij ${Math.round(rideSpeed * 3.6)} km/u`
+                  : `Van de Velo gevallen bij ${Math.round(rideSpeed * 3.6)} km/u`,
+              );
             }
           }
           if (ridingVelo && velo.update) {
@@ -2158,8 +2216,22 @@
           if (got) hud.earn(got, "Geld opgeraapt");
         }
         if (micromobility) {
-          _riderObstacles[0].x = walker.position.x;
-          _riderObstacles[0].z = walker.position.z;
+          _riderObstacles.length = 0;
+          _riderObstacles.push({ x: walker.position.x, z: walker.position.z, r: 0.45 });
+          // Trams / buses are solid boxes — bikes brake and never “pass through” them.
+          for (const v of transit.vehicles || []) {
+            if (!v || v.phase === "gone" || !v.pos) continue;
+            const tram = v.mode === "tram";
+            _riderObstacles.push({
+              x: v.pos.x,
+              z: v.pos.z,
+              tx: v.tan.x,
+              tz: v.tan.z,
+              hl: tram ? 12 : 6.5,
+              hw: tram ? 1.3 : 1.25,
+              hard: true,
+            });
+          }
           micromobility.update(simDt, _riderObstacles);
         }
 

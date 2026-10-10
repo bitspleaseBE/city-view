@@ -1,7 +1,8 @@
 /**
- * Coming off a scooter in first person: thrown over the bars, tumble, hit the deck, slide,
- * lie there dazed, get back up hurt. Health drops with the impact speed and slowly comes
- * back; while hurt the screen edges are red and you walk slower.
+ * Coming off a scooter / bike in first person: thrown over the bars, tumble, hit the deck,
+ * slide, lie there dazed, get back up hurt — or die if the impact was violent enough.
+ * Health drops with impact speed and slowly comes back while alive; while hurt the screen
+ * edges are red and you walk slower.
  */
 
 const G = 9.81;
@@ -10,6 +11,7 @@ const SLIDE_DECEL = 6.5; // m/s² of a body sliding on paving
 const RISE_S = 1.5;
 const REGEN_DELAY = 8; // s after a hit before health starts coming back
 const REGEN_RATE = 1.5; // health / s
+const DEAD_LIE_S = 4.5; // s face-down before the death callback / respawn can fire
 
 const CSS = `
 #hurt { position: fixed; inset: 0; pointer-events: none; z-index: 550; opacity: 0;
@@ -35,17 +37,29 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
   let flash = 0;
   let daze = 0;
   let shownBlur = "";
+  let dead = false;
+  let deathReported = false;
+  let onDeath = null;
   /** null, or the state of the fall in progress. */
   let c = null;
 
   /** Thrown off at `speed` m/s heading `yaw`. Returns the damage taken. */
   function start(pos, yaw, speed) {
+    if (dead) return 0;
     euler.setFromQuaternion(camera.quaternion);
-    const dmg = Math.round(Math.min(65, Math.max(8, 8 + (speed - 3) * 8)));
-    health = Math.max(1, health - dmg);
+    const dmg = Math.round(Math.min(90, Math.max(8, 8 + (speed - 3) * 10)));
+    health = Math.max(0, health - dmg);
     sinceHit = 0;
+    const killed = health <= 0;
+    if (killed) {
+      dead = true;
+      health = 0;
+      deathReported = false;
+    }
     const fx = -Math.sin(yaw);
     const fz = -Math.cos(yaw);
+    // Harder impacts throw farther and hang in the air longer.
+    const throwK = killed ? 1.15 : 1;
     c = {
       phase: "fly",
       t: 0,
@@ -53,13 +67,14 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
       pitch: euler.x,
       roll: 0,
       side: Math.random() < 0.5 ? -1 : 1,
-      vx: fx * speed * 0.8,
-      vz: fz * speed * 0.8,
-      vy: 1.6 + speed * 0.12,
+      vx: fx * speed * 0.8 * throwK,
+      vz: fz * speed * 0.8 * throwK,
+      vy: 1.6 + speed * 0.12 * throwK,
       y: pos.y,
       shake: 0,
-      lie: 1.6 + dmg * 0.035,
+      lie: killed ? DEAD_LIE_S : 1.6 + dmg * 0.035,
       dmg,
+      killed,
     };
     flash = 0;
     return dmg;
@@ -76,10 +91,10 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
 
   function update(dt, obj) {
     sinceHit += dt;
-    if (sinceHit > REGEN_DELAY && health < 100) health = Math.min(100, health + REGEN_RATE * dt);
+    if (!dead && sinceHit > REGEN_DELAY && health < 100) health = Math.min(100, health + REGEN_RATE * dt);
     flash = Math.max(0, flash - dt * 2.2);
     daze = Math.max(0, daze - dt * 0.35);
-    vignette.style.opacity = String(Math.min(1, flash * 0.8 + (1 - health / 100) * 0.75));
+    vignette.style.opacity = String(Math.min(1, flash * 0.8 + (1 - health / 100) * 0.75 + (dead ? 0.35 : 0)));
     flashEl.style.opacity = String(Math.max(0, flash - 0.55));
     const blur = daze > 0.02 ? `blur(${(daze * 3).toFixed(1)}px)` : "";
     if (canvas && blur !== shownBlur) canvas.style.filter = shownBlur = blur;
@@ -119,11 +134,20 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
         c.phase = "lie";
         c.t = 0;
       } else if (c.phase === "lie" && c.t > c.lie) {
-        c.phase = "rise";
-        c.t = 0;
-        c.fromY = c.y;
-        c.fromPitch = c.pitch;
-        c.fromRoll = c.roll;
+        if (c.killed || dead) {
+          if (!deathReported) {
+            deathReported = true;
+            if (onDeath) onDeath();
+          }
+          // Stay down until respawn clears the crash.
+          c.t = c.lie;
+        } else {
+          c.phase = "rise";
+          c.t = 0;
+          c.fromY = c.y;
+          c.fromPitch = c.pitch;
+          c.fromRoll = c.roll;
+        }
       }
     } else if (c.phase === "rise") {
       const k = Math.min(1, c.t / RISE_S);
@@ -148,20 +172,46 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
     return true;
   }
 
+  function respawn(pos, yaw) {
+    dead = false;
+    deathReported = false;
+    health = 100;
+    sinceHit = Infinity;
+    flash = 0;
+    daze = 0;
+    c = null;
+    if (pos) {
+      pos.y = standEye;
+    }
+    if (Number.isFinite(yaw)) {
+      camera.quaternion.setFromEuler(euler.set(0, yaw, 0, "YXZ"));
+    }
+    if (canvas) canvas.style.filter = shownBlur = "";
+    vignette.style.opacity = "0";
+    flashEl.style.opacity = "0";
+  }
+
   return {
     start,
     update,
     stopHorizontal,
+    respawn,
+    setOnDeath(fn) {
+      onDeath = typeof fn === "function" ? fn : null;
+    },
     get active() {
       return !!c;
     },
     get airborne() {
       return !!c && c.phase === "fly";
     },
+    get dead() {
+      return dead;
+    },
     get health() {
       return health;
     },
     /** Walking pace multiplier: you limp while hurt. */
-    speedScale: () => 0.55 + 0.45 * (health / 100),
+    speedScale: () => (dead ? 0 : 0.55 + 0.45 * (health / 100)),
   };
 }
