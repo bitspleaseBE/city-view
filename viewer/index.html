@@ -1949,7 +1949,8 @@
                 if (v && v.phase !== "gone") out.push(v);
               }
               for (const v of micromobility?.vehicles || []) {
-                if (!v?.pos || !v.tan) continue;
+                // Thrown wrecks are not lane leaders — cars must not queue behind them.
+                if (!v?.pos || !v.tan || v.crash) continue;
                 out.push({
                   pos: v.pos,
                   tan: v.tan,
