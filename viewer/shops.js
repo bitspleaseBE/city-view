@@ -10,7 +10,7 @@
 
 const URL_SHOPS = "./shops.json";
 const ATLAS_W = 2048;
-const ATLAS_H = 4096;
+const ATLAS_H = 2304; // was 4096; lower rows were unused ~half the GPU upload
 const SLOT_W = 512;
 const SLOT_H = 64;
 const COLS = ATLAS_W / SLOT_W;

@@ -952,12 +952,64 @@
       let parkedCars = null;
       let outdoors = null;
       const _groundRay = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 2.5);
-      /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
-      function groundAt(x, z) {
+      /** Optional baked heightfield (filled after city merge) — kills per-frame full-scene raycasts. */
+      let _heightGrid = null;
+      function groundAtRay(x, z) {
         if (!cityRoot) return 0;
         _groundRay.ray.origin.set(x, 1.2, z);
         const hit = _groundRay.intersectObject(cityRoot, true)[0];
         return hit && hit.point.y < 0.6 ? hit.point.y : 0;
+      }
+      /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
+      function groundAt(x, z) {
+        const g = _heightGrid;
+        if (!g) return groundAtRay(x, z);
+        const fx = (x - g.ox) / g.cell;
+        const fz = (z - g.oz) / g.cell;
+        const c0 = Math.floor(fx);
+        const r0 = Math.floor(fz);
+        if (c0 < 0 || r0 < 0 || c0 >= g.cols - 1 || r0 >= g.rows - 1) return groundAtRay(x, z);
+        const tx = fx - c0;
+        const tz = fz - r0;
+        const i = r0 * g.cols + c0;
+        const h00 = g.data[i];
+        const h10 = g.data[i + 1];
+        const h01 = g.data[i + g.cols];
+        const h11 = g.data[i + g.cols + 1];
+        return h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz) + h01 * (1 - tx) * tz + h11 * tx * tz;
+      }
+      /** Bake a coarse height grid in idle slices so the loading screen can finish first. */
+      async function bakeHeightGridAsync() {
+        if (!cityRoot || _heightGrid) return;
+        const box = new THREE.Box3().setFromObject(cityRoot);
+        const cell = 3;
+        const pad = 8;
+        const ox = Math.floor(box.min.x - pad);
+        const oz = Math.floor(box.min.z - pad);
+        const cols = Math.ceil((box.max.x + pad - ox) / cell) + 1;
+        const rows = Math.ceil((box.max.z + pad - oz) / cell) + 1;
+        if (cols * rows > 220000) {
+          console.warn(`[cityview] height grid too large (${cols}×${rows}); keeping raycasts`);
+          return;
+        }
+        const data = new Float32Array(cols * rows);
+        const slice = 1200;
+        let i = 0;
+        const total = cols * rows;
+        const t0 = performance.now();
+        while (i < total) {
+          const end = Math.min(total, i + slice);
+          for (; i < end; i++) {
+            const c = i % cols;
+            const r = (i / cols) | 0;
+            data[i] = groundAtRay(ox + c * cell, oz + r * cell);
+          }
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        _heightGrid = { ox, oz, cell, cols, rows, data };
+        console.info(
+          `[cityview] height grid ${cols}×${rows} @ ${cell}m in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
+        );
       }
       const _riderObstacles = [];
       const _beforeStep = { x: 0, z: 0 };
@@ -1910,12 +1962,13 @@
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
           setLoad(0.68, "Starting trams and buses");
-          transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
+          transit = await createTransit(scene, THREE, { tramCount: 4, busCount: 5 });
           // ---- Pedestrians (humanoids walking on sidewalks) ----
           setLoad(0.74, "Bringing people outside");
           const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Bringing people outside"));
           pedestrians = await createPedestrians(scene, THREE, {
-            count: 40,
+            count: 22,
+            people: { initial: 8, resident: 14, rotate: false },
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
             camera,
@@ -1933,7 +1986,7 @@
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
           setLoad(0.88, "Bikes and scooters");
-          micromobility = await createMicromobility(scene, THREE, { count: 28 });
+          micromobility = await createMicromobility(scene, THREE, { count: 16 });
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
@@ -2050,7 +2103,12 @@
           applyTimeOfDay(tod);
           setLoad(0.96, "Warming up the lights");
           await nextFrame();
-          await warmUpRenderer();
+          // Full shader compile of the district often freezes mid-range phones; opt in with ?warmup=1.
+          if (new URLSearchParams(location.search).get("warmup") === "1") {
+            await warmUpRenderer();
+          } else {
+            renderer.render(scene, camera);
+          }
           if (touch) {
             touch.setActive(true);
             touch.setNightLabel(tod > 0.5);
@@ -2070,6 +2128,8 @@
           prevTime = performance.now();
           window.__loading && window.__loading.done();
           setTimeout(() => document.getElementById("hud")?.classList.add("gone"), 9000);
+          // Bake heights after first paint so the loader is not stuck on thousands of raycasts.
+          bakeHeightGridAsync().catch((e) => console.warn("[cityview] height grid failed", e));
       }
 
       (async () => {
@@ -2328,7 +2388,7 @@
               _riderObstacles.push({ x: p.x, z: p.z, r: (p.r || 0.35) + 0.2 });
             }
           }
-          micromobility.update(simDt, _riderObstacles);
+          micromobility.update(simDt, _riderObstacles, walker.position);
           // A rider (or sliding wreck) that clips a pedestrian knocks them down.
           if (pedestrians && pedestrians.hitTest) {
             for (const v of micromobility.vehicles || []) {
@@ -2439,7 +2499,11 @@
             }
           }
           if (minimap.setHeading) minimap.setHeading(playerMotion.yaw());
-          minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility, velo);
+          // Radar/minimap at ~12 Hz — full canvas redraw every frame was pure CPU waste.
+          if ((minimap._drawClock = (minimap._drawClock || 0) - rawDt) <= 0) {
+            minimap._drawClock = 0.08;
+            minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility, velo);
+          }
         }
 
         // Auto-alight when the requested stop dwell begins.

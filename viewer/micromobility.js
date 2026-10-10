@@ -769,14 +769,36 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     }
   }
 
-  function update(dt, obstacles = []) {
+  function update(dt, obstacles = [], cam = null) {
     if (!(dt > 0)) return;
     dtSwerve = dt;
+    const cx = cam ? cam.x : null;
+    const cz = cam ? cam.z : null;
+    const hot2 = 60 * 60;
+    const cold2 = 180 * 180;
     for (const v of vehicles) {
       if (v.crash) {
         updateCrash(v, dt, obstacles);
         continue;
       }
+
+      const d2 =
+        cx == null ? 0 : (v.pos.x - cx) * (v.pos.x - cx) + (v.pos.z - cz) * (v.pos.z - cz);
+      if (d2 > cold2) {
+        v.mesh.visible = false;
+        // Still advance on the path so they don't pile up far away.
+        v.s += (v.reverse ? -v.speed : v.speed) * dt * 0.85;
+        if (v.s >= v.path.length) {
+          v.s = v.path.length - 0.01;
+          advanceEnd(v);
+        } else if (v.s <= 0) {
+          v.s = 0.01;
+          advanceEnd(v);
+        }
+        place(v);
+        continue;
+      }
+      v.mesh.visible = true;
 
       const want = targetSpeed(v, obstacles);
       const rate = want < v.cur ? 6.0 : 1.6; // brake hard, pull away gently
@@ -791,6 +813,11 @@ export async function createMicromobility(scene, THREE, opts = {}) {
         advanceEnd(v);
       }
       place(v);
+
+      // Far riders: skip hard-hit / skinned anim (still collide near the camera).
+      if (d2 > hot2) {
+        continue;
+      }
 
       // Still inside a tram/bus after braking → accident: fly off, maybe die.
       const hit = hardHit(v, obstacles);
