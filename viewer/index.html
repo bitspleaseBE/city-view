@@ -318,7 +318,8 @@
       body.locked #click-cue,
       body.free-view #click-cue,
       body.on-transit #click-cue,
-      body:has(#loading) #click-cue {
+      /* Hide cue only while the loader is still on screen (not after .done / remove). */
+      body:has(#loading:not(.done)) #click-cue {
         display: none;
       }
       body.touch-device #click-cue {
@@ -978,22 +979,27 @@
         const h11 = g.data[i + g.cols + 1];
         return h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz) + h01 * (1 - tx) * tz + h11 * tx * tz;
       }
-      /** Bake a coarse height grid in idle slices so the loading screen can finish first. */
+      /**
+       * Optional height bake (?heightgrid=1). Default OFF: full-scene raycasts in big slices
+       * froze the main thread right after “Click to play”, so cars/people looked dead and
+       * input stopped responding. Ped LOD already uses a constant pavement height when far.
+       */
       async function bakeHeightGridAsync() {
         if (!cityRoot || _heightGrid) return;
+        if (new URLSearchParams(location.search).get("heightgrid") !== "1") return;
         const box = new THREE.Box3().setFromObject(cityRoot);
-        const cell = 3;
+        const cell = 4;
         const pad = 8;
         const ox = Math.floor(box.min.x - pad);
         const oz = Math.floor(box.min.z - pad);
         const cols = Math.ceil((box.max.x + pad - ox) / cell) + 1;
         const rows = Math.ceil((box.max.z + pad - oz) / cell) + 1;
-        if (cols * rows > 220000) {
+        if (cols * rows > 80000) {
           console.warn(`[cityview] height grid too large (${cols}×${rows}); keeping raycasts`);
           return;
         }
         const data = new Float32Array(cols * rows);
-        const slice = 1200;
+        const slice = 80; // keep each slice under ~1 frame
         let i = 0;
         const total = cols * rows;
         const t0 = performance.now();
@@ -1004,7 +1010,7 @@
             const r = (i / cols) | 0;
             data[i] = groundAtRay(ox + c * cell, oz + r * cell);
           }
-          await new Promise((r) => setTimeout(r, 0));
+          await new Promise((r) => requestAnimationFrame(r));
         }
         _heightGrid = { ox, oz, cell, cols, rows, data };
         console.info(
@@ -1665,7 +1671,7 @@
       }
 
       document.body.addEventListener("click", (e) => {
-        if (mode !== "walk") return;
+        if (!cityReady || mode !== "walk") return;
         if (e.target.closest("#modes, #touch-ui")) return;
         if (TOUCH) {
           touch.startSession();
@@ -2212,6 +2218,16 @@
           requestAnimationFrame(tick);
           return;
         }
+        try {
+          tickFrame(rawDt, dt, simDt);
+        } catch (err) {
+          // One bad frame must not kill the rAF loop — otherwise Click to play looks dead.
+          console.error("[cityview] frame error", err);
+        }
+        requestAnimationFrame(tick);
+      }
+
+      function tickFrame(rawDt, dt, simDt) {
         adaptResolution(rawDt);
 
         const ridingTram = transit.isRiding && transit.isRiding();
@@ -2542,7 +2558,6 @@
         });
 
         renderer.render(scene, camera);
-        requestAnimationFrame(tick);
       }
       tick();
     </script>
