@@ -1219,7 +1219,10 @@
           softClampXZ(freeCam, playBounds);
           applyFreeCamera();
           hint.textContent = TOUCH ? HINT.mapTouch : HINT.map;
-          status.textContent = "Kaart";
+          {
+            const street = streetLocator?.locate?.(freeCam.x, freeCam.z);
+            status.textContent = street ? `Kaart — ${street}` : "Kaart";
+          }
           touch?.setModeLabel("free");
         }
       }
@@ -1231,7 +1234,10 @@
         rideEl.style.display = "none";
         promptEl.style.display = "none";
         hint.textContent = HINT.walkShort;
-        status.textContent = "Terug op straat";
+        {
+          const street = streetLocator?.locate?.(drop.x, drop.z);
+          status.textContent = street ? `Terug op straat — ${street}` : "Terug op straat";
+        }
         if (mode === "walk" && !walkControls.isLocked) {
           // Keep unlocked until click — pointer lock after ride is flaky mid-frame.
         }
@@ -2155,6 +2161,7 @@
               softClampXZ(walkSaved, playBounds);
               snapWalkSavedOutdoors();
               const street = streetLocator?.locate?.(walkSaved.x, walkSaved.z);
+              status.textContent = street ? `Kaart — ${street}` : "Kaart";
               hud.notify(street ? `Hier neergezet · ${street}` : "Hier neergezet — V om te lopen", 2800);
               if (street && minimap.showStreetName) minimap.showStreetName(street, "Harmonie", 3200);
             }
