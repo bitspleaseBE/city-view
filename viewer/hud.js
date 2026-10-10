@@ -73,7 +73,7 @@ export function createHud(opts = {}) {
   const help = el("div", "hud-help");
   help.innerHTML = [
     "<kbd>W A S D</kbd>lopen · sturen op step/fiets",
-    "<kbd>Shift</kbd>rennen · <kbd>Space</kbd>springen",
+    "<kbd>Shift</kbd>rennen · <kbd>Spatie</kbd>springen",
     "<kbd>E</kbd>step · tram · bus · Velo",
     "<kbd>N</kbd>naar avond / ochtend",
     "<kbd>V</kbd>kaart · <kbd>M</kbd>radar",
