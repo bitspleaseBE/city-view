@@ -16,7 +16,8 @@ Riders: Remy, Amy, James, Michelle. Sidewalk pedestrians use the Rocketbox peopl
 Pieter, Mo and Jacob (never used as pedestrians), each with `_Walking`, `_Riding` and `_Scooter` GLBs:
 Pieter (`Male_Adult_07`) and Mo (`Male_Adult_04`) are Rocketbox avatars baked via
 `scripts/rocketbox_to_player_glb.py` + `scripts/style_player_textures.py`.
-Jacob is a copy of the Mixamo `James` pedestrian (hat + black coat already on the mesh).
+Jacob is the `Hasidic_Father` Rocketbox pedestrian (black coat, wide hat, beard) exported into
+`players/` by the same script — same look as the sidewalk Hasidic father, separate GLBs.
 
 ## Convert Walking FBX → GLB
 

@@ -694,14 +694,10 @@ function pickNextPath(paths, path, atEnd, cars, car, THREE) {
       candidates.push({ index: i, reverse: true, d: dEnd, align: outTan.dot(inTan) });
     }
   }
-  // A one-way road cannot turn round at its end, and swinging back onto the opposite
-  // carriageway is not a junction either: with no legal way on, the car leaves the map and
-  // re-enters elsewhere (advanceJunction → respawnCar).
-  if (!candidates.length || (path.dir !== 0 && candidates.every((c) => c.align < -0.5))) {
-    if (path.dir !== 0) {
-      return { index: paths.indexOf(path), reverse: !atEnd, flip: true, recycle: true, align: -1 };
-    }
-    return { index: paths.indexOf(path), reverse: !atEnd ? false : true, flip: true, align: -1 };
+  // No legal way on (map edge / dead end / one-way wrong end): leave and respawn — never
+  // U-turn on the same centreline (that reads as reverse gear / sideways pivot).
+  if (!candidates.length || candidates.every((c) => c.align < -0.5)) {
+    return { index: paths.indexOf(path), reverse: false, flip: true, recycle: true, align: -1 };
   }
   // Prefer continuing forward; avoid U-turns; prefer quieter edges.
   for (const c of candidates) {
@@ -714,8 +710,11 @@ function pickNextPath(paths, path, atEnd, cars, car, THREE) {
     if (c.align < -0.25) c.score -= 3.5;
   }
   candidates.sort((a, b) => b.score - a.score);
+  // Nose-first: only hand off onto roads we enter facing roughly the same way.
   const forward = candidates.filter((c) => c.align > 0.15);
-  const pool = (forward.length ? forward : candidates).slice(0, Math.min(3, candidates.length));
+  const ahead = candidates.filter((c) => c.align > -0.05);
+  const ranked = forward.length ? forward : ahead.length ? ahead : candidates;
+  const pool = ranked.slice(0, Math.min(3, ranked.length));
   // Soft random among top choices so fleets diverge.
   const weights = pool.map((_, i) => 3 - i);
   let r = Math.random() * weights.reduce((a, b) => a + b, 0);
@@ -773,7 +772,15 @@ function placeCar(car, paths, THREE) {
     car.pos.z += -car.tan.x * car.lateral;
   }
   car.mesh.position.copy(car.pos);
-  car.mesh.rotation.y = Math.atan2(car.tan.x, car.tan.z);
+  // Face the travel tangent (nose = +Z). Smooth small kinks so a polyline corner does not
+  // snap the body 90° and read as a sideways slide.
+  const wantYaw = Math.atan2(car.tan.x, car.tan.z);
+  let cur = car.mesh.rotation.y;
+  let dy = wantYaw - cur;
+  while (dy > Math.PI) dy -= Math.PI * 2;
+  while (dy < -Math.PI) dy += Math.PI * 2;
+  // Hard snap on big turns (junctions); ease through gentle bends.
+  car.mesh.rotation.y = Math.abs(dy) > 0.6 ? wantYaw : cur + dy * 0.45;
 }
 
 function fleetCount(paths, requested) {
@@ -1313,7 +1320,6 @@ export async function createTraffic(scene, THREE, opts = {}) {
       const cruise = roadPath.speedLimit * car.driver;
       car.speed = cruise;
       let desire = cruise;
-      let lateralNudge = 0;
       let reason = "";
       let leader = null;
       car.headOnLoser = false;
@@ -1386,9 +1392,8 @@ export async function createTraffic(scene, THREE, opts = {}) {
               reason = "car";
               leader = other;
             }
-            if (Math.abs(side) < 1.6 && ahead < 6) {
-              lateralNudge += side > 0 ? -0.3 : 0.3;
-            }
+            // No lateral shove — sliding sideways while facing forward looked like reverse /
+            // crabbing. Lane offset from applyLane already separates opposing streams.
           }
         }
       }
@@ -1611,8 +1616,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       // zeroes every launch once ACCEL*step < 0.05 (>= ~52 fps), so cars that stopped at
       // a red could never pull away again on 60/120 Hz displays.
       if (car.velocity < 0.05 && desire < 0.05) car.velocity = 0;
-      car.lateral += (lateralNudge - car.lateral) * Math.min(1, step * 3);
-      car.lateral = Math.max(-0.7, Math.min(0.7, car.lateral));
+      car.lateral = 0;
 
       const crawling = car.velocity < 0.3 && cruise > 1;
       // A queue should clear within a light cycle; a circular "queue" is gridlock.

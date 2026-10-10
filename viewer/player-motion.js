@@ -8,7 +8,8 @@
  * `getYaw` / `setYaw` come from the look camera (mouse). The player root only stores position.
  */
 export const MOVE = {
-  walk: { speed: 3.6, boost: 1.55, accel: 14, brake: 18, eye: 1.7 },
+  // Shift multiplies walk to a clear jog (~7.4 m/s); rides keep a milder boost.
+  walk: { speed: 3.6, boost: 2.05, accel: 16, brake: 20, eye: 1.7 },
   velo: { speed: 8.6, boost: 1.3, accel: 3.8, brake: 7, eye: 1.62, turn: 1.5, reverse: 1.2 },
   scooter: { speed: 7.6, boost: 1.0, accel: 4.2, brake: 7.5, eye: 1.62, turn: 1.8, reverse: 1.0 },
 };
@@ -45,12 +46,15 @@ export function createPlayerMotion(THREE, playerObject, getYaw, setYaw) {
       state.side = 0;
     }
     const onWheels = kind !== "walk";
-    const top = cfg.speed * (keys.shift ? cfg.boost : 1) * (onWheels ? 1 : state.footScale);
+    const sprint = !!(keys.shift || keys.Shift);
+    const top = cfg.speed * (sprint ? cfg.boost : 1) * (onWheels ? 1 : state.footScale);
     const fwdIn = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
     const sideIn = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
     const fwdTarget = fwdIn > 0 ? top : fwdIn < 0 ? -(onWheels ? cfg.reverse : top * 0.8) : 0;
-    state.fwd = approach(state.fwd, fwdTarget, cfg.accel, cfg.brake, dt);
-    state.side = onWheels ? 0 : approach(state.side, sideIn * top * 0.85, cfg.accel, cfg.brake, dt);
+    // Snap into the jog a bit faster than a normal walk start so Shift feels immediate.
+    const accel = sprint && !onWheels ? cfg.accel * 1.4 : cfg.accel;
+    state.fwd = approach(state.fwd, fwdTarget, accel, cfg.brake, dt);
+    state.side = onWheels ? 0 : approach(state.side, sideIn * top * 0.85, accel, cfg.brake, dt);
     if (onWheels && sideIn) {
       const grip = Math.min(1, 0.35 + Math.abs(state.fwd) / cfg.speed);
       setYaw(getYaw() - sideIn * cfg.turn * grip * dt);

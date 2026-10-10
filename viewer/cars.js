@@ -11,20 +11,22 @@ const FLEET_URL = new URL("./cars/fleet.json", import.meta.url);
 /** One common SUV and one city hatch. The other eight models load once the street is up. */
 export const STARTER_CARS = ["model_y.glb", "peugeot_208.glb"];
 
-/** Weighted paint mix seen on Belgian streets (sRGB): greyscale dominates, a few colours. */
+/** Weighted paint mix for Belgian streets (sRGB). Greys still common, but colours stay visible. */
 export const CAR_PAINTS = [
-  [0xe8e9e6, 20], // white
-  [0x0c0d0f, 19], // black
-  [0x3b3e42, 17], // dark grey
-  [0x9fa3a7, 11], // silver
-  [0x6f7275, 8], // mid grey
-  [0x1c2a47, 8], // dark blue
-  [0x2e5c98, 3], // bright blue
-  [0x8c1518, 4], // red
-  [0x2b3a30, 3], // dark green
-  [0xb1a487, 3], // sand
-  [0x6d2a1c, 2], // copper / brown
-  [0xc9b23c, 1], // yellow (Renault 5 & co.)
+  [0xe8e9e6, 14], // white
+  [0x0c0d0f, 12], // black
+  [0x3b3e42, 8], // dark grey
+  [0x9fa3a7, 7], // silver
+  [0x6f7275, 4], // mid grey
+  [0x1c2a47, 10], // dark blue
+  [0x2e5c98, 8], // bright blue
+  [0x8c1518, 10], // red
+  [0xc45c48, 6], // coral / brick
+  [0x2b3a30, 6], // dark green
+  [0x2f6f5e, 5], // teal
+  [0xb1a487, 4], // sand
+  [0x6d2a1c, 3], // copper / brown
+  [0xc9b23c, 3], // yellow
 ];
 const PAINT_TOTAL = CAR_PAINTS.reduce((s, [, w]) => s + w, 0);
 
@@ -73,6 +75,11 @@ function paintMaterial(cache, base, hex) {
   if (!m) {
     m = base.clone();
     m.color.setHex(hex);
+    // Stock GLBs ship mid-grey paint at metalness 0.5 — that reads as flat gunmetal under
+    // the viewer env map. Drop metalness so reds/blues actually read as body colour.
+    if ("metalness" in m) m.metalness = Math.min(Number(m.metalness) || 0, 0.28);
+    if ("roughness" in m) m.roughness = Math.max(Number(m.roughness) || 0, 0.42);
+    m.needsUpdate = true;
     cache.set(key, m);
   }
   return m;
@@ -195,12 +202,28 @@ export function cloneCarMesh(THREE, parts, template) {
   group.add(body);
 
   const paint = pickCarPaint(Math.random());
+  let painted = false;
   forEachMaterial(body, (m) => {
-    if (PAINT_RE.test(m.name)) return paintMaterial(parts.paintMats, m, paint);
-    if (HEAD_RE.test(m.name)) return parts.headMat;
-    if (TAIL_RE.test(m.name)) return parts.tailMat;
+    if (PAINT_RE.test(m.name || "")) {
+      painted = true;
+      return paintMaterial(parts.paintMats, m, paint);
+    }
+    if (HEAD_RE.test(m.name || "")) return parts.headMat;
+    if (TAIL_RE.test(m.name || "")) return parts.tailMat;
     return null;
   });
+  // Fallback: some exports rename the slot — recolour the dominant opaque body material.
+  if (!painted) {
+    forEachMaterial(body, (m) => {
+      if (!m || HEAD_RE.test(m.name || "") || TAIL_RE.test(m.name || "")) return null;
+      const n = (m.name || "").toLowerCase();
+      if (n.includes("glass") || n.includes("trim") || n.includes("metal") || n.includes("tire")) {
+        return null;
+      }
+      painted = true;
+      return paintMaterial(parts.paintMats, m, paint);
+    });
+  }
 
   const wheels = [];
   body.traverse((o) => {

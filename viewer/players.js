@@ -101,8 +101,8 @@ export function createPlayerAvatar(THREE, scene) {
   const _ikWorldQ = new THREE.Quaternion();
 
   /**
-   * Rocketbox (Bip01) and Mixamo James (Armature) ship at FBX scale ~0.0001.
-   * Walk clips re-apply that every frame — bump to 0.01 after mixer.update.
+   * Older Mixamo player GLBs shipped at FBX scale ~0.0001. Current Rocketbox
+   * cast (Pieter / Mo / Jacob) is already ~0.01 — only bump when still tiny.
    */
   function normalizeImportScale(root) {
     if (!root) return false;
@@ -137,7 +137,7 @@ export function createPlayerAvatar(THREE, scene) {
   function polishWalkPose(rig, walkPhase, moving) {
     if (!rig || !moving) return;
     const swing = Math.sin(walkPhase);
-    // Mixamo UpLeg: opposite ±X on Left/Right (probed on jacob_Walking.glb).
+    // Legacy Mixamo UpLeg polish (only if a Mixamo-skinned player GLB is loaded).
     const thighPairs = [
       ["mixamorig9LeftUpLeg", 1, -1, 0, 0],
       ["mixamorig9RightUpLeg", -1, 1, 0, 0],
@@ -248,9 +248,12 @@ export function createPlayerAvatar(THREE, scene) {
     clipLoads[kind] = load(`${id}_${file}.glb`)
       .then((gltf) => {
         if (gen !== buildGen || !mixer || !gltf?.animations?.length) return;
-        const action = mixer.clipAction(gltf.animations[0]);
+        const clip = sanitizeClip(gltf.animations[0]);
+        if (!clip || clip.duration < 1e-3) return;
+        const action = mixer.clipAction(clip);
         action.enabled = true;
         action.setEffectiveWeight(0);
+        action.setLoop(THREE.LoopRepeat, Infinity);
         actions[kind] = action;
       })
       .catch(() => {});
@@ -424,9 +427,10 @@ export function createPlayerAvatar(THREE, scene) {
       if (actions.walk && current === "walk") {
         // Hang the stride briefly in the air so a hop reads like GTA, not a mid-walk freeze-frame.
         const airborne = root.position.y > 0.06;
+        // Cap high enough for Shift jog (~7.4 m/s) so legs don't skate under a slow cycle.
         const scale = airborne
           ? 0.12
-          : Math.max(0.05, Math.min(2.2, Math.abs(moveSpeed) / 1.7));
+          : Math.max(0.05, Math.min(3.2, Math.abs(moveSpeed) / 1.7));
         actions.walk.setEffectiveTimeScale(airborne ? scale : Math.abs(moveSpeed) < 0.08 ? 0 : scale);
       } else if (actions.ride && current === "ride") {
         actions.ride.setEffectiveTimeScale(Math.max(0.2, Math.min(1.8, Math.abs(moveSpeed) / 4)));
