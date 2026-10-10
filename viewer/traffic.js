@@ -170,8 +170,8 @@ function buildPaths(roads, THREE) {
       cumulative.push(len);
     }
     if (len < 4) continue;
-    // Dual-carriageway link stubs (e.g. Mechelsesteenweg spur 4480699) are not real streets.
-    if ((kind === "residential" || kind === "living_street") && len < 35) continue;
+    // Dual-carriageway link stubs (Mechelsesteenweg 4480699 / unclassified 4445986) are not streets.
+    if ((kind === "residential" || kind === "living_street" || kind === "unclassified") && len < 35) continue;
     const laneOffset = Number.isFinite(road.laneOffset) ? road.laneOffset : LANE_OFFSET;
     const limitKmh = resolveSpeedKmh(road, kind);
     const dir = directionCode(road.oneway);
@@ -881,7 +881,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       const path = paths[i];
       if (
         mode === "bus" &&
-        (path.kind === "residential" || path.kind === "living_street") &&
+        (path.kind === "residential" || path.kind === "living_street" || path.kind === "unclassified") &&
         path.length < BUS_MIN_LOCAL_M
       ) {
         continue;
