@@ -857,8 +857,11 @@ const _lane = { x: 0, z: 0 };
 /** Ease a bus into the lane of the car road it is driving on (rate = 1/s; Infinity = snap). */
 function steerBus(v, rate, dt) {
   if (v.mode !== "bus" || !v.offSet) return;
-  let tx = -v.tan.z * 1.1;
-  let tz = v.tan.x * 1.1;
+  // Prefer the OSM car lane. If none is in range, keep the GTFS centreline (offset 0) —
+  // do not add a further RHT nudge: De Lijn shapes on Mechelsesteenweg already sit past
+  // the kerb onto the building-side strip, and +1.1 m made buses drive that asphalt.
+  let tx = 0;
+  let tz = 0;
   if (shared.laneAt && shared.laneAt(v.baseX, v.baseZ, v.tan.x, v.tan.z, _lane, "bus")) {
     tx = _lane.x - v.baseX;
     tz = _lane.z - v.baseZ;

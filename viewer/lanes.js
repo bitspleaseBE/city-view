@@ -9,6 +9,8 @@
  *       honours oneway:bus, e.g. contraflow bus lanes).
  *       Buses use it so they drive in the exact lane cars use (GTFS bus shapes sit 1-4 m off
  *       the OSM centreline, which is why oncoming buses used to clip the cars they passed).
+ *       Bus snaps prefer secondary/dual carriageways over short residential spurs so they
+ *       stay on the boulevard, not the building-side asphalt strip beside the sidewalk.
  *   cars -> the live car list, so buses / trams brake for cars in front of them instead of
  *       driving through them.
  */
