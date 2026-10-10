@@ -13,10 +13,12 @@ const SNAP_M = 14;
 const BIKE_LANE_EXTRA = 1.45; // m outside car lane, toward the kerb
 const SPAWN_GAP = 7; // m between riders at spawn
 const LOOK_AHEAD = 9; // m: riders react to anything this far ahead in their lane
+const LOOK_AHEAD_HARD = 22; // m: trams / buses are long — brake earlier
 const LANE_HALF = 0.55; // m: half a bike's swept width
 const STOP_GAP = 1.6; // m nose-to-tail when queued
 const SWERVE = 0.75; // m to the right when an oncoming rider shares the lane
 const OVERTAKE = 1.3; // m to the left when passing something that blocks the lane
+const HARD_HIT_SPEED = 1.5; // m/s into a tram/bus → rider is cleared (accident)
 
 /** Shared lamp materials so setNight can brighten every rider at once. */
 let _lampMat = null;
@@ -541,7 +543,8 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       const hl = ob.hl ?? 1;
       const hw = ob.hw ?? 1;
       const ahead = dx * tx + dz * tz;
-      if (ahead < -hl || ahead > LOOK_AHEAD + hl) return;
+      const reach = (ob.hard ? LOOK_AHEAD_HARD : LOOK_AHEAD) + hl;
+      if (ahead < -hl || ahead > reach) return;
       const lat = Math.abs(dx * tz - dz * tx);
       if (lat > LANE_HALF + hw) return;
       const otx = ob.tx || 0;
@@ -609,6 +612,34 @@ export async function createMicromobility(scene, THREE, opts = {}) {
     }
   }
 
+  /** True when the rider's body is inside a hard tram/bus footprint. */
+  function insideHard(v, obstacles) {
+    for (const ob of obstacles) {
+      if (!ob.hard || ob.hl == null) continue;
+      const dx = v.pos.x - ob.x;
+      const dz = v.pos.z - ob.z;
+      const otx = ob.tx || 0;
+      const otz = ob.tz || 0;
+      const along = dx * otx + dz * otz;
+      const lat = Math.abs(dx * otz - dz * otx);
+      if (Math.abs(along) < (ob.hl ?? 1) * 0.92 && lat < (ob.hw ?? 1) * 0.92) return true;
+    }
+    return false;
+  }
+
+  /** After a tram/bus strike: drop the rider elsewhere so they do not stay inside the consist. */
+  function clearAccident(v) {
+    const path = paths[(Math.random() * paths.length) | 0];
+    v.path = path;
+    v.reverse = legalDirs(path)[0];
+    v.s = Math.random() * Math.max(1, path.length - 2) + 0.5;
+    v.cur = 0;
+    v.swerve = 0;
+    v.overtake = 0;
+    v.stuck = 0;
+    place(v);
+  }
+
   function update(dt, obstacles = []) {
     if (!(dt > 0)) return;
     dtSwerve = dt;
@@ -626,6 +657,12 @@ export async function createMicromobility(scene, THREE, opts = {}) {
         advanceEnd(v);
       }
       place(v);
+
+      // Still inside a tram/bus after braking → accident: clear the rider (no ghosting).
+      if (insideHard(v, obstacles)) {
+        clearAccident(v);
+        continue;
+      }
 
       // Spin wheels
       v.wheelPhase += delta / (v.mesh.userData.wheelR || 0.32);
