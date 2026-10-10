@@ -593,29 +593,29 @@
       const camera = new THREE.PerspectiveCamera(
         68,
         window.innerWidth / window.innerHeight,
-        0.2,
-        4500,
+        0.25,
+        // Tight far plane: the district is ~1 km; drawing to 4.5 km just burns fill-rate.
+        1100,
       );
       camera.position.set(-218.5, 1.7, -432.1);
 
-      // Opaque canvas with no stencil: cheaper framebuffer + no alpha compositing with the page.
+      // Competitive defaults: no MSAA, capped DPR. Sharper and much cheaper than soft AA + HiDPI.
       const renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: false,
         alpha: false,
         stencil: false,
         powerPreference: "high-performance",
       });
-      // Render-resolution cap (deliberately below devicePixelRatio ≤ 2): the adaptive scaler in
-      // tick() trims it further only when frame time says the GPU can't keep up.
-      const PR_MAX = Math.min(window.devicePixelRatio || 1, 1.2);
-      const PR_MIN = Math.min(0.75, PR_MAX);
+      const PR_MAX = Math.min(window.devicePixelRatio || 1, 1);
+      const PR_MIN = Math.min(0.65, PR_MAX);
       let pixelRatio = PR_MAX;
       renderer.setPixelRatio(pixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setClearColor(SKY, 1);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.28; // brighter, more dynamic range
+      // ACES is pretty but expensive; NoToneMapping keeps contrast punchy and saves GPU.
+      renderer.toneMapping = THREE.NoToneMapping;
+      renderer.toneMappingExposure = 1;
       document.body.appendChild(renderer.domElement);
 
       // Cheap IBL so glass/metal catch sky instead of looking like flat stickers.
@@ -625,9 +625,10 @@
       roomEnv.dispose(); // the studio scene is only needed to bake the cube map
       pmrem.dispose();
 
-      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85);
+      // Slightly hotter lights so the scene stays bright without ACES tone-mapping.
+      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 1.05);
       scene.add(hemi);
-      const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
+      const sun = new THREE.DirectionalLight(0xfff2d6, 1.55);
       sun.position.set(220, 320, -160);
       scene.add(sun);
       scene.add(sun.target);
@@ -722,7 +723,7 @@
       // Stars: a sparse dome that rides with the camera and fades in with the night.
       const starGeo = new THREE.BufferGeometry();
       {
-        const n = 700;
+        const n = 280;
         const pos = new Float32Array(n * 3);
         for (let i = 0; i < n; i++) {
           const u = Math.random() * 2 - 1;
@@ -788,16 +789,15 @@
         renderer.setClearColor(_tmpCol, 1);
         scene.fog.density = baseFogDensity * (1 + 0.5 * night);
 
-        renderer.toneMappingExposure = 1.18 - 0.1 * night;
         scene.environmentIntensity = 1 - 0.86 * smooth(0.05, 0.8, t);
 
         hemi.color.copy(HEMI_SKY_DAY).lerp(HEMI_SKY_NIGHT, night);
         hemi.groundColor.copy(HEMI_GND_DAY).lerp(HEMI_GND_NIGHT, night);
-        hemi.intensity = 0.85 - 0.62 * night;
+        hemi.intensity = 1.05 - 0.72 * night;
 
         // One directional light plays the sun by day and the moon by night.
         sun.color.copy(SUN_COL).lerp(SUN_DUSK, dusk).lerp(MOON_COL, smooth(0.5, 0.9, t));
-        sun.intensity = 1.35 * dayAmt + 0.3 * smooth(0.5, 1.0, t);
+        sun.intensity = 1.55 * dayAmt + 0.35 * smooth(0.5, 1.0, t);
         sun.position.lerpVectors(sunArcPos, MOON_POS, smooth(0.2, 0.8, t));
         sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
         sunHaze.position.copy(sunMesh.position);
@@ -2033,13 +2033,13 @@
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
           setLoad(0.68, "Starting trams and buses");
-          transit = await createTransit(scene, THREE, { tramCount: 4, busCount: 5 });
+          transit = await createTransit(scene, THREE, { tramCount: 3, busCount: 4 });
           // ---- Pedestrians (humanoids walking on sidewalks) ----
           setLoad(0.74, "Bringing people outside");
           const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Bringing people outside"));
           pedestrians = await createPedestrians(scene, THREE, {
-            count: 14,
-            people: { initial: 6, resident: 10, rotate: false },
+            count: 10,
+            people: { initial: 5, resident: 8, rotate: false },
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
             camera,
@@ -2057,7 +2057,7 @@
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
           setLoad(0.88, "Bikes and scooters");
-          micromobility = await createMicromobility(scene, THREE, { count: 12 });
+          micromobility = await createMicromobility(scene, THREE, { count: 8 });
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
@@ -2203,6 +2203,16 @@
           setTimeout(() => document.getElementById("hud")?.classList.add("gone"), 9000);
           // Bake heights after first paint so the loader is not stuck on thousands of raycasts.
           bakeHeightGridAsync().catch((e) => console.warn("[cityview] height grid failed", e));
+          // One-line GPU census after a couple of frames (Valorant-feel target: draw calls ≪ 1k).
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              const info = renderer.info.render;
+              console.info(
+                `[cityview] frame census: drawCalls=${info.calls} tris=${info.triangles} ` +
+                  `dpr=${pixelRatio.toFixed(2)} aa=0 far=${camera.far}`,
+              );
+            }),
+          );
       }
 
       (async () => {

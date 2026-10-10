@@ -83,8 +83,8 @@ const MAX_SUBSTEPS = 2; // never multiply collision work when FPS tanks (prefer 
 const CYCLE_SEC = 30;
 const AMBER_SEC = 3; // green → amber → red → green (no amber returning to green)
 const METERS_PER_CAR = 480;
-const MIN_CARS = 6;
-const MAX_CARS = 10;
+const MIN_CARS = 5;
+const MAX_CARS = 8;
 const BODY_COLORS = [0xc45c48, 0x3d5a80, 0xd4a373, 0x4a5568, 0xb8b0a4, 0x2f6f5e];
 
 const DRIVEABLE_KINDS = new Set([
