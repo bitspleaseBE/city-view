@@ -1483,7 +1483,7 @@
           onToggleNight: () => {
             const toNight = todFromHour(gameHour) < 0.5;
             toggleTimeOfDay();
-            hud.notify(toNight ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
+            hud.notify(toNight ? "Doorspoelen naar nacht…" : "Doorspoelen naar ochtend…", 2500);
           },
           onToggleHelp: () => hud.toggleHelp(),
           onToggleMap: () => {
@@ -1888,14 +1888,14 @@
           const nMicro = micromobility?.count ?? 0;
           const nVelo = velo?.count ?? 0;
           const bits = [];
-          if (nCars > 0) bits.push(`${nCars} cars`);
-          if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
-          if (nPeds > 0) bits.push(`${nPeds} people`);
-          if (nMicro > 0) bits.push(`${nMicro} bikes/scooters`);
-          if (nVelo > 0) bits.push(`${nVelo} Velo stations`);
+          if (nCars > 0) bits.push(`${nCars} auto's`);
+          if (nTransit > 0) bits.push(`${nTransit} trams/bussen`);
+          if (nPeds > 0) bits.push(`${nPeds} mensen`);
+          if (nMicro > 0) bits.push(`${nMicro} fietsen/steps`);
+          if (nVelo > 0) bits.push(`${nVelo} Velo-stations`);
           status.textContent =
             bits.length > 0
-              ? `${tod > 0.5 ? "Nacht" : "Zonnige dag"} — ${bits.join(" · ")} · ${TOUCH ? "tik Ga voor Velo / tram" : "E Velo / tram"}`
+              ? `${tod > 0.5 ? "Nacht" : "Zonnige dag"} — ${bits.join(" · ")} · ${TOUCH ? "tik Ga voor Velo / step / tram" : "E Velo / step / tram"}`
               : TOUCH
                 ? "Zonnige dag — tik om te lopen"
                 : "Zonnige dag — klik om te lopen";
@@ -1937,7 +1937,7 @@
           const gltf = await loader.parseAsync(buf, "./");
           await onCityLoaded(gltf);
         } catch (err) {
-          status.textContent = "Missing GLB — CI/build pending";
+          status.textContent = "GLB ontbreekt — CI/build nog bezig";
           window.__loading && window.__loading.fail("Antwerpen laden mislukt — controleer je verbinding en herlaad");
           console.error(err);
         }

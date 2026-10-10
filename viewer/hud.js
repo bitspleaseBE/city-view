@@ -109,7 +109,7 @@ export function createHud(opts = {}) {
       if (!t || t === lastStatus) return;
       lastStatus = t;
       if (/^(Walking|Lopen|Free view|Kaart|Loading|Laden)/.test(t)) return; // mode chatter, not news
-      if (/\d+ cars|people/.test(t)) {
+      if (/\d+ (cars|auto|people|mensen)/.test(t)) {
         census = t;
         return;
       }
