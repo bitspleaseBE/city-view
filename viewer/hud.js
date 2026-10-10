@@ -65,7 +65,7 @@ export function createHud(opts = {}) {
   const healthFill = el("i", "", "", healthBar);
   const feed = el("div", "hud-feed");
   const speed = el("div", "hud-speed", "hud-font");
-  speed.innerHTML = '<span class="v">0</span><span class="u">KM/H</span><div class="bar"><i></i></div><div class="sub"></div>';
+  speed.innerHTML = '<span class="v">0</span><span class="u">KM/U</span><div class="bar"><i></i></div><div class="sub"></div>';
   const speedV = speed.querySelector(".v");
   const speedBar = speed.querySelector(".bar");
   const speedFill = speed.querySelector(".bar i");
