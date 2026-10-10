@@ -85,6 +85,11 @@ export function createPlayerAvatar(THREE, scene) {
   let clipLoads = { ride: null, scooter: null };
   /** @type {null | { lUpper: object, lFore: object, lHand: object, rUpper: object, rFore: object, rHand: object }} */
   let armBones = null;
+  /** @type {null | { lThigh: object, rThigh: object, lCalf: object, rCalf: object, spine: object, head: object }} */
+  let bodyBones = null;
+  let airBlend = 0;
+  const _headPrev = new THREE.Quaternion();
+  let headReady = false;
 
   // Grip targets match viewer/scooters.js + viewer/velo.js (bike scale 1.55).
   const GRIP = {
@@ -117,12 +122,50 @@ export function createPlayerAvatar(THREE, scene) {
     return fixed;
   }
 
-  /** Drop scale tracks — FBX often keys identity scale and fights normalizeImportScale. */
+  /**
+   * Drop scale tracks (FBX keys identity scale and fights normalizeImportScale).
+   * Peel net horizontal drift off the pelvis / armature so a loop doesn't yank
+   * the body — and the head — back to the start of the stride. Pieter's walk
+   * ships ~120 units of pelvis travel; Mo's does not, but the same pass is safe.
+   */
   function sanitizeClip(clip) {
     if (!clip?.tracks?.length) return clip;
-    const tracks = clip.tracks.filter((t) => !t.name.endsWith(".scale"));
-    if (tracks.length === clip.tracks.length) return clip;
+    let changed = false;
+    const tracks = [];
+    for (const t of clip.tracks) {
+      if (t.name.endsWith(".scale")) {
+        changed = true;
+        continue;
+      }
+      if (t.name.endsWith(".position") && settleRootMotion(t)) changed = true;
+      tracks.push(t);
+    }
+    if (!changed) return clip;
     return new THREE.AnimationClip(clip.name, clip.duration, tracks);
+  }
+
+  /** Remove end-to-end travel on a position track; keep the bob around that line. */
+  function settleRootMotion(track) {
+    const bone = track.name.slice(0, -".position".length);
+    if (!/pelvis$/i.test(bone) && bone !== "Bip01" && bone !== "Armature") return false;
+    const values = track.values;
+    const times = track.times;
+    const n = times?.length || 0;
+    if (n < 2 || values.length < n * 3) return false;
+    const t0 = times[0];
+    const span = times[n - 1] - t0 || 1;
+    let changed = false;
+    for (let axis = 0; axis < 3; axis++) {
+      const drift = values[(n - 1) * 3 + axis] - values[axis];
+      // Bone units are centimetres. A stride is tens of units; hip bob is ~1–3.
+      if (Math.abs(drift) < 8) continue;
+      changed = true;
+      for (let i = 0; i < n; i++) {
+        const u = (times[i] - t0) / span;
+        values[i * 3 + axis] -= drift * u;
+      }
+    }
+    return changed;
   }
 
   // Reused each frame for Mixamo thigh-lift polish.
@@ -162,6 +205,76 @@ export function createPlayerAvatar(THREE, scene) {
       rFore: findNamed(rig, "Bip01_R_Forearm", "Bip01 R Forearm", "RightForeArm", "mixamorigRightForeArm"),
       rHand: findNamed(rig, "Bip01_R_Hand", "Bip01 R Hand", "RightHand", "mixamorigRightHand"),
     };
+    bodyBones = {
+      lThigh: findNamed(rig, "Bip01_L_Thigh", "Bip01 L Thigh", "LeftUpLeg", "mixamorigLeftUpLeg"),
+      rThigh: findNamed(rig, "Bip01_R_Thigh", "Bip01 R Thigh", "RightUpLeg", "mixamorigRightUpLeg"),
+      lCalf: findNamed(rig, "Bip01_L_Calf", "Bip01 L Calf", "LeftLeg", "mixamorigLeftLeg"),
+      rCalf: findNamed(rig, "Bip01_R_Calf", "Bip01 R Calf", "RightLeg", "mixamorigRightLeg"),
+      spine: findNamed(rig, "Bip01_Spine", "Bip01 Spine", "Spine", "mixamorigSpine"),
+      head: findNamed(rig, "Bip01_Head", "Bip01 Head", "Head", "mixamorigHead"),
+    };
+    headReady = false;
+  }
+
+  /**
+   * Bind facing differs per cast (Pieter looks along +Z, Mo along +X). Turn the
+   * mesh so that facing lines up with travel (−Z when the root yaw is 0).
+   */
+  function alignBindFacing(rig) {
+    const left = findNamed(rig, "Bip01_L_Thigh", "Bip01 L Thigh", "LeftUpLeg", "mixamorigLeftUpLeg");
+    const right = findNamed(rig, "Bip01_R_Thigh", "Bip01 R Thigh", "RightUpLeg", "mixamorigRightUpLeg");
+    if (!left || !right) {
+      rig.rotation.y = Math.PI;
+      return;
+    }
+    left.updateWorldMatrix(true, false);
+    right.updateWorldMatrix(true, false);
+    const sx = left.matrixWorld.elements[12] - right.matrixWorld.elements[12];
+    const sz = left.matrixWorld.elements[14] - right.matrixWorld.elements[14];
+    // up × (left − right) is the direction the chest faces.
+    const fx = sz;
+    const fz = -sx;
+    if (fx * fx + fz * fz < 1e-6) {
+      rig.rotation.y = Math.PI;
+      return;
+    }
+    rig.rotation.y = -Math.atan2(fx, fz) + Math.PI;
+  }
+
+  /** Knees up, like clearing a low fence, then hold that shape in the air. */
+  function polishAirPose(k) {
+    if (!bodyBones || k < 1e-3) return;
+    const tuck = 1.05 * k;
+    const bend = 1.2 * k;
+    const lean = 0.28 * k;
+    _qLift.setFromAxisAngle(_vBone.set(0, 0, 1), tuck);
+    if (bodyBones.lThigh) bodyBones.lThigh.quaternion.premultiply(_qLift);
+    if (bodyBones.rThigh) bodyBones.rThigh.quaternion.premultiply(_qLift);
+    _qLift.setFromAxisAngle(_vBone.set(0, 0, 1), bend);
+    if (bodyBones.lCalf) bodyBones.lCalf.quaternion.premultiply(_qLift);
+    if (bodyBones.rCalf) bodyBones.rCalf.quaternion.premultiply(_qLift);
+    if (bodyBones.spine) {
+      _qLift.setFromAxisAngle(_vBone.set(0, 0, 1), lean);
+      bodyBones.spine.quaternion.premultiply(_qLift);
+    }
+  }
+
+  /**
+   * Reject a one-frame head flip. Walk clips turn the head a degree or two per
+   * key; a sudden yaw (bad loop, hemisphere flip) is what reads as a snap back.
+   */
+  function stabilizeHead() {
+    const head = bodyBones?.head;
+    if (!head) return;
+    if (!headReady) {
+      _headPrev.copy(head.quaternion);
+      headReady = true;
+      return;
+    }
+    const dot = Math.abs(THREE.MathUtils.clamp(_headPrev.dot(head.quaternion), -1, 1));
+    const ang = 2 * Math.acos(dot);
+    if (ang > 0.65) head.quaternion.copy(_headPrev);
+    _headPrev.copy(head.quaternion);
   }
 
   /** World-space grip point matching scooter/velo mesh placement under the player. */
@@ -331,9 +444,9 @@ export function createPlayerAvatar(THREE, scene) {
     // Pedestrian loader uses >0.01; the old >0.3 gate left Mixamo James at 1.8 cm.
     const s = measureY > 0.01 ? targetH / measureY : 1;
     visual.scale.setScalar(s);
-    // Player motion with yaw=0 walks toward −Z (camera on +Z). All three meshes
-    // face +Z in bind pose, so every avatar needs the half-turn.
-    visual.rotation.y = Math.PI;
+    // Player motion with yaw=0 walks toward −Z. Pieter's bind faces +Z; Mo's faces +X.
+    visual.updateMatrixWorld(true);
+    alignBindFacing(visual);
     visual.updateMatrixWorld(true);
     if (foot) {
       foot.updateWorldMatrix(true, false);
@@ -424,27 +537,30 @@ export function createPlayerAvatar(THREE, scene) {
         else ensureClip("scooter");
       } else setAction("walk");
 
+      const airborne = kind === "walk" && root.position.y > 0.05;
+      if (airborne) airBlend = Math.min(1, airBlend + dt * 9);
+      else airBlend = Math.max(0, airBlend - dt * 6);
+
       if (actions.walk && current === "walk") {
-        // Hang the stride briefly in the air so a hop reads like GTA, not a mid-walk freeze-frame.
-        const airborne = root.position.y > 0.06;
-        // Cap high enough for Shift jog (~7.4 m/s) so legs don't skate under a slow cycle.
-        const scale = airborne
-          ? 0.12
-          : Math.max(0.05, Math.min(3.2, Math.abs(moveSpeed) / 1.7));
-        actions.walk.setEffectiveTimeScale(airborne ? scale : Math.abs(moveSpeed) < 0.08 ? 0 : scale);
+        // Hold the stride in the air; the tuck below is the hop, not a slowed walk cycle.
+        const scale = Math.max(0.05, Math.min(3.2, Math.abs(moveSpeed) / 1.7));
+        actions.walk.setEffectiveTimeScale(airborne ? 0 : Math.abs(moveSpeed) < 0.08 ? 0 : scale);
       } else if (actions.ride && current === "ride") {
         actions.ride.setEffectiveTimeScale(Math.max(0.2, Math.min(1.8, Math.abs(moveSpeed) / 4)));
       } else if (actions.scooter && current === "scooter") {
         actions.scooter.setEffectiveTimeScale(Math.max(0.2, Math.min(1.8, Math.abs(moveSpeed) / 3.5)));
       }
 
-      if (mixer) mixer.update(dt);
+      if (mixer) mixer.update(airborne ? 0 : dt);
       // Walk clips re-assert the tiny FBX armature scale after mixer.update.
       normalizeImportScale(visual);
       if (current === "walk" && actions.walk) {
         const dur = actions.walk.getClip()?.duration || 1;
         const phase = (actions.walk.time / dur) * Math.PI * 2;
-        polishWalkPose(visual, phase, Math.abs(moveSpeed) >= 0.08);
+        polishWalkPose(visual, phase, !airborne && Math.abs(moveSpeed) >= 0.08);
+        const tuck = airBlend * airBlend * (3 - 2 * airBlend);
+        polishAirPose(tuck);
+        stabilizeHead();
       } else if (kind === "velo" || kind === "scooter") {
         // Ride clips don't put Rocketbox/Mixamo wrists on the bars — IK does.
         visual.updateMatrixWorld(true);

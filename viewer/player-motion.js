@@ -78,6 +78,20 @@ export function createPlayerMotion(THREE, playerObject, getYaw, setYaw) {
     state.side *= keep;
   }
 
+  /** GTA hop: if you're nearly still, shove along the way you face; otherwise keep your direction. */
+  function hop(minSpeed = 2.8) {
+    const sp = Math.hypot(state.fwd, state.side);
+    if (sp >= minSpeed) return;
+    if (sp < 0.15) {
+      state.fwd = minSpeed;
+      state.side = 0;
+      return;
+    }
+    const k = minSpeed / sp;
+    state.fwd *= k;
+    state.side *= k;
+  }
+
   function stop() {
     state.fwd = 0;
     state.side = 0;
@@ -88,6 +102,7 @@ export function createPlayerMotion(THREE, playerObject, getYaw, setYaw) {
     yaw,
     step,
     bump,
+    hop,
     stop,
     eye: (kind) => (MOVE[kind] || MOVE.walk).eye,
     /** Walking / jogging pace multiplier (injuries); rides are unaffected. */
