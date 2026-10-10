@@ -2274,11 +2274,15 @@
             }
           }
           micromobility.update(simDt, _riderObstacles);
-          // A rider that still clips a pedestrian knocks them down.
+          // A rider (or sliding wreck) that clips a pedestrian knocks them down.
           if (pedestrians && pedestrians.hitTest) {
             for (const v of micromobility.vehicles || []) {
-              if (!v?.pos || v.cur < 1.8) continue;
-              pedestrians.hitTest(v.pos.x, v.pos.z, v.tan.x * v.cur, v.tan.z * v.cur, 0.45);
+              if (!v?.pos) continue;
+              const spd = v.crash ? Math.hypot(v.crash.vx, v.crash.vz) : v.cur;
+              if (spd < 1.8) continue;
+              const vx = v.crash ? v.crash.vx : v.tan.x * v.cur;
+              const vz = v.crash ? v.crash.vz : v.tan.z * v.cur;
+              pedestrians.hitTest(v.pos.x, v.pos.z, vx, vz, 0.45);
             }
           }
           // Same for the player on foot — bikes brake for you, but a clip still hurts.
@@ -2292,11 +2296,13 @@
             const px = walker.position.x;
             const pz = walker.position.z;
             for (const v of micromobility.vehicles || []) {
-              if (!v?.pos || v.cur < 2.2) continue;
+              if (!v?.pos) continue;
+              const spd = v.crash ? Math.hypot(v.crash.vx, v.crash.vz) : v.cur;
+              if (spd < 2.2) continue;
               const dx = v.pos.x - px;
               const dz = v.pos.z - pz;
               if (dx * dx + dz * dz < 0.65 * 0.65) {
-                hitByVehicle(v.cur);
+                hitByVehicle(spd);
                 break;
               }
             }
