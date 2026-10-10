@@ -31,6 +31,9 @@ export function createMinimap(THREE, opts = {}) {
   canvas.style.cursor = "pointer";
   document.body.appendChild(canvas);
 
+  /** 0 = day palette, 1 = night — synced from applyTimeOfDay. */
+  let nightGlow = 0;
+
   // Street name label resting above the mini map
   const streetLabel = document.createElement("div");
   streetLabel.setAttribute("aria-live", "polite");
@@ -275,6 +278,10 @@ export function createMinimap(THREE, opts = {}) {
     // Clear and redraw from background
     ctx.clearRect(0, 0, W, H);
     ctx.drawImage(bgCanvas, 0, 0);
+    if (nightGlow > 0.01) {
+      ctx.fillStyle = `rgba(5,8,18,${0.42 * nightGlow})`;
+      ctx.fillRect(0, 0, W, H);
+    }
 
     // Velo docking stations
     if (velo && velo.stations) {
@@ -472,7 +479,12 @@ export function createMinimap(THREE, opts = {}) {
     const H2 = radar.height;
     const k = 2 * RADAR_PX_PER_M; // canvas px per metre (canvas is 2x CSS)
     rctx.setTransform(1, 0, 0, 1, 0, 0);
-    rctx.fillStyle = "#3c4740";
+    // Day olive → night charcoal under the map raster.
+    const g = nightGlow;
+    const landR = (0x3c + (0x1c - 0x3c) * g) | 0;
+    const landG = (0x47 + (0x24 - 0x47) * g) | 0;
+    const landB = (0x40 + (0x20 - 0x40) * g) | 0;
+    rctx.fillStyle = `rgb(${landR},${landG},${landB})`;
     rctx.fillRect(0, 0, W2, H2);
     rctx.save();
     rctx.translate(W2 / 2, H2 * 0.6);
@@ -481,6 +493,10 @@ export function createMinimap(THREE, opts = {}) {
     rctx.translate(-playerPos.x, -playerPos.z);
     rctx.imageSmoothingEnabled = true;
     rctx.drawImage(hiBg, BOUNDS.minX, BOUNDS.minZ, spanX, spanZ);
+    if (g > 0.01) {
+      rctx.fillStyle = `rgba(5,10,22,${0.5 * g})`;
+      rctx.fillRect(BOUNDS.minX, BOUNDS.minZ, spanX, spanZ);
+    }
     const box = (x, z, tx, tz, len, wid, color) => {
       rctx.save();
       rctx.translate(x, z);
@@ -566,11 +582,19 @@ export function createMinimap(THREE, opts = {}) {
     }
   }
 
+  function setNight(t) {
+    nightGlow = Math.max(0, Math.min(1, Number(t) || 0));
+    canvas.style.background = `rgba(0,0,0,${0.35 + 0.35 * nightGlow})`;
+    canvas.style.border = `1px solid rgba(255,255,255,${0.25 - 0.08 * nightGlow})`;
+    radar.style.boxShadow = `0 0 0 3px rgba(0,0,0,${0.55 + 0.25 * nightGlow}),0 6px 18px rgba(0,0,0,${0.35 + 0.25 * nightGlow})`;
+  }
+
   return {
     draw: drawAny,
     consumeTeleport,
     setVisible,
     showStreetName,
+    setNight,
     canvas,
     radar,
     /** Camera yaw (0 = looking north / −Z); the radar turns so your heading is up. */
