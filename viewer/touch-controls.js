@@ -391,6 +391,7 @@ export function createTouchControls(opts) {
       .replace(/^Press E to (\w)/i, (_, c) => c.toUpperCase())
       .replace(/^E · /i, "")
       .replace(/^E om af te stappen$/i, "tik Ga om af te stappen")
+      .replace(/ · E om af te stappen/i, " · tik Ga om af te stappen")
       .replace(/ · E om uit te stappen/i, " · tik Ga om uit te stappen")
       .replace(/ · E to leave/i, " · tik Ga om uit te stappen")
       .replace(/\bE\b/g, "Ga");
