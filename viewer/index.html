@@ -506,7 +506,6 @@
       import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
       import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
       import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
-      import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
       import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
       import { createTraffic } from "./traffic.js";
       import { createTransit } from "./transit.js";
@@ -594,47 +593,41 @@
       const camera = new THREE.PerspectiveCamera(
         68,
         window.innerWidth / window.innerHeight,
-        0.2,
-        4500,
+        0.25,
+        // Tight far plane: the district is ~1 km; drawing to 4.5 km just burns fill-rate.
+        1100,
       );
       camera.position.set(-218.5, 1.7, -432.1);
 
-      // Opaque canvas with no stencil: cheaper framebuffer + no alpha compositing with the page.
+      // Competitive defaults: no MSAA, capped DPR. Sharper and much cheaper than soft AA + HiDPI.
       const renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: false,
         alpha: false,
         stencil: false,
         powerPreference: "high-performance",
       });
-      // Render-resolution cap (deliberately below devicePixelRatio ≤ 2): the adaptive scaler in
-      // tick() trims it further only when frame time says the GPU can't keep up.
-      const PR_MAX = Math.min(window.devicePixelRatio || 1, 1.2);
-      const PR_MIN = Math.min(0.75, PR_MAX);
+      const PR_MAX = Math.min(window.devicePixelRatio || 1, 1);
+      const PR_MIN = Math.min(0.65, PR_MAX);
       let pixelRatio = PR_MAX;
       renderer.setPixelRatio(pixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setClearColor(SKY, 1);
       renderer.outputColorSpace = THREE.SRGBColorSpace;
-      renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.28; // brighter, more dynamic range
+      // ACES is pretty but expensive; NoToneMapping keeps contrast punchy and saves GPU.
+      renderer.toneMapping = THREE.NoToneMapping;
+      renderer.toneMappingExposure = 1;
       document.body.appendChild(renderer.domElement);
 
-      // Cheap IBL so glass/metal catch sky instead of looking like flat stickers.
-      const pmrem = new THREE.PMREMGenerator(renderer);
-      const roomEnv = new RoomEnvironment();
-      scene.environment = pmrem.fromScene(roomEnv, 0.04).texture;
-      roomEnv.dispose(); // the studio scene is only needed to bake the cube map
-      pmrem.dispose();
+      // No IBL / fill light: each extra light + env map taxes every PBR material. Hemi + sun
+      // only — competitive-style lighting, hotter so the street still reads without ACES/IBL.
+      scene.environment = null;
 
-      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 0.85);
+      const hemi = new THREE.HemisphereLight(0xb8d8ff, 0xb8a48a, 1.2);
       scene.add(hemi);
-      const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
+      const sun = new THREE.DirectionalLight(0xfff2d6, 1.75);
       sun.position.set(220, 320, -160);
       scene.add(sun);
       scene.add(sun.target);
-      const fill = new THREE.DirectionalLight(0xcfe4ff, 0.35);
-      fill.position.set(-160, 120, 200);
-      scene.add(fill);
 
       // Visible sun disc + soft haze
       const sunMesh = new THREE.Mesh(
@@ -709,7 +702,7 @@
       const VEG_NIGHT = new THREE.Color(0x0a120c);
       const TRUNK_NIGHT = new THREE.Color(0x0c0908);
       const lampHeads = []; // world positions of street-lamp heads
-      const LAMP_LIGHTS = 4;
+      const LAMP_LIGHTS = 2; // nearest lamps only — each PointLight is a full extra light pass
       const LAMP_INTENSITY = 38;
       const lampLights = [];
       let lampGlow = 0;
@@ -723,7 +716,7 @@
       // Stars: a sparse dome that rides with the camera and fades in with the night.
       const starGeo = new THREE.BufferGeometry();
       {
-        const n = 700;
+        const n = 280;
         const pos = new Float32Array(n * 3);
         for (let i = 0; i < n; i++) {
           const u = Math.random() * 2 - 1;
@@ -789,16 +782,13 @@
         renderer.setClearColor(_tmpCol, 1);
         scene.fog.density = baseFogDensity * (1 + 0.5 * night);
 
-        renderer.toneMappingExposure = 1.18 - 0.1 * night;
-        scene.environmentIntensity = 1 - 0.86 * smooth(0.05, 0.8, t);
-
         hemi.color.copy(HEMI_SKY_DAY).lerp(HEMI_SKY_NIGHT, night);
         hemi.groundColor.copy(HEMI_GND_DAY).lerp(HEMI_GND_NIGHT, night);
-        hemi.intensity = 0.85 - 0.62 * night;
+        hemi.intensity = 1.2 - 0.85 * night;
 
         // One directional light plays the sun by day and the moon by night.
         sun.color.copy(SUN_COL).lerp(SUN_DUSK, dusk).lerp(MOON_COL, smooth(0.5, 0.9, t));
-        sun.intensity = 1.35 * dayAmt + 0.3 * smooth(0.5, 1.0, t);
+        sun.intensity = 1.75 * dayAmt + 0.4 * smooth(0.5, 1.0, t);
         sun.position.lerpVectors(sunArcPos, MOON_POS, smooth(0.2, 0.8, t));
         sunMesh.position.copy(sun.position).normalize().multiplyScalar(900);
         sunHaze.position.copy(sunMesh.position);
@@ -806,7 +796,6 @@
         sunMesh.scale.setScalar(1 - 0.45 * smooth(0.4, 0.9, t));
         sunHaze.material.color.set(0xffe8b0).lerp(_tmpCol.set(0x8fa6d8), smooth(0.4, 0.9, t));
         sunHaze.material.opacity = 0.18 + 0.1 * dusk;
-        fill.intensity = 0.35 - 0.2 * night;
 
         // Façade windows + lamp heads glow; cars and trams follow.
         const glow = smooth(0.4, 0.9, t);
@@ -974,12 +963,14 @@
       }
       function groundAtCore(x, z) {
         const g = _heightGrid;
-        if (!g) return groundAtRay(x, z);
+        // Hot path: never full-scene raycast. Flat sidewalk (~0.12 m) until the idle bake
+        // finishes; out-of-bounds stays flat too. Bake itself uses groundAtRay directly.
+        if (!g) return 0.12;
         const fx = (x - g.ox) / g.cell;
         const fz = (z - g.oz) / g.cell;
         const c0 = Math.floor(fx);
         const r0 = Math.floor(fz);
-        if (c0 < 0 || r0 < 0 || c0 >= g.cols - 1 || r0 >= g.rows - 1) return groundAtRay(x, z);
+        if (c0 < 0 || r0 < 0 || c0 >= g.cols - 1 || r0 >= g.rows - 1) return 0.12;
         const tx = fx - c0;
         const tz = fz - r0;
         const i = r0 * g.cols + c0;
@@ -990,13 +981,13 @@
         return h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz) + h01 * (1 - tx) * tz + h11 * tx * tz;
       }
       /**
-       * Optional height bake (?heightgrid=1). Default OFF: full-scene raycasts in big slices
-       * froze the main thread right after “Click to play”, so cars/people looked dead and
-       * input stopped responding. Ped LOD already uses a constant pavement height when far.
+       * Idle height bake (default ON; ?heightgrid=0 to skip). Tiny slices after cityReady so
+       * Click to play stays responsive. Until done, groundAt returns a flat sidewalk height
+       * instead of thousands of full-scene raycasts per second (the #1 FPS killer).
        */
       async function bakeHeightGridAsync() {
         if (!cityRoot || _heightGrid) return;
-        if (new URLSearchParams(location.search).get("heightgrid") !== "1") return;
+        if (new URLSearchParams(location.search).get("heightgrid") === "0") return;
         const box = new THREE.Box3().setFromObject(cityRoot);
         const cell = 4;
         const pad = 8;
@@ -1005,11 +996,11 @@
         const cols = Math.ceil((box.max.x + pad - ox) / cell) + 1;
         const rows = Math.ceil((box.max.z + pad - oz) / cell) + 1;
         if (cols * rows > 80000) {
-          console.warn(`[cityview] height grid too large (${cols}×${rows}); keeping raycasts`);
+          console.warn(`[cityview] height grid too large (${cols}×${rows}); keeping flat heights`);
           return;
         }
         const data = new Float32Array(cols * rows);
-        const slice = 80; // keep each slice under ~1 frame
+        const slice = 32; // ~0.5–2 ms/frame; never starve traffic/input
         let i = 0;
         const total = cols * rows;
         const t0 = performance.now();
@@ -1799,6 +1790,28 @@
       const setLoad = (f, label) => window.__loading && window.__loading.set(f, label);
       let cityReady = false;
 
+      // Meshopt + KHR_mesh_quantization leave Int16/Int8 attrs; mergeGeometries needs Float32.
+      // Expand via getX/Y/Z so normalized quantized values become world metres.
+      function dequantizeGeometry(geometry) {
+        const g = geometry.clone();
+        for (const name of Object.keys(g.attributes)) {
+          const attr = g.attributes[name];
+          if (!attr || attr.isInterleavedBufferAttribute) continue;
+          if (attr.array instanceof Float32Array && !attr.normalized) continue;
+          const n = attr.itemSize;
+          const arr = new Float32Array(attr.count * n);
+          for (let i = 0; i < attr.count; i++) {
+            const o = i * n;
+            if (n > 0) arr[o] = attr.getX(i);
+            if (n > 1) arr[o + 1] = attr.getY(i);
+            if (n > 2) arr[o + 2] = attr.getZ(i);
+            if (n > 3) arr[o + 3] = attr.getW(i);
+          }
+          g.setAttribute(name, new THREE.BufferAttribute(arr, n));
+        }
+        return g;
+      }
+
       // Merge static city meshes that share a material into ~128 m tiles. The GLB ships ~12k
       // meshes (one draw call each); after this it is a few hundred, while per-tile frustum
       // culling still drops everything behind/beside the camera. Geometry is baked in root
@@ -1808,10 +1821,16 @@
         const rel = new THREE.Matrix4();
         const centre = new THREE.Vector3();
         const buckets = new Map();
-        // Why meshes were left alone — logged when nothing merges (e.g. Meshopt-quantised
-        // positions are Int16/Int8, not Float32, so every mesh is skipped).
-        const skipped = { notMesh: 0, special: 0, hasChildren: 0, noPosition: 0, nonFloat32: 0, interleaved: 0, huge: 0 };
+        const skipped = {
+          notMesh: 0,
+          special: 0,
+          hasChildren: 0,
+          noPosition: 0,
+          interleaved: 0,
+          huge: 0,
+        };
         let meshCount = 0;
+        let dequantized = 0;
         root.traverse((obj) => {
           if (!obj.isMesh) return;
           meshCount++;
@@ -1822,7 +1841,7 @@
           const pos = g && g.attributes.position;
           if (!pos) return void skipped.noPosition++;
           if (pos.isInterleavedBufferAttribute) return void skipped.interleaved++;
-          if (!(pos.array instanceof Float32Array)) return void skipped.nonFloat32++;
+          if (!(pos.array instanceof Float32Array) || pos.normalized) dequantized++;
           if (!g.boundingBox) g.computeBoundingBox();
           rel.multiplyMatrices(inv, obj.matrixWorld);
           g.boundingBox.getCenter(centre).applyMatrix4(rel);
@@ -1841,7 +1860,7 @@
         for (const b of buckets.values()) {
           if (b.meshes.length < 2) continue;
           const geoms = b.meshes.map((m, i) => {
-            const g = m.geometry.clone();
+            const g = dequantizeGeometry(m.geometry);
             g.applyMatrix4(b.mats[i]);
             return g;
           });
@@ -1868,7 +1887,7 @@
           before += b.meshes.length;
           after++;
         }
-        return { before, after, meshCount, skipped };
+        return { before, after, meshCount, skipped, dequantized };
       }
 
       // Pre-compile every shader variant (day, and night with the pooled lamp lights) while
@@ -1984,11 +2003,13 @@
                 .join(", ");
               console.info(
                 `[cityview] merged 0 meshes into 0 tile batches — nothing was merged (${m.meshCount} meshes seen; ` +
-                  `skipped: ${why || "none eligible (every bucket had a single mesh)"}). ` +
-                  "Meshopt/quantised geometry (non-Float32 positions) skips all merges; draw calls stay high.",
+                  `skipped: ${why || "none eligible (every bucket had a single mesh)"}).`,
               );
             } else {
-              console.info(`[cityview] merged ${m.before} meshes into ${m.after} tile batches`);
+              console.info(
+                `[cityview] merged ${m.before} meshes into ${m.after} tile batches` +
+                  (m.dequantized ? ` (dequantised ${m.dequantized} Meshopt/KHR meshes)` : ""),
+              );
             }
           }
           // Static after the merge: skip per-frame matrix traversal of the (now small) tree.
@@ -2004,13 +2025,13 @@
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
           setLoad(0.68, "Starting trams and buses");
-          transit = await createTransit(scene, THREE, { tramCount: 4, busCount: 5 });
+          transit = await createTransit(scene, THREE, { tramCount: 3, busCount: 4 });
           // ---- Pedestrians (humanoids walking on sidewalks) ----
           setLoad(0.74, "Bringing people outside");
           const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Bringing people outside"));
           pedestrians = await createPedestrians(scene, THREE, {
-            count: 22,
-            people: { initial: 8, resident: 14, rotate: false },
+            count: 10,
+            people: { initial: 5, resident: 8, rotate: false },
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             playBounds: playBounds || { minX: -500, maxX: 200, minZ: -800, maxZ: 100 },
             camera,
@@ -2028,7 +2049,7 @@
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
           setLoad(0.88, "Bikes and scooters");
-          micromobility = await createMicromobility(scene, THREE, { count: 16 });
+          micromobility = await createMicromobility(scene, THREE, { count: 8 });
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
@@ -2184,6 +2205,16 @@
           setTimeout(() => document.getElementById("hud")?.classList.add("gone"), 9000);
           // Bake heights after first paint so the loader is not stuck on thousands of raycasts.
           bakeHeightGridAsync().catch((e) => console.warn("[cityview] height grid failed", e));
+          // One-line GPU census after a couple of frames (Valorant-feel target: draw calls ≪ 1k).
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => {
+              const info = renderer.info.render;
+              console.info(
+                `[cityview] frame census: drawCalls=${info.calls} tris=${info.triangles} ` +
+                  `dpr=${pixelRatio.toFixed(2)} aa=0 far=${camera.far}`,
+              );
+            }),
+          );
       }
 
       (async () => {
