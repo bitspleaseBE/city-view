@@ -324,11 +324,16 @@ export function createMinimap(THREE, opts = {}) {
       }
     }
 
-    // Bikes / scooters / cargo bikes
+    // Bikes / scooters / cargo bikes (tipped wrecks = static hazard, not a moving rider)
     if (micromobility && micromobility.vehicles) {
       for (const v of micromobility.vehicles) {
         if (!v.pos) continue;
         const p = toPixel(v.pos.x, v.pos.z);
+        if (v.crash) {
+          ctx.fillStyle = "#c45a3a";
+          ctx.fillRect(p.u - 1.5, p.v - 1.5, 3, 3);
+          continue;
+        }
         ctx.fillStyle = v.kind === "scooter" ? "#00c2a8" : v.kind === "cargo" ? "#d4a020" : "#3a8a5a";
         ctx.fillRect(p.u - 1, p.v - 1, 2, 2);
       }
@@ -514,7 +519,22 @@ export function createMinimap(THREE, opts = {}) {
       }
     }
     if (micromobility && micromobility.vehicles) {
-      for (const v of micromobility.vehicles) if (v.pos) box(v.pos.x, v.pos.z, v.tan.x, v.tan.z, 2, 1.2, "#2fbf71");
+      for (const v of micromobility.vehicles) {
+        if (!v.pos) continue;
+        if (v.crash) {
+          // Static hazard diamond — no travel heading.
+          rctx.fillStyle = "#c45a3a";
+          rctx.beginPath();
+          rctx.moveTo(v.pos.x, v.pos.z - 1.4);
+          rctx.lineTo(v.pos.x + 1.4, v.pos.z);
+          rctx.lineTo(v.pos.x, v.pos.z + 1.4);
+          rctx.lineTo(v.pos.x - 1.4, v.pos.z);
+          rctx.closePath();
+          rctx.fill();
+          continue;
+        }
+        box(v.pos.x, v.pos.z, v.tan.x, v.tan.z, 2, 1.2, "#2fbf71");
+      }
     }
     const blips = blipSource ? blipSource() : [];
     for (const b of blips) {
