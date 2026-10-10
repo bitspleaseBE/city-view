@@ -537,9 +537,25 @@ SIDEWALK_HOST_KINDS = frozenset(
 SIDEWALK_W = 2.0
 # Half-width of the asphalt strip we refuse to walk on (host road excluded).
 _WALK_CARRIAGE_MARGIN = 0.45
-# Drop OSM footways / sidewalk ribbons that spend this much of their length
-# inside building footprints (courtyards, porte-cochères, sealed yards).
+# Legacy soft threshold (kept for ``_walk_indoor_fraction`` callers). Export uses
+# the hard rule instead: no sample may sit inside a footprint (+ margin).
 _WALK_INDOOR_REJECT = 0.12
+# Hard rule: no exported walk point / 1 m sample may be inside a building ring
+# or closer than this to its edge.
+_WALK_INDOOR_MARGIN = 0.4
+# Spacing of indoor samples / clamped-ribbon samples along a walk.
+_WALK_SAMPLE_M = 1.0
+# Simplification tolerance when thinning densified runs back down.
+_WALK_THIN_TOL_M = 0.03
+# Sidewalk lateral clamp: keep this far from the nearest building along the
+# normal; skip a side whose resulting clear half-width is below the minimum.
+_WALK_BUILDING_GAP_M = 0.5
+_WALK_MIN_CLEAR_HALF_M = 1.2
+# Roads whose clear (building-to-building) width is below this are car-free.
+_CAR_FREE_CLEAR_WIDTH_M = 4.5
+_CAR_FREE_KINDS = frozenset({"living_street", "residential", "unclassified"})
+# How far a clear-width / clamp ray looks for a building.
+_CLEAR_RAY_MAX_M = 12.0
 # OSM walk ways farther than this from a street carriageway are yard/plaza paths.
 _WALK_STREET_MAX_M = 14.0
 # Orphan stubs shorter than this only encourage sidewalk ping-pong.
@@ -641,6 +657,289 @@ def _walk_indoor_fraction(pts: list[list[float]], buildings: list[list[list[floa
     return hit / n if n else 0.0
 
 
+class _RingIndex:
+    """Grid-bucketed building rings for fast indoor / ray-distance queries."""
+
+    CELL = 25.0
+
+    def __init__(self, rings: list[list[list[float]]]) -> None:
+        self.rings = rings
+        self.bboxes: list[tuple[float, float, float, float]] = []
+        self.cells: dict[tuple[int, int], list[int]] = {}
+        c = self.CELL
+        for i, ring in enumerate(rings):
+            xs = [p[0] for p in ring]
+            ys = [p[1] for p in ring]
+            bb = (min(xs), min(ys), max(xs), max(ys))
+            self.bboxes.append(bb)
+            for cx in range(int(math.floor(bb[0] / c)), int(math.floor(bb[2] / c)) + 1):
+                for cy in range(int(math.floor(bb[1] / c)), int(math.floor(bb[3] / c)) + 1):
+                    self.cells.setdefault((cx, cy), []).append(i)
+
+    def near(self, x0: float, y0: float, x1: float, y1: float) -> list[int]:
+        """Indices of rings whose bbox overlaps the query box."""
+        if not self.rings:
+            return []
+        c = self.CELL
+        seen: set[int] = set()
+        out: list[int] = []
+        for cx in range(int(math.floor(x0 / c)), int(math.floor(x1 / c)) + 1):
+            for cy in range(int(math.floor(y0 / c)), int(math.floor(y1 / c)) + 1):
+                for i in self.cells.get((cx, cy), ()):
+                    if i in seen:
+                        continue
+                    seen.add(i)
+                    bx0, by0, bx1, by1 = self.bboxes[i]
+                    if bx1 < x0 or bx0 > x1 or by1 < y0 or by0 > y1:
+                        continue
+                    out.append(i)
+        return out
+
+    def indoor(self, x: float, y: float, margin: float = _WALK_INDOOR_MARGIN) -> bool:
+        """True inside any ring, or within ``margin`` metres of a ring edge."""
+        for i in self.near(x - margin, y - margin, x + margin, y + margin):
+            ring = self.rings[i]
+            if _point_in_ring(x, y, ring):
+                return True
+            n = len(ring)
+            for k in range(n):
+                a, b = ring[k], ring[(k + 1) % n]
+                if _point_segment_dist(x, y, a[0], a[1], b[0], b[1]) < margin:
+                    return True
+        return False
+
+    def ray(self, x: float, y: float, dx: float, dy: float, max_t: float) -> float:
+        """Distance along unit ``(dx, dy)`` to the first ring edge (0 if inside, inf if none ≤ ``max_t``)."""
+        ex, ey = x + dx * max_t, y + dy * max_t
+        best = math.inf
+        for i in self.near(min(x, ex), min(y, ey), max(x, ex), max(y, ey)):
+            ring = self.rings[i]
+            if _point_in_ring(x, y, ring):
+                return 0.0
+            n = len(ring)
+            for k in range(n):
+                ax, ay = ring[k][0], ring[k][1]
+                sx, sy = ring[(k + 1) % n][0] - ax, ring[(k + 1) % n][1] - ay
+                den = -(dx * sy - dy * sx)
+                if abs(den) < 1e-9:
+                    continue
+                qx, qy = ax - x, ay - y
+                t = (-qx * sy + sx * qy) / den
+                u = (dx * qy - dy * qx) / den
+                if 0.0 <= u <= 1.0 and 0.0 <= t <= max_t and t < best:
+                    best = t
+        return best
+
+
+def _sample_polyline(
+    pts: list[list[float]], step: float = _WALK_SAMPLE_M
+) -> list[tuple[float, float, float, float, bool]]:
+    """Samples every ≤ ``step`` m: ``(x, y, tx, ty, is_vertex)`` with the local tangent.
+
+    Vertices use the same averaged tangent as ``_offset_polyline``; samples inside a
+    segment use that segment's direction.
+    """
+    n = len(pts)
+    if n == 0:
+        return []
+
+    def vtan(i: int) -> tuple[float, float]:
+        if n == 1:
+            return 0.0, 0.0
+        if i == 0:
+            dx, dy = pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]
+        elif i == n - 1:
+            dx, dy = pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]
+        else:
+            dx, dy = pts[i + 1][0] - pts[i - 1][0], pts[i + 1][1] - pts[i - 1][1]
+        length = math.hypot(dx, dy) or 1.0
+        return dx / length, dy / length
+
+    out: list[tuple[float, float, float, float, bool]] = []
+    tx, ty = vtan(0)
+    out.append((float(pts[0][0]), float(pts[0][1]), tx, ty, True))
+    for i in range(n - 1):
+        ax, ay = float(pts[i][0]), float(pts[i][1])
+        bx, by = float(pts[i + 1][0]), float(pts[i + 1][1])
+        seg = math.hypot(bx - ax, by - ay)
+        if seg < 1e-9:
+            continue
+        k = max(1, int(math.ceil(seg / step - 1e-9)))
+        sdx, sdy = (bx - ax) / seg, (by - ay) / seg
+        for j in range(1, k + 1):
+            if j == k:
+                tx, ty = vtan(i + 1)
+                out.append((bx, by, tx, ty, True))
+            else:
+                t = j / k
+                out.append((ax + (bx - ax) * t, ay + (by - ay) * t, sdx, sdy, False))
+    return out
+
+
+def _thin_run(pts: list[list[float]], tol: float = _WALK_THIN_TOL_M) -> list[list[float]]:
+    """Douglas–Peucker thinning of a densified run (drops collinear samples)."""
+    n = len(pts)
+    if n <= 2:
+        return [list(p) for p in pts]
+    keep = [False] * n
+    keep[0] = keep[-1] = True
+    stack = [(0, n - 1)]
+    while stack:
+        lo, hi = stack.pop()
+        far, far_i = -1.0, -1
+        for i in range(lo + 1, hi):
+            d = _point_segment_dist(
+                pts[i][0], pts[i][1], pts[lo][0], pts[lo][1], pts[hi][0], pts[hi][1]
+            )
+            if d > far:
+                far, far_i = d, i
+        if far > tol and far_i > 0:
+            keep[far_i] = True
+            stack.append((lo, far_i))
+            stack.append((far_i, hi))
+    return [list(p) for p, k in zip(pts, keep) if k]
+
+
+def _walk_has_indoor_sample(run: list[list[float]], index: _RingIndex | None) -> bool:
+    """True if any vertex or ~1 m sample of ``run`` is inside a ring (± margin)."""
+    if index is None or not index.rings:
+        return False
+    return any(index.indoor(x, y) for x, y, _tx, _ty, _v in _sample_polyline(run))
+
+
+def _split_indoor_runs(run: list[list[float]], index: _RingIndex | None) -> list[list[list[float]]]:
+    """Split ``run`` at indoor samples (every ~1 m); each piece ends on the last clear sample."""
+    if len(run) < 2:
+        return []
+    if index is None or not index.rings:
+        return [run]
+    out: list[list[list[float]]] = []
+    cur: list[list[float]] = []
+    last_clear: list[float] | None = None
+    for x, y, _tx, _ty, is_vertex in _sample_polyline(run):
+        if index.indoor(x, y):
+            if cur:
+                if last_clear is not None and last_clear is not cur[-1]:
+                    cur.append(last_clear)
+                if len(cur) >= 2:
+                    out.append(cur)
+            cur, last_clear = [], None
+            continue
+        p = [x, y]
+        last_clear = p
+        if is_vertex or not cur:
+            cur.append(p)
+    if len(cur) >= 2:
+        out.append(cur)
+    return out
+
+
+def _clamped_sidewalk_runs(
+    pts: list[list[float]],
+    sign: float,
+    nominal: float,
+    index: _RingIndex | None,
+    *,
+    min_offset: float = 0.0,
+) -> list[list[list[float]]]:
+    """Kerb ribbon on one side of ``pts`` with the lateral offset clamped to the clear half-width.
+
+    Per ~1 m sample: ``offset = min(nominal, dist_to_building_along_normal - 0.5)``.
+    Samples whose clamped offset is below ``_WALK_MIN_CLEAR_HALF_M`` (or ``min_offset``)
+    are dropped, splitting the ribbon there.
+    """
+    runs: list[list[list[float]]] = []
+    cur: list[list[float]] = []
+    gap = _WALK_BUILDING_GAP_M
+    for x, y, tx, ty, _v in _sample_polyline(pts):
+        length = math.hypot(tx, ty) or 1.0
+        ux, uy = -ty / length * sign, tx / length * sign
+        off = nominal
+        if index is not None and index.rings:
+            t = index.ray(x, y, ux, uy, nominal + gap)
+            if t < nominal + gap:
+                off = min(nominal, t - gap)
+        clamped = off < nominal
+        if clamped and (off < _WALK_MIN_CLEAR_HALF_M or off < min_offset):
+            if len(cur) >= 2:
+                runs.append(cur)
+            cur = []
+            continue
+        cur.append([x + ux * off, y + uy * off])
+    if len(cur) >= 2:
+        runs.append(cur)
+    return runs
+
+
+def _road_clear_width(pts: list[list[float]], index: _RingIndex | None) -> float:
+    """Lower quartile (25th pct) of finite both-sides building-to-building widths.
+
+    Open-side samples (a ray that hits nothing) are ignored rather than counted as inf,
+    so a mostly-narrow alley with a few gaps is still measured by its narrow part.
+    Returns inf when fewer than 2 finite samples exist.
+    """
+    if index is None or not index.rings:
+        return math.inf
+    widths: list[float] = []
+    for x, y, tx, ty, _v in _sample_polyline(pts, 2.0):
+        length = math.hypot(tx, ty) or 1.0
+        nx, ny = -ty / length, tx / length
+        left = index.ray(x, y, nx, ny, _CLEAR_RAY_MAX_M)
+        right = index.ray(x, y, -nx, -ny, _CLEAR_RAY_MAX_M)
+        if math.isinf(left) or math.isinf(right):
+            continue
+        widths.append(left + right)
+    if len(widths) < 2:
+        return math.inf
+    widths.sort()
+    pos = 0.25 * (len(widths) - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, len(widths) - 1)
+    return widths[lo] + (widths[hi] - widths[lo]) * (pos - lo)
+
+
+_MOTOR_ALLOWED_VALUES = frozenset(
+    {"yes", "designated", "permissive", "destination", "delivery", "customers", "agricultural", "forestry"}
+)
+
+
+def _road_osm_tags(road: dict[str, Any]) -> dict[str, str]:
+    """OSM-style access tags from ``road['tags']`` and/or top-level keys, lower-cased."""
+    merged: dict[str, str] = {}
+    raw = road.get("tags")
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            merged[str(k).lower()] = str(v).strip().lower()
+    for key in ("motor_vehicle", "motorcar", "motor_car", "vehicle", "access", "foot"):
+        if key not in merged and road.get(key) is not None:
+            merged[key] = str(road[key]).strip().lower()
+    return merged
+
+
+def _road_motor_denied_by_tags(road: dict[str, Any]) -> bool:
+    """motor_vehicle=no / access=no (/ vehicle=no) — ``foot=designated`` confirms but is not required."""
+    tags = _road_osm_tags(road)
+    if tags.get("motor_vehicle") in _MOTOR_ALLOWED_VALUES:
+        return False
+    denied = (
+        tags.get("motor_vehicle") == "no"
+        or tags.get("motorcar", tags.get("motor_car")) == "no"
+        or tags.get("vehicle") == "no"
+        or tags.get("access") == "no"
+    )
+    return denied
+
+
+def _road_is_car_free(road: dict[str, Any], pts: list[list[float]], index: _RingIndex | None) -> bool:
+    """Car-free by OSM access tags, or a narrow (< 4.5 m clear) living street / residential / unclassified."""
+    if _road_motor_denied_by_tags(road):
+        return True
+    kind = str(road.get("kind") or "").lower()
+    if kind in _CAR_FREE_KINDS and _road_clear_width(pts, index) < _CAR_FREE_CLEAR_WIDTH_M:
+        return True
+    return False
+
+
 def _dist_to_street_hosts(x: float, y: float, roads: list[dict[str, Any]]) -> float:
     """Metres to the nearest sidewalk-host carriageway centreline."""
     best = float("inf")
@@ -698,17 +997,41 @@ def _street_adjacent_walk(pts: list[list[float]], roads: list[dict[str, Any]], m
 def _accept_walk_run(
     run: list[list[float]],
     roads: list[dict[str, Any]],
-    buildings: list[list[list[float]]],
+    index: _RingIndex | None,
     *,
     require_street: bool,
 ) -> bool:
     if len(run) < 2 or _polyline_length(run) < 4.0:
         return False
-    if _walk_indoor_fraction(run, buildings) > _WALK_INDOOR_REJECT:
+    # Hard rule: a single indoor sample (inside a ring or < 0.4 m from its edge)
+    # rejects the run — no reliance on an indoor *fraction*.
+    if _walk_has_indoor_sample(run, index):
         return False
     if require_street and not _street_adjacent_walk(run, roads):
         return False
     return True
+
+
+def _finalize_walk_runs(
+    runs: list[list[list[float]]],
+    roads: list[dict[str, Any]],
+    index: _RingIndex | None,
+    *,
+    require_street: bool,
+) -> list[list[list[float]]]:
+    """Split at indoor samples, drop short runs, thin, round, and re-verify outdoors."""
+    out: list[list[list[float]]] = []
+    for run in runs:
+        for piece in _split_indoor_runs(run, index):
+            if _polyline_length(piece) < _WALK_MIN_KEEP_M:
+                continue
+            # Round first: the exported (2 dp) points are what must clear the rings.
+            dense = [[round(p[0], 2), round(p[1], 2)] for p in piece]
+            for cand in (_thin_run(dense), dense):
+                if _accept_walk_run(cand, roads, index, require_street=require_street):
+                    out.append(cand)
+                    break
+    return out
 
 
 def _safe_sidewalk_runs(
@@ -813,7 +1136,7 @@ def export_walks_near_spawn(
     sx = float(spawn["x"]) if spawn else 0.0
     sy = float(spawn["y"]) if spawn else 0.0
     roads = _roads_for_walk_export(layout)
-    buildings = _building_rings(layout)
+    index = _RingIndex(_building_rings(layout))
     scored: list[tuple[float, dict[str, Any]]] = []
     for ri, road in enumerate(roads):
         kind = str(road.get("kind") or "").lower()
@@ -831,13 +1154,11 @@ def export_walks_near_spawn(
             continue
         if kind in WALK_WAY_KINDS:
             # Street-front plazas ok when near a carriageway; footways/paths also
-            # get clipped where they cross asphalt.
+            # get clipped where they cross asphalt. Every run is then split at
+            # indoor samples (hard rule: no exported point inside a footprint).
             runs = [pts] if kind == "pedestrian" else _safe_sidewalk_runs(pts, roads, ri)
-            for run_i, run in enumerate(runs):
-                if _polyline_length(run) < _WALK_MIN_KEEP_M:
-                    continue
-                if not _accept_walk_run(run, roads, buildings, require_street=True):
-                    continue
+            final = _finalize_walk_runs(runs, roads, index, require_street=True)
+            for run_i, run in enumerate(final):
                 scored.append(
                     (
                         dmin,
@@ -845,7 +1166,7 @@ def export_walks_near_spawn(
                             "id": f"w{road.get('id')}" + (f"_{run_i}" if run_i else ""),
                             "kind": kind,
                             "safe": True,
-                            "points": [[round(p[0], 2), round(p[1], 2)] for p in run],
+                            "points": run,
                         },
                     )
                 )
@@ -853,14 +1174,20 @@ def export_walks_near_spawn(
         if kind not in SIDEWALK_HOST_KINDS:
             continue
         half = float(road.get("width") or 6.0) * 0.5
+        nominal = half + SIDEWALK_W * 0.5
+        # Shared-space streets (living streets, car-free alleys) may be walked inside
+        # the carriageway strip; on ordinary streets a ribbon squeezed below the
+        # kerb line would put pedestrians in a driving lane, so skip those samples.
+        shared = kind == "living_street" or _road_is_car_free(road, pts, index)
+        min_offset = 0.0 if shared else half
+        emitted = 0
         for side, sign in _sidewalk_side_signs(road):
-            walk = _offset_polyline(pts, sign * (half + SIDEWALK_W * 0.5))
-            for run_i, run in enumerate(_safe_sidewalk_runs(walk, roads, ri)):
-                if _polyline_length(run) < _WALK_MIN_KEEP_M:
-                    continue
-                # Ribbons are already street-offset; only reject building cuts.
-                if not _accept_walk_run(run, roads, buildings, require_street=False):
-                    continue
+            ribbons = _clamped_sidewalk_runs(pts, sign, nominal, index, min_offset=min_offset)
+            runs = [r for ribbon in ribbons for r in _safe_sidewalk_runs(ribbon, roads, ri)]
+            # Ribbons are already street-offset; only reject building cuts.
+            final = _finalize_walk_runs(runs, roads, index, require_street=False)
+            for run_i, run in enumerate(final):
+                emitted += 1
                 scored.append(
                     (
                         dmin,
@@ -869,11 +1196,31 @@ def export_walks_near_spawn(
                             "kind": "sidewalk",
                             "safe": True,
                             "side": side,
-                            "points": [[round(p[0], 2), round(p[1], 2)] for p in run],
+                            "points": run,
+                        },
+                    )
+                )
+        if emitted == 0 and kind == "living_street":
+            # Both kerbs too tight (or blocked): walk the outdoor part of the centreline.
+            runs = _safe_sidewalk_runs(pts, roads, ri)
+            final = _finalize_walk_runs(runs, roads, index, require_street=False)
+            for run_i, run in enumerate(final):
+                scored.append(
+                    (
+                        dmin,
+                        {
+                            "id": f"sw{road.get('id')}_C" + (f"_{run_i}" if run_i else ""),
+                            "kind": "pedestrian",
+                            "safe": True,
+                            "side": "C",
+                            "points": run,
                         },
                     )
                 )
     for cross in _crossing_walks(layout, sx, sy, radius):
+        # Same hard rule for kerb-to-kerb links: never end up inside a footprint.
+        if _walk_has_indoor_sample(cross["points"], index):
+            continue
         scored.append((_dist(sx, sy, cross["points"][0][0], cross["points"][0][1]), cross))
     scored.sort(key=lambda item: item[0])
     return [item[1] for item in scored[:max_walks]]
@@ -891,6 +1238,7 @@ def export_roads_near_spawn(
     sy = float(spawn["y"]) if spawn else 0.0
     tram_ids = _tram_way_ids(layout)
     tram_segs = _tram_segments(layout)
+    ring_index = _RingIndex(_building_rings(layout))
     scored: list[tuple[float, dict[str, Any]]] = []
     for road in layout.get("roads") or []:
         kind = str(road.get("kind") or "residential").lower()
@@ -928,6 +1276,12 @@ def export_roads_near_spawn(
                     # oneway tags; buses may be exempt (contraflow bus lane).
                     "oneway": _direction_code(road.get("oneway")),
                     "onewayBus": _direction_code(road.get("oneway_bus", road.get("oneway"))),
+                    # No motor traffic: narrow (< 4.5 m building-to-building) living
+                    # street / residential / unclassified, or OSM motor_vehicle=no /
+                    # access=no (foot=designated). Viewer traffic should skip these.
+                    "carFree": _road_is_car_free(
+                        road, [[float(p[0]), float(p[1])] for p in pts], ring_index
+                    ),
                     "points": [[float(p[0]), float(p[1])] for p in pts],
                 },
             )

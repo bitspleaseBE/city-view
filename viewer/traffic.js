@@ -20,7 +20,9 @@
  */
 
 import { shared } from "./lanes.js";
+import { createCellGrid } from "./cell-grid.js";
 import { cloneCarMesh, loadCarTemplates, makeLampParts, pickCarTemplate } from "./cars.js";
+import { fetchJsonCached } from "./json-cache.js";
 
 const KMH = 1 / 3.6;
 const DEFAULT_SPEED_KMH = {
@@ -68,6 +70,8 @@ const RED_PATIENCE_SEC = 40; // a light that never turns green is ignored after 
 const FOLLOW_DIST = 9;
 const PLAYER_STOP_DIST = 4;
 const PED_STOP_DIST = 5.5; // brake earlier for walkers than for a standing player
+const HIDE_M = 190; // beyond this from the camera: hide the mesh (the car still drives its path)
+const FAR_SCAN_M = 120; // beyond this from the camera: skip ped / player hit scans (lane leaders still apply)
 const PED_HIT_SPEED = 1.8; // m/s: below this a nose-overlap is a shove the ped sim handles
 const SNAP_M = 11;
 const LANE_OFFSET = 1.15;
@@ -151,6 +155,7 @@ function buildPaths(roads, THREE) {
     const kind = String(road.kind || "residential").toLowerCase();
     if (BLOCKED_KINDS.has(kind) || (kind && !DRIVEABLE_KINDS.has(kind))) continue;
     if (road.tramShared === true && kind === "tram") continue;
+    if (road.carFree === true) continue; // pedestrian alleys / car-free lanes: no cars
     const pts = road.points || [];
     if (pts.length < 2) continue;
     const points = [];
@@ -792,7 +797,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
   // Fixed same-origin data file (no caller-supplied URL).
   let data;
   try {
-    const res = await fetch(ROADS_URL);
+    const res = await fetchJsonCached(ROADS_URL);
     if (!res.ok) throw new Error(`roads.json ${res.status}`);
     data = await res.json();
   } catch (err) {
@@ -939,6 +944,11 @@ export async function createTraffic(scene, THREE, opts = {}) {
   const obstacleCache = [];
   /** Ped list reused for every car in a frame (provider is allocation-heavy). */
   let framePeds = null;
+  /** Spatial prefilter over `framePeds` (24 m cells) — rebuilt once per frame. */
+  const pedGrid = createCellGrid();
+  const _nearPeds = [];
+  /** Camera XZ for the far-vehicle scan cull (falls back to the walker when unset). */
+  const camPos = { x: 0, z: 0, set: false };
   let frameObstaclesReady = false;
   function rebuildObstacleCache() {
     obstacleCache.length = 0;
@@ -1237,13 +1247,54 @@ export async function createTraffic(scene, THREE, opts = {}) {
     rebuildObstacleCache();
     frameObstaclesReady = true;
     framePeds = pedProvider ? pedProvider() : null;
+    pedGrid.clear();
+    if (framePeds) {
+      for (let p = 0; p < framePeds.length; p++) {
+        const ped = framePeds[p];
+        pedGrid.insert(ped, ped.x, ped.z);
+      }
+    }
     const total = Math.min(dt, MAX_FRAME);
     const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(total / MAX_STEP)));
     const h = total / n;
     for (let i = 0; i < n; i++) stepSim(h, walkObject);
+    applyDistanceLod();
     frameObstaclesReady = false;
     framePeds = null;
+    pedGrid.clear();
     updateSignalVisuals(signals, simTime, cycleSec);
+  }
+
+  /** Cold / Far cars: hide the mesh beyond HIDE_M (path and queueing logic keep running). */
+  function applyDistanceLod() {
+    if (!camPos.set && !playerPos.lengthSq()) return;
+    const cx = camPos.set ? camPos.x : playerPos.x;
+    const cz = camPos.set ? camPos.z : playerPos.z;
+    const hide2 = HIDE_M * HIDE_M;
+    for (let i = 0; i < cars.length; i++) {
+      const car = cars[i];
+      const dx = car.pos.x - cx;
+      const dz = car.pos.z - cz;
+      car.mesh.visible = dx * dx + dz * dz <= hide2;
+    }
+  }
+
+  function isNearCamera(x, z) {
+    if (!camPos.set && !playerPos.lengthSq()) return true; // no reference yet: scan everything
+    const cx = camPos.set ? camPos.x : playerPos.x;
+    const cz = camPos.set ? camPos.z : playerPos.z;
+    const dx = x - cx;
+    const dz = z - cz;
+    return dx * dx + dz * dz <= FAR_SCAN_M * FAR_SCAN_M;
+  }
+
+  /** Camera position (XZ) used to skip hard-hit / ped scans for far vehicles. */
+  function setCamera(x, z) {
+    if (Number.isFinite(x) && Number.isFinite(z)) {
+      camPos.x = x;
+      camPos.z = z;
+      camPos.set = true;
+    }
   }
 
   function stepSim(step, walkObject) {
@@ -1453,7 +1504,11 @@ export async function createTraffic(scene, THREE, opts = {}) {
         }
       }
 
-      if (walkObject) {
+      // Far from the camera nobody can see (or feel) a hard hit: skip the player / ped scans.
+      // Lane-leader, junction and transit logic above still runs for every car.
+      const scanNear = isNearCamera(car.pos.x, car.pos.z);
+
+      if (walkObject && scanNear) {
         const dx = playerPos.x - car.pos.x;
         const dz = playerPos.z - car.pos.z;
         const distSq = dx * dx + dz * dz;
@@ -1481,7 +1536,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
 
       // Pedestrians in the lane: brake like for the player; hard overlaps knock them down.
       {
-        const peds = framePeds;
+        const peds = scanNear && framePeds && framePeds.length ? pedGrid.query(car.pos.x, car.pos.z, PED_STOP_DIST + 12, _nearPeds) : null;
         if (peds && peds.length) {
           for (let p = 0; p < peds.length; p++) {
             const ped = peds[p];
@@ -1625,7 +1680,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
       }
       placeCar(car, paths, THREE);
       const wheels = car.mesh.userData.wheels;
-      if (wheels && wheels.length && car.velocity > 0.05) {
+      if (wheels && wheels.length && car.velocity > 0.05 && car.mesh.visible) {
         const spin = (car.velocity * step) / (car.mesh.userData.wheelRadius || 0.32);
         for (const w of wheels) w.rotation.x += spin;
       }
@@ -1716,6 +1771,7 @@ export async function createTraffic(scene, THREE, opts = {}) {
     setPedestrians,
     setOnHitPed,
     setOnHitPlayer,
+    setCamera,
     setNight,
     pedMayCross,
     cars,

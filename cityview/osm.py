@@ -1094,6 +1094,12 @@ def layout_from_osm(
             # Porte-cochère / covered driveway through a building (cut in annotate_layout).
             if tags.get("tunnel") == "building_passage":
                 road["passage"] = True
+            # Access tags (small dict) so tag-based car-free detection works on real OSM data.
+            access_tags = {
+                k: str(tags[k]) for k in ("motor_vehicle", "motorcar", "vehicle", "access", "foot") if k in tags
+            }
+            if access_tags:
+                road["tags"] = access_tags
             roads.append(road)
 
     multipolygon_stats = add_relation_buildings(buildings, rels, ways, nodes, origin, style_policy)

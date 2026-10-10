@@ -43,6 +43,46 @@ const CSS = `
 #hud-stats.on { display: block; }
 `;
 
+/**
+ * Per-system frame timers for the F3 panel. Call sites do
+ * `const t = perf.now(); …; perf.add("traffic", perf.now() - t)` — only while `perf.on` (the
+ * panel is open) so a closed panel costs nothing. `perf.count(name)` is an always-on counter
+ * (groundAt calls per frame). Values shown are a smoothed ms/frame (counts: calls/frame).
+ */
+export const perf = (() => {
+  const acc = Object.create(null);
+  const cnt = Object.create(null);
+  const avgMs = Object.create(null);
+  const avgCnt = Object.create(null);
+  return {
+    on: false,
+    now: () => performance.now(),
+    add(name, ms) {
+      acc[name] = (acc[name] || 0) + ms;
+    },
+    count(name, n = 1) {
+      cnt[name] = (cnt[name] || 0) + n;
+    },
+    /** Fold this frame's totals into the running averages (called once per frame by the HUD). */
+    endFrame() {
+      for (const k of new Set([...Object.keys(acc), ...Object.keys(avgMs)])) {
+        avgMs[k] = (avgMs[k] ?? acc[k] ?? 0) * 0.9 + (acc[k] || 0) * 0.1;
+        acc[k] = 0;
+      }
+      for (const k of new Set([...Object.keys(cnt), ...Object.keys(avgCnt)])) {
+        avgCnt[k] = (avgCnt[k] ?? cnt[k] ?? 0) * 0.9 + (cnt[k] || 0) * 0.1;
+        cnt[k] = 0;
+      }
+    },
+    lines() {
+      const out = [];
+      for (const k of Object.keys(avgMs).sort()) out.push(`${k.padEnd(14)} ${avgMs[k].toFixed(2)} ms`);
+      for (const k of Object.keys(avgCnt).sort()) out.push(`${(k + " calls").padEnd(14)} ${avgCnt[k].toFixed(0)}`);
+      return out;
+    },
+  };
+})();
+
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function createHud(opts = {}) {
@@ -134,6 +174,7 @@ export function createHud(opts = {}) {
   }
   function toggleStats() {
     stats.classList.toggle("on");
+    perf.on = stats.classList.contains("on");
     setHelp(false);
   }
 
@@ -166,6 +207,7 @@ export function createHud(opts = {}) {
       speedSub.textContent = r.sub || "";
     }
 
+    perf.endFrame();
     fpsAcc += dt;
     fpsN++;
     if (fpsAcc >= 0.5) {
@@ -178,6 +220,8 @@ export function createHud(opts = {}) {
       const s = info.stats ? info.stats() : {};
       const lines = [`fps      ${fps.toFixed(0)}`];
       for (const [k, v] of Object.entries(s)) lines.push(`${k.padEnd(8)} ${v}`);
+      const pl = perf.lines();
+      if (pl.length) lines.push("", "-- ms / frame --", ...pl);
       if (census) lines.push("", census.replace(/ · /g, "\n"));
       stats.textContent = lines.join("\n");
     }
@@ -219,6 +263,7 @@ export function createHud(opts = {}) {
     showHelp,
     toggleHelp,
     toggleStats,
+    perf,
     get money() {
       return money;
     },

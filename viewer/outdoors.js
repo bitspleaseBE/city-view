@@ -4,6 +4,9 @@
  * Three.js uses z = -y, same as roads.json / street-locate.js.
  */
 
+import { fetchJsonCached } from "./json-cache.js";
+
+
 function pointInRing(x, z, ring) {
   let inside = false;
   const n = ring.length / 2;
@@ -47,7 +50,7 @@ export async function createOutdoorsGuard(_opts = {}) {
   const roadSegs = [];
 
   try {
-    const res = await fetch("./buildings.json");
+    const res = await fetchJsonCached("./buildings.json");
     if (res.ok) {
       const data = await res.json();
       for (const b of data.buildings || []) {
@@ -78,7 +81,7 @@ export async function createOutdoorsGuard(_opts = {}) {
   }
 
   try {
-    const res = await fetch("./roads.json");
+    const res = await fetchJsonCached("./roads.json");
     if (res.ok) {
       const data = await res.json();
       for (const road of data.roads || []) {

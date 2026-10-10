@@ -8,6 +8,7 @@
  */
 
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { fetchJsonCached } from "./json-cache.js";
 
 const REACH = 2.2; // m from the deck to unlock
 const DRAW_DIST = 140; // m: parked scooters further away than this are hidden
@@ -189,7 +190,7 @@ function buildKerbSpots(roads, rand) {
 export async function createScooters(scene, THREE, opts = {}) {
   let roads = [];
   try {
-    const res = await fetch("./roads.json");
+    const res = await fetchJsonCached("./roads.json");
     if (res.ok) roads = (await res.json()).roads || [];
   } catch (err) {
     console.warn("[cityview] scooters: roads.json failed", err);

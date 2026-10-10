@@ -520,7 +520,7 @@
       import { createTerraces } from "./terraces.js";
       import { createPropCollider } from "./props-collide.js";
       import { createPlayerMotion } from "./player-motion.js";
-      import { createHud } from "./hud.js";
+      import { createHud, perf } from "./hud.js";
       import { createPlayerCrash } from "./crash.js";
       import { createMinimap } from "./minimap.js";
       import { createStreetLocator } from "./street-locate.js";
@@ -963,6 +963,15 @@
       }
       /** Height of the walkable surface (road 0, pavement ~0.12 m) under x/z; 0 if nothing is hit. */
       function groundAt(x, z) {
+        // F3 profiling: calls/frame always, wall time only while the stats panel is open.
+        perf.count("groundAt");
+        if (!perf.on) return groundAtCore(x, z);
+        const t0 = performance.now();
+        const y = groundAtCore(x, z);
+        perf.add("groundAt", performance.now() - t0);
+        return y;
+      }
+      function groundAtCore(x, z) {
         const g = _heightGrid;
         if (!g) return groundAtRay(x, z);
         const fx = (x - g.ox) / g.cell;
@@ -1797,18 +1806,26 @@
         const rel = new THREE.Matrix4();
         const centre = new THREE.Vector3();
         const buckets = new Map();
+        // Why meshes were left alone — logged when nothing merges (e.g. Meshopt-quantised
+        // positions are Int16/Int8, not Float32, so every mesh is skipped).
+        const skipped = { notMesh: 0, special: 0, hasChildren: 0, noPosition: 0, nonFloat32: 0, interleaved: 0, huge: 0 };
+        let meshCount = 0;
         root.traverse((obj) => {
-          if (!obj.isMesh || obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return;
-          if (obj.children.length) return; // would orphan child nodes
+          if (!obj.isMesh) return;
+          meshCount++;
+          if (obj.isSkinnedMesh || obj.isInstancedMesh || Array.isArray(obj.material)) return void skipped.special++;
+          if (obj.children.length) return void skipped.hasChildren++; // would orphan child nodes
           const g = obj.geometry;
           const pos = g && g.attributes.position;
-          if (!pos || !(pos.array instanceof Float32Array) || pos.isInterleavedBufferAttribute) return;
+          if (!pos) return void skipped.noPosition++;
+          if (pos.isInterleavedBufferAttribute) return void skipped.interleaved++;
+          if (!(pos.array instanceof Float32Array)) return void skipped.nonFloat32++;
           if (!g.boundingBox) g.computeBoundingBox();
           rel.multiplyMatrices(inv, obj.matrixWorld);
           g.boundingBox.getCenter(centre).applyMatrix4(rel);
           // Huge meshes (ground, long roads) stay as-is: merging them would bloat tile bounds.
           const ext = g.boundingBox.getSize(_clampTmp);
-          if (Math.max(ext.x, ext.z) > tile * 1.5) return;
+          if (Math.max(ext.x, ext.z) > tile * 1.5) return void skipped.huge++;
           const sig = Object.keys(g.attributes).sort().join(",") + (g.index ? "|i" : "|n");
           const key = `${obj.material.uuid}|${sig}|${Math.floor(centre.x / tile)}|${Math.floor(centre.z / tile)}`;
           let b = buckets.get(key);
@@ -1827,7 +1844,11 @@
           });
           const merged = mergeGeometries(geoms, false);
           for (const g of geoms) g.dispose();
-          if (!merged) continue; // incompatible attributes: leave the originals alone
+          if (!merged) {
+            // incompatible attributes: leave the originals alone
+            skipped.mergeFailed = (skipped.mergeFailed || 0) + b.meshes.length;
+            continue;
+          }
           merged.computeBoundingSphere();
           const mesh = new THREE.Mesh(merged, b.material);
           mesh.name = `merged_${b.meshes[0].name || "mesh"}`;
@@ -1844,7 +1865,7 @@
           before += b.meshes.length;
           after++;
         }
-        return { before, after };
+        return { before, after, meshCount, skipped };
       }
 
       // Pre-compile every shader variant (day, and night with the pooled lamp lights) while
@@ -1953,7 +1974,19 @@
           await nextFrame();
           if (new URLSearchParams(location.search).get("merge") !== "0") {
             const m = mergeStaticMeshes(cityRoot);
-            console.info(`[cityview] merged ${m.before} meshes into ${m.after} tile batches`);
+            if (m.before === 0 && m.after === 0) {
+              const why = Object.entries(m.skipped)
+                .filter(([k, n]) => n > 0 && k !== "notMesh")
+                .map(([k, n]) => `${k}=${n}`)
+                .join(", ");
+              console.info(
+                `[cityview] merged 0 meshes into 0 tile batches — nothing was merged (${m.meshCount} meshes seen; ` +
+                  `skipped: ${why || "none eligible (every bucket had a single mesh)"}). ` +
+                  "Meshopt/quantised geometry (non-Float32 positions) skips all merges; draw calls stay high.",
+              );
+            } else {
+              console.info(`[cityview] merged ${m.before} meshes into ${m.after} tile batches`);
+            }
           }
           // Static after the merge: skip per-frame matrix traversal of the (now small) tree.
           cityRoot.updateMatrixWorld(true); // bake world matrices of the merged tiles once
@@ -2047,6 +2080,8 @@
           props = await createPropCollider();
           if (pedestrians && outdoors.ready && pedestrians.setBlocker) {
             pedestrians.setBlocker((x, z) => outdoors.insideBuilding(x, z));
+            // Alley backstop: strip indoor stretches out of the walk routes, re-seat walkers.
+            if (pedestrians.filterRoutes) pedestrians.filterRoutes((x, z) => outdoors.insideBuilding(x, z));
           }
           if (outdoors.ready) {
             clampWalkerXZ(walkControls.getObject().position);
@@ -2357,9 +2392,25 @@
         advanceClock(dt);
         updateLampLights(dt, walker);
         if (stars.visible) stars.position.copy(camera.position);
+        // Camera XZ lets far vehicles skip hard-hit / ped scans (walker can be a distant avatar).
+        if (traffic.setCamera) traffic.setCamera(camera.position.x, camera.position.z);
+        if (transit.setCamera) transit.setCamera(camera.position.x, camera.position.z);
+        const _pt = perf.on;
+        let _t0 = _pt ? performance.now() : 0;
         traffic.update(simDt, walker);
+        if (_pt) {
+          const n = performance.now();
+          perf.add("traffic.update", n - _t0);
+          _t0 = n;
+        }
         transit.update(simDt, walker);
+        if (_pt) {
+          const n = performance.now();
+          perf.add("transit.update", n - _t0);
+          _t0 = n;
+        }
         if (pedestrians) pedestrians.update(simDt);
+        if (_pt) perf.add("pedestrians.update", performance.now() - _t0);
         if (cash) {
           const me = walkControls.getObject().position;
           const got = cash.update(dt, mode === "walk" && !riding ? me.x : Infinity, me.z);
@@ -2404,7 +2455,10 @@
               _riderObstacles.push({ x: p.x, z: p.z, r: (p.r || 0.35) + 0.2 });
             }
           }
-          micromobility.update(simDt, _riderObstacles, walker.position);
+          const _tm = perf.on ? performance.now() : 0;
+          if (micromobility.setCamera) micromobility.setCamera(camera.position.x, camera.position.z);
+          micromobility.update(simDt, _riderObstacles);
+          if (_tm) perf.add("micromobility.update", performance.now() - _tm);
           // A rider (or sliding wreck) that clips a pedestrian knocks them down.
           if (pedestrians && pedestrians.hitTest) {
             for (const v of micromobility.vehicles || []) {
@@ -2518,7 +2572,9 @@
           // Radar/minimap at ~12 Hz — full canvas redraw every frame was pure CPU waste.
           if ((minimap._drawClock = (minimap._drawClock || 0) - rawDt) <= 0) {
             minimap._drawClock = 0.08;
+            const _tmap = perf.on ? performance.now() : 0;
             minimap.draw(ppos, traffic, transit, pedestrians, mode, micromobility, velo);
+            if (_tmap) perf.add("minimap.draw", performance.now() - _tmap);
           }
         }
 
@@ -2557,7 +2613,9 @@
           },
         });
 
+        const _tr = perf.on ? performance.now() : 0;
         renderer.render(scene, camera);
+        if (_tr) perf.add("renderer.render", performance.now() - _tr);
       }
       tick();
     </script>

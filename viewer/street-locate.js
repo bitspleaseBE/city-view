@@ -3,6 +3,8 @@
  * roads.json points are Blender XY; Three.js uses z = -y.
  */
 
+import { fetchJsonCached } from "./json-cache.js";
+
 const SIDEWALK_M = 7;
 const HOLD_FRAMES = 4;
 const MIN_ANNOUNCE_MS = 400;
@@ -30,7 +32,7 @@ export async function createStreetLocator(opts = {}) {
   const named = [];
 
   try {
-    const res = await fetch(roadsUrl);
+    const res = await fetchJsonCached(roadsUrl);
     if (res.ok) {
       const data = await res.json();
       for (const road of data.roads || []) {
