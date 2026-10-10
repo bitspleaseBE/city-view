@@ -2302,11 +2302,16 @@
             for (const v of micromobility.vehicles || []) {
               if (!v?.pos) continue;
               const spd = v.crash ? Math.hypot(v.crash.vx, v.crash.vz) : v.cur;
-              if (spd < 2.2) continue;
               const dx = v.pos.x - px;
               const dz = v.pos.z - pz;
-              if (dx * dx + dz * dz < 0.65 * 0.65) {
+              const d2 = dx * dx + dz * dz;
+              // Fast clip knocks you; a tipped bike at rest is still a trip hazard.
+              if (spd >= 2.2 && d2 < 0.65 * 0.65) {
                 hitByVehicle(spd);
+                break;
+              }
+              if (v.crash && spd < 2.2 && d2 < 0.55 * 0.55) {
+                hitByVehicle(Math.max(2.5, spd + 1.5));
                 break;
               }
             }
