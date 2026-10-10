@@ -1326,8 +1326,8 @@
 
       // Cars are walk-up only for now: E refuses, driving gets unlocked later.
       const CAR_REACH = 1.7; // metres outside the car's footprint
-      const DRIVE_PROMPT = "Press E to drive";
-      const NO_LICENCE = "Yo bro, you don't have a drivers license. Don't do that.";
+      const DRIVE_PROMPT = "E · rijden";
+      const NO_LICENCE = "Yo bro, je hebt geen rijbewijs. Doe dat niet.";
       const parkedFootprints = [];
 
       function indexParkedCars() {
@@ -2127,7 +2127,7 @@
         if (cash) {
           const me = walkControls.getObject().position;
           const got = cash.update(dt, mode === "walk" && !riding ? me.x : Infinity, me.z);
-          if (got) hud.earn(got, "Picked up cash");
+          if (got) hud.earn(got, "Cash opgeraapt");
         }
         if (micromobility) {
           _riderObstacles[0].x = walker.position.x;
