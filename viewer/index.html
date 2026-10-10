@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="nl">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>City View — Klein Antwerpen · Halte Gounod</title>
+    <title>City View — Klein Antwerpen · Velo Harmonie</title>
     <style>
       :root {
         --ink: #1a2430;
@@ -370,10 +370,10 @@
         <rect x="0" y="152" width="1200" height="8" fill="#c4b59a" />
       </svg>
       <div class="ld-card">
-        <p class="ld-kicker">Harmonie · De Lijn halte Gounod</p>
-        <h2>Antwerpen laadt<span class="ld-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></h2>
+        <p class="ld-kicker">Klein Antwerpen · Velo Harmonie</p>
+        <h2>Antwerp is loading<span class="ld-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></h2>
         <div class="ld-track"><div class="ld-fill" id="ld-fill"></div></div>
-        <p class="ld-sub"><span id="ld-stage">Straten ophalen</span><span id="ld-pct"></span></p>
+        <p class="ld-sub"><span id="ld-stage">Fetching the streets</span><span id="ld-pct"></span></p>
       </div>
     </div>
     <script>
@@ -433,7 +433,7 @@
             finishing = true;
             target = 1;
             ceil = 1;
-            stage.textContent = "Klaar";
+            stage.textContent = "Ready";
           },
           fail(msg) {
             finishing = true;
@@ -461,7 +461,7 @@
             // ~36 MB Meshopt city; asymptotic fallback when Content-Length is missing/wrong.
             // Download is only ~42% of the bar — parse / traffic / people take the rest of the wait.
             const f = total && got <= total ? got / total : 1 - Math.exp(-got / 36e6);
-            window.__loading.set(f * 0.42, "Straten ophalen");
+            window.__loading.set(f * 0.42, "Fetching the streets");
           }
           const buf = new Uint8Array(got);
           let off = 0;
@@ -474,23 +474,23 @@
         window.__glbPromise.catch(() => {}); // surfaced by the viewer module
       })();
     </script>
-    <div id="hint">Lopen: klik + WASD · Shift rennen · Spatie spring · E Velo / step / tram · V kaart · N dag/nacht</div>
+    <div id="hint">Walk: click + WASD · Shift sprint · Space jump · E Velo / scooter / tram · V free · N day/night</div>
     <div id="modes">
-      <button type="button" id="btn-walk" class="active">Lopen</button>
-      <button type="button" id="btn-free">Kaart</button>
-      <button type="button" id="btn-night" aria-pressed="false">Nacht</button>
+      <button type="button" id="btn-walk" class="active">Walk</button>
+      <button type="button" id="btn-free">Free view</button>
+      <button type="button" id="btn-night" aria-pressed="false">Night</button>
     </div>
-    <div id="status">Zonnig Klein Antwerpen laden…</div>
+    <div id="status">Loading sunny Klein Antwerpen…</div>
     <div id="ride">
       <p class="line" id="ride-line">Tram</p>
-      <p class="next" id="ride-next">Volgende: —</p>
+      <p class="next" id="ride-next">Next: —</p>
     </div>
     <div id="prompt"></div>
     <div id="hud">
       <h1>Klein Antwerpen</h1>
-      <p>Mechelsesteenweg · tram lijn 4 en 7 · Velo · te voet</p>
+      <p>Velo Harmonie · grab a Velo or a scooter, hop on a tram, or just walk</p>
     </div>
-    <div id="click-cue">Klik om te spelen</div>
+    <div id="click-cue">Click to play</div>
     <div id="crosshair"></div>
     <script type="importmap">
       {
@@ -531,15 +531,15 @@
       const status = document.getElementById("status");
       const hint = document.getElementById("hint");
       const HINT = {
-        walk: "Lopen: klik + WASD · Shift rennen · Spatie spring · E Velo / step / tram · Esc · V kaart · N nacht · M radar",
-        walkShort: "Lopen: klik + WASD · E Velo / step / tram · Esc · V kaart · N nacht",
-        walkCue: "Lopen: klik + WASD · E Velo / step / tram · V kaart · N nacht · M radar",
-        walkLocked: "WASD · muis kijken · Spatie spring · E Velo / step / tram · Esc · V kaart · N nacht · M radar",
-        walkTouch: "Lopen: stick bewegen · sleep kijken · Ga interactie · Rennen / Spring",
-        map: "Kaart (bovenaanzicht): WASD pan · Shift snel · scroll zoom · klik minikaart teleporteren · V lopen · N nacht",
-        mapTouch: "Kaart: sleep pan · knijp zoom · tik minikaart om te teleporteren",
-        velo: "Fietsen — WASD · E afstappen / terugzetten aan een station",
-        tram: "Op lijn — E halt aanvragen · uitstappen volgende halte",
+        walk: "Walk: click + WASD · Shift sprint · Space jump · E Velo / scooter / tram · Esc · V free · N night · M radar",
+        walkShort: "Walk: click + WASD · E Velo / scooter / tram · Esc · V free · N night",
+        walkCue: "Walk: click + WASD · E Velo / scooter / tram · V free · N night · M radar",
+        walkLocked: "WASD · mouse look · Space jump · E Velo / scooter / tram · Esc · V free · N night · M radar",
+        walkTouch: "Walk: stick move · drag look · Go interact · Sprint / Jump",
+        map: "Free view (top-down): WASD pan · Shift fast · scroll zoom · click radar to teleport · V walk · N night",
+        mapTouch: "Map view: drag pan · pinch zoom · tap radar to teleport",
+        velo: "Cycling — WASD · E hop off / return at a station",
+        tram: "Riding — E request stop · get off at next halt",
       };
       const btnWalk = document.getElementById("btn-walk");
       const btnFree = document.getElementById("btn-free");
@@ -835,7 +835,7 @@
 
         const isNight = t > 0.5;
         document.body.classList.toggle("night", isNight);
-        btnNight.textContent = isNight ? "Dag" : "Nacht";
+        btnNight.textContent = isNight ? "Day" : "Night";
         btnNight.setAttribute("aria-pressed", String(isNight));
         btnNight.classList.toggle("active", isNight);
         touch?.setNightLabel(isNight);
@@ -931,7 +931,7 @@
       if (TOUCH) {
         document.body.classList.add("touch-device");
         const cue = document.getElementById("click-cue");
-        if (cue) cue.textContent = "Tik om te spelen";
+        if (cue) cue.textContent = "Tap to play";
       }
       let touch = null;
       // Jump physics
@@ -1116,7 +1116,7 @@
         const yaw = playerMotion.yaw();
         if (scooters && scooters.isRiding()) {
           const res = scooters.crash({ x: w.position.x, z: w.position.z, yaw, speed });
-          if (res) hud.spend(res.cost, `${res.brand}-rit`);
+          if (res) hud.spend(res.cost, `${res.brand} ride`);
         }
         if (velo && velo.isRiding && velo.isRiding()) {
           velo.tryInteract({ x: w.position.x, z: w.position.z });
@@ -1128,16 +1128,16 @@
         keys.space = false;
         const kmh = Math.round(speed * 3.6);
         if (playerCrash.dead) {
-          hud.notify(label || `Dodelijke klap bij ${kmh} km/u`, 6000);
+          hud.notify(label || `Fatal impact at ${kmh} km/h`, 6000);
         } else {
           hud.notify(
-            (label || `Gevallen bij ${kmh} km/u`) + ` · −${dmg} gezondheid`,
+            (label || `Crashed at ${kmh} km/h`) + ` · −${dmg} health`,
             5000,
           );
         }
       }
       function crashScooter(speed) {
-        crashRide(speed, `Van de step gevallen bij ${Math.round(speed * 3.6)} km/u`);
+        crashRide(speed, `You came off the scooter at ${Math.round(speed * 3.6)} km/h`);
       }
       /** Car / tram / bus that could not stop in time. */
       function hitByVehicle(speed) {
@@ -1146,10 +1146,10 @@
         if (playerCrash.active || playerCrash.dead) return;
         if (transit.isRiding && transit.isRiding()) return;
         _lastVehicleHitMs = now;
-        crashRide(Math.max(speed, 3.5), `Aangereden bij ${Math.round(speed * 3.6)} km/u`);
+        crashRide(Math.max(speed, 3.5), `Hit by a vehicle at ${Math.round(speed * 3.6)} km/h`);
       }
       playerCrash.setOnDeath(() => {
-        hud.notify("Je bent dood · opnieuw beginnen…", 4500);
+        hud.notify("You died · restarting…", 4500);
         setTimeout(() => {
           if (!playerCrash.dead) return;
           const w = walkControls.getObject();
@@ -1159,7 +1159,7 @@
           playerCrash.respawn(w.position, yaw);
           playerMotion.stop();
           hud.setHealth(100);
-          hud.notify("Opnieuw op de been", 2800);
+          hud.notify("Back on your feet", 2800);
         }, 2800);
       });
       // Simple humanoid capsule so Free view can frame the walker.
@@ -1289,7 +1289,7 @@
           {
             const p = walkControls.getObject().position;
             const street = streetLocator?.locate?.(p.x, p.z);
-            status.textContent = street ? `Lopen — ${street}` : "Lopen";
+            status.textContent = street ? `Walking — ${street}` : "Walking";
           }
           touch?.setModeLabel("walk");
         } else {
@@ -1313,7 +1313,7 @@
           {
             const street = streetLocator?.locate?.(freeCam.x, freeCam.z) || "";
             kaartStreetLast = street;
-            status.textContent = street ? `Kaart — ${street}` : "Kaart";
+            status.textContent = street ? `Free view — ${street}` : "Free view";
           }
           touch?.setModeLabel("free");
         }
@@ -1328,7 +1328,7 @@
         hint.textContent = HINT.walkShort;
         {
           const street = streetLocator?.locate?.(drop.x, drop.z);
-          status.textContent = street ? `Terug op straat — ${street}` : "Terug op straat";
+          status.textContent = street ? `Back on the street — ${street}` : "Back on the street";
         }
         if (mode === "walk" && !walkControls.isLocked) {
           // Keep unlocked until click — pointer lock after ride is flaky mid-frame.
@@ -1341,15 +1341,15 @@
         const result = scooters.tryInteract({ x: p.x, z: p.z, yaw: playerMotion.yaw() });
         if (result.action === "take") {
           rideEl.style.display = "block";
-          rideLine.textContent = `${result.brand}-step`;
-          rideNext.textContent = `${result.battery}% batterij`;
+          rideLine.textContent = `${result.brand} e-scooter`;
+          rideNext.textContent = `${result.battery}% battery`;
           promptEl.style.display = "none";
-          status.textContent = `${result.brand}-step ontgrendeld`;
+          status.textContent = `Unlocked a ${result.brand} scooter`;
         } else if (result.action === "park") {
           rideEl.style.display = "none";
-          hud.spend(result.cost, `${result.brand}-rit`);
+          hud.spend(result.cost, `${result.brand} ride`);
         } else if (result.action === "empty") {
-          status.textContent = "Batterij van die step is leeg";
+          status.textContent = "That scooter's battery is empty";
         }
         return result.action !== "none";
       }
@@ -1375,8 +1375,8 @@
             hint.textContent = HINT.velo;
             status.textContent =
               result.capacity === "—"
-                ? `Op een Velo · ${result.name}`
-                : `Op een Velo · ${result.bikes}/${result.capacity} vrij aan ${result.name}`;
+                ? `On a Velo · ${result.name}`
+                : `On a Velo · ${result.bikes}/${result.capacity} left at ${result.name}`;
             return;
           }
           if (result.action === "return") {
@@ -1384,7 +1384,7 @@
             rideEl.style.display = "none";
             promptEl.style.display = "none";
             hint.textContent = HINT.walkShort;
-            status.textContent = `Velo teruggezet aan ${result.name}`;
+            status.textContent = `Returned Velo at ${result.name}`;
             return;
           }
           if (result.action === "dismount") {
@@ -1392,11 +1392,11 @@
             rideEl.style.display = "none";
             promptEl.style.display = "none";
             hint.textContent = HINT.walkShort;
-            status.textContent = "Afgestapt — E neemt de geparkeerde fiets weer";
+            status.textContent = "Hopped off — E remounts the parked bike";
             return;
           }
           if (result.action === "empty") {
-            status.textContent = "Geen fietsen meer hier";
+            status.textContent = "No bikes left here";
             return;
           }
           if (onVelo) return;
@@ -1413,14 +1413,14 @@
           avatar.visible = false;
           rideEl.style.display = "block";
           rideLine.textContent = `${result.mode === "bus" ? "Bus" : "Tram"} ${result.line}`;
-          rideNext.textContent = `Volgende halte: ${result.nextHalt}`;
+          rideNext.textContent = `Next halt: ${result.nextHalt}`;
           promptEl.style.display = "none";
           hint.textContent = HINT.tram;
-          status.textContent = `Aan boord · volgende ${result.nextHalt}`;
+          status.textContent = `On board · next ${result.nextHalt}`;
         } else if (result.action === "request_alight") {
-          rideNext.textContent = `Uitstappen: ${result.nextHalt}`;
-          hint.textContent = `Halt aangevraagd — uitstappen aan ${result.nextHalt}`;
-          status.textContent = `Uitstappen aan ${result.nextHalt}`;
+          rideNext.textContent = `Getting off at: ${result.nextHalt}`;
+          hint.textContent = `Stop requested — leave at ${result.nextHalt}`;
+          status.textContent = `Alighting at ${result.nextHalt}`;
         } else if (result.action === "alight") {
           applyAlightDrop(result.drop);
         }
@@ -1428,8 +1428,8 @@
 
       // Cars are walk-up only for now: E refuses, driving gets unlocked later.
       const CAR_REACH = 1.7; // metres outside the car's footprint
-      const DRIVE_PROMPT = "E · rijden";
-      const NO_LICENCE = "Yo bro, je hebt geen rijbewijs. Doe dat niet.";
+      const DRIVE_PROMPT = "Press E to drive";
+      const NO_LICENCE = "Yo bro, you don't have a drivers license. Don't do that.";
       const parkedFootprints = [];
 
       function indexParkedCars() {
@@ -1519,13 +1519,13 @@
           rideEl.style.display = "block";
           rideLine.textContent = `${hud.mode === "bus" ? "Bus" : "Tram"} ${hud.line}`;
           if (hud.wantAlight) {
-            rideNext.textContent = `Uitstappen: ${hud.nextHalt}`;
+            rideNext.textContent = `Getting off at: ${hud.nextHalt}`;
           } else if (hud.dwelling && hud.currentHalt) {
             rideNext.textContent = touch
-              ? `Halte ${hud.currentHalt} · volgende ${hud.nextHalt} · tik Ga om uit te stappen`
-              : `Halte ${hud.currentHalt} · volgende ${hud.nextHalt} · E om uit te stappen`;
+              ? `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · tap Go to leave`
+              : `Stopped: ${hud.currentHalt} · next ${hud.nextHalt} · E to leave`;
           } else {
-            rideNext.textContent = `Volgende halte: ${hud.nextHalt}`;
+            rideNext.textContent = `Next halt: ${hud.nextHalt}`;
           }
           promptEl.style.display = "none";
         } else {
@@ -1535,7 +1535,7 @@
             showPrompt(veloPrompt);
           } else if (
             hud.prompt &&
-            (hud.prompt.startsWith("Press E") || hud.prompt.startsWith("E ·") || hud.prompt.startsWith("E om"))
+            (hud.prompt.startsWith("Press E") || hud.prompt.startsWith("E ·"))
           ) {
             rideEl.style.display = "none";
             showPrompt(hud.prompt);
@@ -1575,7 +1575,7 @@
         if (!minimap) return;
         minimap._visible = !(minimap._visible ?? true);
         minimap.setVisible(minimap._visible);
-        hud.notify(minimap._visible ? "Radar aan" : "Radar uit", 1800);
+        hud.notify(minimap._visible ? "Radar on" : "Radar off", 1800);
       }
 
       let helpShown = false;
@@ -1592,7 +1592,7 @@
           onToggleNight: () => {
             const toNight = todFromHour(gameHour) < 0.5;
             toggleTimeOfDay();
-            hud.notify(toNight ? "Doorspoelen naar nacht…" : "Doorspoelen naar ochtend…", 2500);
+            hud.notify(toNight ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
           },
           onToggleHelp: () => hud.toggleHelp(),
           onToggleMap: () => toggleRadar(),
@@ -1651,7 +1651,7 @@
         if (e.code === "KeyN") {
           const toNight = todFromHour(gameHour) < 0.5;
           toggleTimeOfDay();
-          hud.notify(toNight ? "Doorspoelen naar nacht…" : "Doorspoelen naar ochtend…", 2500);
+          hud.notify(toNight ? "Fast-forwarding to night…" : "Fast-forwarding to morning…", 2500);
           return;
         }
         if (e.code === "KeyH") {
@@ -1891,7 +1891,7 @@
           paintParkedCars(cityRoot);
           parkedCars = wireParkedCarLamps(cityRoot, THREE);
           cityRoot.updateMatrixWorld(true);
-          setLoad(0.55, "Straten opbouwen");
+          setLoad(0.55, "Building the streets");
           await nextFrame();
           if (new URLSearchParams(location.search).get("merge") !== "0") {
             const m = mergeStaticMeshes(cityRoot);
@@ -1906,14 +1906,14 @@
           if (spawnNode) applySpawnFromNode(spawnNode);
           else if (spawnJson) applySpawnJson(spawnJson);
           setMode("walk");
-          setLoad(0.62, "Verkeer starten");
+          setLoad(0.62, "Starting traffic");
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
-          setLoad(0.68, "Trams en bussen starten");
+          setLoad(0.68, "Starting trams and buses");
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
           // ---- Pedestrians (humanoids walking on sidewalks) ----
-          setLoad(0.74, "Mensen buiten brengen");
-          const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Mensen buiten brengen"));
+          setLoad(0.74, "Bringing people outside");
+          const stopCharProgress = onCharacterProgress((f) => setLoad(0.74 + 0.12 * f, "Bringing people outside"));
           pedestrians = await createPedestrians(scene, THREE, {
             count: 40,
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
@@ -1932,14 +1932,14 @@
           if (pedestrians.setCrossingGate && traffic.pedMayCross) {
             pedestrians.setCrossingGate((id) => traffic.pedMayCross(id));
           }
-          setLoad(0.88, "Fietsen en steps");
+          setLoad(0.88, "Bikes and scooters");
           micromobility = await createMicromobility(scene, THREE, { count: 28 });
           velo = await createVelo(scene, THREE);
           scooters = await createScooters(scene, THREE, {
             spawnCenter: { x: spawnPos.x, z: spawnPos.z },
             groundAt,
           });
-          setLoad(0.92, "Winkels openen");
+          setLoad(0.92, "Opening the shops");
           shops = await createShops(scene, THREE, { groundAt, anisotropy: renderer.capabilities.getMaxAnisotropy() });
           if (shops) {
             shops.update(gameHour, gameDay);
@@ -2035,20 +2035,20 @@
           const nMicro = micromobility?.count ?? 0;
           const nVelo = velo?.count ?? 0;
           const bits = [];
-          if (nCars > 0) bits.push(`${nCars} auto's`);
-          if (nTransit > 0) bits.push(`${nTransit} trams/bussen`);
-          if (nPeds > 0) bits.push(`${nPeds} mensen`);
-          if (nMicro > 0) bits.push(`${nMicro} fietsen/steps`);
-          if (nVelo > 0) bits.push(`${nVelo} Velo-stations`);
+          if (nCars > 0) bits.push(`${nCars} cars`);
+          if (nTransit > 0) bits.push(`${nTransit} trams/buses`);
+          if (nPeds > 0) bits.push(`${nPeds} people`);
+          if (nMicro > 0) bits.push(`${nMicro} bikes/scooters`);
+          if (nVelo > 0) bits.push(`${nVelo} Velo stations`);
           status.textContent =
             bits.length > 0
-              ? `${tod > 0.5 ? "Nacht" : "Zonnige dag"} — ${bits.join(" · ")} · ${TOUCH ? "tik Ga voor Velo / step / tram" : "E Velo / step / tram"}`
+              ? `${tod > 0.5 ? "Night" : "Sunny day"} — ${bits.join(" · ")} · ${TOUCH ? "tap Go for Velo / scooter / tram" : "E Velo / scooter / tram"}`
               : TOUCH
-                ? "Zonnige dag — tik om te lopen"
-                : "Zonnige dag — klik om te lopen";
+                ? "Sunny day — tap to walk"
+                : "Sunny day — click to walk";
           setupDistrictBounds(cityRoot);
           applyTimeOfDay(tod);
-          setLoad(0.96, "Lichten opwarmen");
+          setLoad(0.96, "Warming up the lights");
           await nextFrame();
           await warmUpRenderer();
           if (touch) {
@@ -2057,12 +2057,12 @@
             const helpEl = document.getElementById("hud-help");
             if (helpEl) {
               helpEl.innerHTML = [
-                "Linker stick — lopen · sturen op step/fiets",
-                "Sleep over het scherm — kijken",
-                "<kbd>Ga</kbd>step · tram · bus · Velo",
-                "<kbd>Rennen</kbd> · <kbd>Spring</kbd>springen",
-                "<kbd>Kaart</kbd>bovenaanzicht · <kbd>Radar</kbd>minimap",
-                "<kbd>Nacht</kbd>dag/nacht · <kbd>Hulp</kbd>dit overzicht",
+                "Left stick — walk · steer when riding",
+                "Drag screen — look around",
+                "<kbd>Go</kbd>scooter · tram · bus · Velo",
+                "<kbd>Sprint</kbd>jog · <kbd>Jump</kbd>jump",
+                "<kbd>Map</kbd>top-down · <kbd>Radar</kbd>minimap",
+                "<kbd>Night</kbd>day/night · <kbd>Help</kbd>this card",
               ].join("<br>");
             }
           }
@@ -2074,18 +2074,18 @@
 
       (async () => {
         try {
-          setLoad(0, "Straten ophalen");
+          setLoad(0, "Fetching the streets");
           const buf = await window.__glbPromise;
           // Not earlier: during the city download the characters would only steal its bandwidth.
           preloadCharacters();
-          setLoad(0.48, "Straten uitpakken");
+          setLoad(0.48, "Unpacking the streets");
           await nextFrame();
           await MeshoptDecoder.ready;
           const gltf = await loader.parseAsync(buf, "./");
           await onCityLoaded(gltf);
         } catch (err) {
-          status.textContent = "GLB ontbreekt — CI/build nog bezig";
-          window.__loading && window.__loading.fail("Antwerpen laden mislukt — controleer je verbinding en herlaad");
+          status.textContent = "Missing GLB — CI/build pending";
+          window.__loading && window.__loading.fail("Couldn’t load Antwerp — check your connection and reload");
           console.error(err);
         }
       })();
@@ -2233,8 +2233,8 @@
               crashRide(
                 rideSpeed,
                 onScooter
-                  ? `Van de step gevallen bij ${Math.round(rideSpeed * 3.6)} km/u`
-                  : `Van de Velo gevallen bij ${Math.round(rideSpeed * 3.6)} km/u`,
+                  ? `You came off the scooter at ${Math.round(rideSpeed * 3.6)} km/h`
+                  : `You came off the Velo at ${Math.round(rideSpeed * 3.6)} km/h`,
               );
             }
           }
@@ -2271,7 +2271,7 @@
             const street = streetLocator?.locate?.(freeCam.x, freeCam.z) || "";
             if (street !== kaartStreetLast) {
               kaartStreetLast = street;
-              status.textContent = street ? `Kaart — ${street}` : "Kaart";
+              status.textContent = street ? `Free view — ${street}` : "Free view";
             }
           }
         }
@@ -2287,7 +2287,7 @@
         if (cash) {
           const me = walkControls.getObject().position;
           const got = cash.update(dt, mode === "walk" && !riding ? me.x : Infinity, me.z);
-          if (got) hud.earn(got, "Geld opgeraapt");
+          if (got) hud.earn(got, "Picked up cash");
         }
         if (micromobility) {
           _riderObstacles.length = 0;
@@ -2385,8 +2385,8 @@
               snapWalkSavedOutdoors();
               const street = streetLocator?.locate?.(walkSaved.x, walkSaved.z) || "";
               kaartStreetLast = street;
-              status.textContent = street ? `Kaart — ${street}` : "Kaart";
-              hud.notify(street ? `Hier neergezet · ${street}` : "Hier neergezet — V om te lopen", 2800);
+              status.textContent = street ? `Free view — ${street}` : "Free view";
+              hud.notify(street ? `Dropped here · ${street}` : "Dropped here — V to walk", 2800);
               if (street && minimap.showStreetName) minimap.showStreetName(street, "Harmonie", 3200);
             }
           }
@@ -2463,16 +2463,16 @@
           riding: sRide
             ? { speedKmh: kmh, battery: sRide.battery, sub: `${sRide.brand} · ${sRide.time} · €${sRide.cost.toFixed(2)}` }
             : vRide
-              ? { speedKmh: kmh, battery: null, sub: `Velo · ${vRide.name || "stadsfiets"}` }
+              ? { speedKmh: kmh, battery: null, sub: `Velo · ${vRide.name || "city bike"}` }
               : null,
           stats: () => {
             const p = walkControls.getObject().position;
             return {
-              positie: `${p.x.toFixed(1)}, ${p.z.toFixed(1)}`,
-              snelheid: `${(Math.abs(playerMotion.speed) * 3.6).toFixed(1)} km/u`,
-              resolutie: `${pixelRatio.toFixed(2)}x`,
-              draws: renderer.info.render.calls,
-              driehoeken: renderer.info.render.triangles,
+              pos: `${p.x.toFixed(1)}, ${p.z.toFixed(1)}`,
+              speed: `${(Math.abs(playerMotion.speed) * 3.6).toFixed(1)} km/h`,
+              res: `${pixelRatio.toFixed(2)}x`,
+              calls: renderer.info.render.calls,
+              tris: renderer.info.render.triangles,
             };
           },
         });

@@ -43,7 +43,7 @@ const CSS = `
 #hud-stats.on { display: block; }
 `;
 
-const DAYS = ["zondag", "maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag"];
+const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function createHud(opts = {}) {
   const style = document.createElement("style");
@@ -65,20 +65,20 @@ export function createHud(opts = {}) {
   const healthFill = el("i", "", "", healthBar);
   const feed = el("div", "hud-feed");
   const speed = el("div", "hud-speed", "hud-font");
-  speed.innerHTML = '<span class="v">0</span><span class="u">KM/U</span><div class="bar"><i></i></div><div class="sub"></div>';
+  speed.innerHTML = '<span class="v">0</span><span class="u">KM/H</span><div class="bar"><i></i></div><div class="sub"></div>';
   const speedV = speed.querySelector(".v");
   const speedBar = speed.querySelector(".bar");
   const speedFill = speed.querySelector(".bar i");
   const speedSub = speed.querySelector(".sub");
   const help = el("div", "hud-help");
   help.innerHTML = [
-    "<kbd>W A S D</kbd>lopen · sturen op step/fiets",
-    "<kbd>Shift</kbd>rennen · <kbd>Spatie</kbd>springen",
-    "<kbd>E</kbd>step · tram · bus · Velo",
-    "<kbd>N</kbd>naar avond / ochtend",
-    "<kbd>V</kbd>kaart · <kbd>M</kbd>radar",
-    "<kbd>Esc</kbd>muis loslaten",
-    "<kbd>H</kbd>dit overzicht · <kbd>F3</kbd>tech",
+    "<kbd>W A S D</kbd>walk · steer when riding",
+    "<kbd>Shift</kbd>jog · <kbd>Space</kbd>jump",
+    "<kbd>E</kbd>scooter · tram · bus · Velo",
+    "<kbd>N</kbd>fast-forward to night / day",
+    "<kbd>V</kbd>map view · <kbd>M</kbd>radar",
+    "<kbd>Esc</kbd>release mouse",
+    "<kbd>H</kbd>this card · <kbd>F3</kbd>stats",
   ].join("<br>");
   const stats = el("div", "hud-stats");
 
@@ -109,8 +109,8 @@ export function createHud(opts = {}) {
       const t = statusEl.textContent.trim();
       if (!t || t === lastStatus) return;
       lastStatus = t;
-      if (/^(Walking|Lopen|Free view|Kaart|Loading|Laden)/.test(t)) return; // mode chatter, not news
-      if (/\d+ (cars|auto|people|mensen)/.test(t)) {
+      if (/^(Walking|Free view|Loading)/.test(t)) return; // mode chatter, not news
+      if (/\d+ cars|people/.test(t)) {
         census = t;
         return;
       }
