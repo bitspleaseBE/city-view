@@ -2138,7 +2138,7 @@
         if (cash) {
           const me = walkControls.getObject().position;
           const got = cash.update(dt, mode === "walk" && !riding ? me.x : Infinity, me.z);
-          if (got) hud.earn(got, "Cash opgeraapt");
+          if (got) hud.earn(got, "Geld opgeraapt");
         }
         if (micromobility) {
           _riderObstacles[0].x = walker.position.x;
