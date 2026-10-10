@@ -37,7 +37,8 @@ const FIRST_TRAM_DWELL_S = 30; // waiting tram at the spawn halt
 const MAX_STEP = 1 / 30; // s: the sim never integrates a bigger step (stable at any frame rate)
 const MAX_FRAME = 0.25; // s: longest wall-clock gap simulated in one frame (tab switch, hitch)
 const HARD_BRAKE = 3.0; // m/s^2 a tram / bus can shed speed when a car is right in front
-const PLAYER_PATIENCE_SEC = 6; // a pedestrian in the lane holds a tram / bus this long, then it creeps past
+const PLAYER_PATIENCE_SEC = 6; // a walker in the lane: buses may creep past after this; trams never do
+const PED_HIT_SPEED = 1.8; // m/s: overlap above this knocks a pedestrian down
 const CAR_EVICT_SEC = 3; // a car holding a tram / bus still this long is cleared
 const GATE_MARGIN = 24; // m inside the district edge where vehicles (re-)enter
 const GATE_CLEAR_M = 45; // m of free road required around a gate before a vehicle enters
@@ -1290,6 +1291,12 @@ export async function createTransit(scene, THREE, opts = {}) {
   let ride = null; // { vehicle, wantAlight }
   const rideCamPos = new THREE.Vector3();
   const rideLook = new THREE.Vector3();
+  /** `() => [{ x, z, r }]` upright pedestrians in the street. */
+  let pedProvider = null;
+  /** `(x, z, vx, vz, r) => void` when a tram/bus strikes a ped. */
+  let onHitPed = null;
+  /** `(speed, vx, vz) => void` when a tram/bus strikes the player. */
+  let onHitPlayer = null;
 
   function setVehicleLabel(v, path) {
     setLabel(THREE, v, path);
@@ -1411,6 +1418,8 @@ export async function createTransit(scene, THREE, opts = {}) {
     }
 
     const activeHalt = nextHaltAhead(v, path);
+    // Trams never ghost through blockers — only brake / accelerate on the rails.
+    if (v.mode === "tram") v.ghostUntil = 0;
     const ghosting = simTime < v.ghostUntil;
     let desire = v.speed;
     let limitedBy = "";
@@ -1518,15 +1527,55 @@ export async function createTransit(scene, THREE, opts = {}) {
           const gap = ahead - 1.5;
           desire = Math.min(desire, v.speed * Math.max(0, gap / PLAYER_STOP_DIST) ** 2);
           limitedBy = "player";
+          // Trams cannot swerve — if braking is not enough, the player is hit.
+          if (
+            onHitPlayer &&
+            v.velocity > PED_HIT_SPEED &&
+            ahead < (v.mode === "tram" ? 4.5 : 3.2) &&
+            side < 1.35
+          ) {
+            onHitPlayer(v.velocity, v.tan.x * v.velocity, v.tan.z * v.velocity);
+          }
         }
       }
     }
 
-    // A walker standing in the lane holds the vehicle for a moment (and everything queued behind
-    // it); after that it creeps past rather than blocking the line for as long as they stand there.
-    if (limitedBy === "player" && v.velocity < 0.3) {
+    // Pedestrians in the track / lane: brake. Trams stay on rails (no lateral dodge).
+    {
+      const peds = pedProvider ? pedProvider() : null;
+      if (peds && peds.length && !ghosting) {
+        const half = (BODY_LEN[v.mode] || BODY_LEN.bus) * 0.5;
+        const hw = v.mode === "tram" ? 1.35 : 1.3;
+        for (let p = 0; p < peds.length; p++) {
+          const ped = peds[p];
+          const dx = ped.x - v.pos.x;
+          const dz = ped.z - v.pos.z;
+          if (dx * dx + dz * dz > (PLAYER_STOP_DIST + half + 10) ** 2) continue;
+          const ahead = dx * v.tan.x + dz * v.tan.z;
+          const side = Math.abs(dx * v.tan.z + dz * -v.tan.x);
+          const pr = ped.r ?? 0.35;
+          if (ahead > 0.2 && ahead < half + PLAYER_STOP_DIST + 4 && side < hw + pr) {
+            const gap = ahead - half * 0.35 - pr;
+            desire = Math.min(desire, Math.sqrt(2 * COMFORT_BRAKE * Math.max(0, gap)));
+            limitedBy = "ped";
+            if (
+              onHitPed &&
+              v.velocity > PED_HIT_SPEED &&
+              ahead < half * 0.45 + pr + 0.5 &&
+              side < hw * 0.85 + pr
+            ) {
+              onHitPed(ped.x, ped.z, v.tan.x * v.velocity, v.tan.z * v.velocity, 1.1);
+            }
+          }
+        }
+      }
+    }
+
+    // Buses may creep past a stubborn walker after a short wait. Trams never leave the
+    // rails to ghost through people — they keep braking (and may still strike them).
+    if ((limitedBy === "player" || limitedBy === "ped") && v.velocity < 0.3) {
       v.playerT += dt;
-      if (v.playerT > PLAYER_PATIENCE_SEC) {
+      if (v.mode === "bus" && v.playerT > PLAYER_PATIENCE_SEC) {
         v.ghostUntil = simTime + GHOST_SEC;
         v.playerT = 0;
       }
@@ -1534,9 +1583,9 @@ export async function createTransit(scene, THREE, opts = {}) {
       v.playerT = Math.max(0, v.playerT - dt);
     }
 
-    // Recovery: a vehicle that is held for too long (leader jam, bad geometry)
-    // slides through at a crawl instead of sitting there for the rest of the session.
-    if (v.velocity < 0.3 && limitedBy !== "player") {
+    // Recovery: a bus held too long (leader jam, bad geometry) slides through at a crawl.
+    // Trams stay put — cars blocking them are evicted; people on the track get hit or wait.
+    if (v.mode !== "tram" && v.velocity < 0.3 && limitedBy !== "player" && limitedBy !== "ped") {
       v.stuckT += dt;
       const limit =
         limitedBy === "queue" || limitedBy === "car"
@@ -1548,11 +1597,14 @@ export async function createTransit(scene, THREE, opts = {}) {
         v.ghostUntil = simTime + GHOST_SEC;
         v.stuckT = 0;
       }
+    } else if (v.mode === "tram") {
+      v.stuckT = 0;
+      v.ghostUntil = 0;
     } else {
       v.stuckT = Math.max(0, v.stuckT - dt * 2);
     }
     v.wait = v.velocity < 0.3 && v.phase !== "dwell" ? limitedBy : "";
-    if (simTime < v.ghostUntil) desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
+    if (v.mode !== "tram" && simTime < v.ghostUntil) desire = Math.max(desire, Math.min(v.speed, GHOST_CREEP));
 
     const prevV = v.velocity;
     // Smooth accel / brake (approach uses stronger brake).
@@ -1888,10 +1940,23 @@ export async function createTransit(scene, THREE, opts = {}) {
     };
   }
 
+  function setPedestrians(provider) {
+    pedProvider = typeof provider === "function" ? provider : null;
+  }
+  function setOnHitPed(fn) {
+    onHitPed = typeof fn === "function" ? fn : null;
+  }
+  function setOnHitPlayer(fn) {
+    onHitPlayer = typeof fn === "function" ? fn : null;
+  }
+
   return {
     update,
     dispose,
     setNight,
+    setPedestrians,
+    setOnHitPed,
+    setOnHitPlayer,
     locateStop,
     vehicles,
     count: vehicles.length,

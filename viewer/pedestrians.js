@@ -711,6 +711,20 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     if (pool) for (const g of groups) releaseGroup(g);
   }
 
+  /** Upright people cars / buses / trams should brake for (reuses one array). */
+  const _roadPeople = [];
+  function roadPeople() {
+    _roadPeople.length = 0;
+    for (const g of groups) {
+      for (const m of g.members) {
+        if (m.down) continue;
+        const p = m.mesh.position;
+        _roadPeople.push({ x: p.x, z: p.z, r: 0.32 * (m.prof.scale || 1) });
+      }
+    }
+    return _roadPeople;
+  }
+
   return {
     update,
     dispose,
@@ -719,6 +733,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     people: pool,
     routes: walkRoutes,
     hitTest,
+    roadPeople,
     setBlocker(fn) {
       blocked = fn;
     },

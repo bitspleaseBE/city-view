@@ -516,10 +516,13 @@ export async function createMicromobility(scene, THREE, opts = {}) {
   /**
    * Keep riders apart: follow the one ahead in the same lane, swerve right for oncoming
    * riders sharing the lane, and brake for the walker / other obstacles on the bike lane.
+   * Oriented obstacles (trams / buses: `{ x, z, tx, tz, hl, hw, hard }`) are solid — riders
+   * brake and never try to overtake through them.
    */
   function targetSpeed(v, obstacles) {
     let gap = Infinity;
     let oncoming = false;
+    let hardBlock = false;
     const tx = v.tan.x;
     const tz = v.tan.z;
     const consider = (ox, oz, otx, otz, radius) => {
@@ -532,21 +535,43 @@ export async function createMicromobility(scene, THREE, opts = {}) {
       if (otx * tx + otz * tz < -0.3) oncoming = true;
       gap = Math.min(gap, along - radius);
     };
+    const considerBox = (ob) => {
+      const dx = ob.x - v.pos.x;
+      const dz = ob.z - v.pos.z;
+      const hl = ob.hl ?? 1;
+      const hw = ob.hw ?? 1;
+      const ahead = dx * tx + dz * tz;
+      if (ahead < -hl || ahead > LOOK_AHEAD + hl) return;
+      const lat = Math.abs(dx * tz - dz * tx);
+      if (lat > LANE_HALF + hw) return;
+      const otx = ob.tx || 0;
+      const otz = ob.tz || 0;
+      if (otx * tx + otz * tz < -0.3) oncoming = true;
+      gap = Math.min(gap, ahead - hl);
+      if (ob.hard) hardBlock = true;
+    };
     for (const o of vehicles) if (o !== v) consider(o.pos.x, o.pos.z, o.tan.x, o.tan.z, 0.5);
-    for (const ob of obstacles) consider(ob.x, ob.z, 0, 0, ob.r ?? 0.4);
-    // Held up for a while behind something that is not moving: pull out and pass on the left.
+    for (const ob of obstacles) {
+      if (ob.hl != null) considerBox(ob);
+      else consider(ob.x, ob.z, 0, 0, ob.r ?? 0.4);
+    }
+    // Held up for a while behind something that is not moving: pull out and pass on the left —
+    // never past a tram / bus (they fill the lane; "passing" would ride through them).
     v.stuck = gap < STOP_GAP + 1 && v.cur < 0.5 ? (v.stuck || 0) + dtSwerve : 0;
-    if (v.stuck > 2.5) {
+    if (!hardBlock && v.stuck > 2.5) {
       v.overtake = 3.5; // s spent out in the passing line
       v.stuck = 0;
     }
+    if (hardBlock) v.overtake = 0;
     if (v.overtake > 0) v.overtake -= dtSwerve;
-    const passing = v.overtake > 0 && !oncoming;
+    const passing = v.overtake > 0 && !oncoming && !hardBlock;
     const want = oncoming ? SWERVE : passing ? -OVERTAKE : 0;
     const k = Math.min(1, dtSwerve * 2.5);
     v.swerve += (want - v.swerve) * k;
     if (passing) return v.speed * 0.6;
     if (gap === Infinity) return v.speed;
+    // Hard stop in front of a tram / bus that already overlaps the bike's nose.
+    if (hardBlock && gap < STOP_GAP) return 0;
     return v.speed * Math.max(0, Math.min(1, (gap - STOP_GAP) / (LOOK_AHEAD - STOP_GAP)));
   }
   let dtSwerve = 0;
