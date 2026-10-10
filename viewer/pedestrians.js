@@ -392,6 +392,11 @@ export async function createPedestrians(scene, THREE, opts = {}) {
       setCrossingGate() {},
     };
   }
+  // Declared before placeMember / spawn: placeMember reads these during init.
+  let blocked = () => false;
+  let blockerOn = false;
+  let onKilled = () => {};
+
   for (let i = 0; i < COUNT; i++) {
     const g = spawnGroup(PROFILES, spawnPool, i);
     for (const m of g.members) root.add(m.mesh);
@@ -617,9 +622,6 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const _axis = new THREE.Vector3();
   const _qFall = new THREE.Quaternion();
   const _qYaw = new THREE.Quaternion();
-  let blocked = () => false;
-  let blockerOn = false;
-  let onKilled = () => {};
 
   /**
    * Something (the player's scooter) moving at vx/vz m/s sweeps a circle of radius `r` at x/z.
