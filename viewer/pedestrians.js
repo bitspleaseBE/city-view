@@ -39,6 +39,9 @@ export async function createPedestrians(scene, THREE, opts = {}) {
   const WALK_SPEED = 1.25; // m/s
   const BOBBLE_AMP = 0.02;
   const BOBBLE_FREQ = 9.0;
+  // Same raycast helper as scooters/shops: pavement ~0.12 m, road ~0.
+  const groundAt = typeof opts.groundAt === "function" ? opts.groundAt : () => 0;
+  const footY = (x, z, baseY = 0) => groundAt(x, z) + baseY;
 
   const walks = opts.walks || (await loadWalks());
   const walkRoutes = buildWalkRoutes(walks, SPAWN_CENTER);
@@ -399,7 +402,9 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     const nz = pos.tx;
     m.routeX = pos.x + nx * m.side;
     m.routeZ = pos.z + nz * m.side;
-    m.mesh.position.set(m.routeX + (m.offX || 0), baseY, m.routeZ + (m.offZ || 0));
+    const x = m.routeX + (m.offX || 0);
+    const z = m.routeZ + (m.offZ || 0);
+    m.mesh.position.set(x, footY(x, z, baseY), z);
     const aheadS = Math.min(routeLength(route), Math.max(0, m.s + m.dir * 0.6));
     const ahead = routePosition(route, aheadS);
     const dx = ahead.x - pos.x;
@@ -579,7 +584,10 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     _qYaw.setFromAxisAngle(UP, f.yaw);
     _qFall.setFromAxisAngle(f.axis, f.angle);
     m.mesh.quaternion.multiplyQuaternions(_qFall, _qYaw);
-    p.y = (m.mesh.userData.baseY || 0) + f.y + 0.13 * (m.prof.scale || 1) * Math.sin(f.angle);
+    p.y =
+      footY(p.x, p.z, m.mesh.userData.baseY || 0) +
+      f.y +
+      0.13 * (m.prof.scale || 1) * Math.sin(f.angle);
     if (up) {
       m.down = null;
       m.mesh.rotation.set(0, f.yaw, 0);
@@ -606,7 +614,7 @@ export async function createPedestrians(scene, THREE, opts = {}) {
     }
     mixer.update(dt);
     const p = m.mesh.position;
-    p.y = (m.mesh.userData.baseY || 0) + f.y;
+    p.y = footY(p.x, p.z, m.mesh.userData.baseY || 0) + f.y;
     if (f.scrambling && getUp.time >= getUp.getClip().duration - 1e-3) {
       m.down = null;
       m.recover = RECOVER_S;
@@ -657,7 +665,8 @@ export async function createPedestrians(scene, THREE, opts = {}) {
           placeMember(m);
           if (m.mesh.userData.mixer) {
             m.mesh.userData.mixer.update(dt);
-            m.mesh.position.y = m.mesh.userData.baseY || 0;
+            const baseY = m.mesh.userData.baseY || 0;
+            m.mesh.position.y = footY(m.mesh.position.x, m.mesh.position.z, baseY);
           }
           continue;
         }
@@ -677,13 +686,14 @@ export async function createPedestrians(scene, THREE, opts = {}) {
           m.mesh.position.z = m.routeZ + (m.offZ || 0);
         }
 
+        const baseY = m.mesh.userData.baseY || 0;
+        const gy = footY(m.mesh.position.x, m.mesh.position.z, baseY);
         if (m.mesh.userData.mixer) {
           m.mesh.userData.mixer.update(dt);
-          m.mesh.position.y = m.mesh.userData.baseY || 0;
+          m.mesh.position.y = gy;
         } else {
-          const baseY = m.mesh.userData.baseY || 0;
           m.phase += dt * m.speed * BOBBLE_FREQ;
-          m.mesh.position.y = baseY + BOBBLE_AMP * Math.abs(Math.sin(m.phase));
+          m.mesh.position.y = gy + BOBBLE_AMP * Math.abs(Math.sin(m.phase));
           const swingAmt = 0.2 * Math.sin(m.phase);
           for (let ci = 0; ci < m.mesh.children.length; ci++) {
             const child = m.mesh.children[ci];
