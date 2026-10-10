@@ -1195,7 +1195,11 @@
           walkControls.getObject().position.y = eyeHeight;
           clampWalkerXZ(walkControls.getObject().position);
           hint.textContent = TOUCH ? HINT.walkTouch : HINT.walk;
-          status.textContent = "Lopen — Halte Gounod";
+          {
+            const p = walkControls.getObject().position;
+            const street = streetLocator?.locate?.(p.x, p.z);
+            status.textContent = street ? `Lopen — ${street}` : "Lopen";
+          }
           touch?.setModeLabel("walk");
         } else {
           if (walkControls.isLocked) walkControls.unlock();
