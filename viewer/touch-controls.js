@@ -150,7 +150,7 @@ export function createTouchControls(opts) {
     </div>
     <div class="tc-actions">
       <div class="tc-row">
-        <button type="button" class="tc-btn tc-sprint wide" data-hold="shift">Sprint</button>
+        <button type="button" class="tc-btn tc-sprint wide" data-hold="shift">Rennen</button>
       </div>
       <div class="tc-row">
         <button type="button" class="tc-btn tc-jump" data-hold="space">Spring</button>
