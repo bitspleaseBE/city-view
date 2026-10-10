@@ -170,6 +170,8 @@ function buildPaths(roads, THREE) {
       cumulative.push(len);
     }
     if (len < 4) continue;
+    // Dual-carriageway link stubs (e.g. Mechelsesteenweg spur 4480699) are not real streets.
+    if ((kind === "residential" || kind === "living_street") && len < 35) continue;
     const laneOffset = Number.isFinite(road.laneOffset) ? road.laneOffset : LANE_OFFSET;
     const limitKmh = resolveSpeedKmh(road, kind);
     const dir = directionCode(road.oneway);
