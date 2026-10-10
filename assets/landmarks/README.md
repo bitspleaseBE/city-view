@@ -14,10 +14,11 @@ and attribution (reference photos and Inventaris Onroerend Erfgoed entries).
   budget (`TRI_BUDGET`). `params` entries ending in `_at` are `[lat, lon]` and
   reach the builder as local `<key>_xy`.
 - Those meshes, the Peter Benoit monument, and any entry with `"stream": true`
-  (Heilige Geestkerk) are exported as `viewer/landmarks/<osm-id>.glb`. The city
-  GLB keeps only a knee-high `lmhold_<id>` plinth. The viewer loads a GLB inside
-  220 m and drops it past 310 m; free view above 190 m camera height shows all
-  of them.
+  (Heilige Geestkerk) are exported as `viewer/landmarks/<osm-id>.glb` (same
+  folder Pages serves at `/metropolis/landmarks/`). The city GLB keeps the
+  ordinary building as `lmbase_<id>` until that GLB loads; point landmarks keep
+  a small `lmhold_<id>` pad. The viewer loads a GLB inside 300 m and drops it
+  past 420 m; free view above 190 m camera height shows all of them.
 - `"nodes"` places point landmarks (e.g. the Peter Benoit monument) from an
   OSM node.
 

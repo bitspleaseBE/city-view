@@ -2773,7 +2773,12 @@ def add_supermarket_fascia(
 FAR_FACADE_M = 360.0  # beyond this: photo elevations only, no chimneys / roof plant
 
 
-def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = None) -> None:
+def add_building(
+    bldg: dict,
+    mats: dict,
+    spawn_xy: tuple[float, float] | None = None,
+    standin: bool = False,
+) -> None:
     style_name = style_key_for(bldg)
     type_id = bldg.get("building_type") or bldg.get("style") or "eclectic"
     window_kind = None
@@ -2786,9 +2791,10 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     if len(ring) < 3:
         return
     bid = bldg.get("id", 0)
-    name = f"bldg_{bid}"
+    # Stand-ins stay in the city GLB under lmbase_<id> until the detailed GLB swaps in.
+    name = f"lmbase_{bid}" if standin else f"bldg_{bid}"
     holes = bldg.get("holes") or None
-    if (bldg.get("landmark") or {}).get("custom") and mats.get("landmark"):
+    if not standin and (bldg.get("landmark") or {}).get("custom") and mats.get("landmark"):
         # Hand-modelled landmark: full detail at any distance, no facade photo / atlas.
         kit = landmark_models.build_landmark(bldg)
         if kit is not None:
@@ -2955,7 +2961,9 @@ def add_building(bldg: dict, mats: dict, spawn_xy: tuple[float, float] | None = 
     seed_id = int(bid) if str(bid).lstrip("-").isdigit() else 1
     # LOD: chimneys and plant also crown the "simple" ring (skyline from the orbit view);
     # corbels, pots, vents and aerials are near-spawn only.
-    if far or holes:
+    # Stand-in chimneys land in the shared rooftop batch, which cannot be hidden
+    # when the detailed GLB replaces this one building.
+    if standin or far or holes:
         pass
     elif eff_shape != "flat" and seed_id % 2 == 0:
         ROOFTOP_STATS["chimneys"] += add_chimneys(
@@ -4390,13 +4398,25 @@ def build(layout: dict, types_doc: dict | None = None) -> None:
     ROOF_STATS.clear()
     ROOF_STATS.update({"measured": 0, "fallback": 0})
     for bldg in layout.get("buildings") or []:
+        if not _wants_stream(bldg):
+            add_building(bldg, mats, spawn_xy=spawn_xy)
+            continue
+        # Ordinary building stays in the city so the plot is never a hole or a
+        # blank plinth. The detailed mesh is peeled into landmarks/<id>.glb.
+        add_building(bldg, mats, spawn_xy=spawn_xy, standin=True)
         before = set(bpy.data.objects)
-        add_building(bldg, mats, spawn_xy=spawn_xy)
-        if _wants_stream(bldg):
-            fresh = _fresh_objects(before)
-            if fresh:
-                STREAMED[str(bldg["id"])] = fresh
-                add_landmark_hold(bldg.get("id"), bldg.get("ring") or [], bldg.get("holes") or [], mats)
+        lm = bldg.get("landmark") or {}
+        detailed = False
+        if lm.get("custom") and mats.get("landmark"):
+            kit = landmark_models.build_landmark(bldg)
+            if kit is not None:
+                add_kit_mesh(f"bldg_{bldg['id']}_landmark", kit, mats["landmark"])
+                detailed = True
+        if not detailed:
+            add_building(bldg, mats, spawn_xy=spawn_xy, standin=False)
+        fresh = _fresh_objects(before)
+        if fresh:
+            STREAMED[str(bldg["id"])] = fresh
     for node in layout.get("landmark_nodes") or []:
         before = set(bpy.data.objects)
         kit = landmark_models.build_node_landmark(node)
@@ -4426,7 +4446,8 @@ def peel_streamed_landmarks(output_dir: Path) -> None:
     """Write each one-off landmark to its own GLB, then drop it from the city scene.
 
     The .blend is already saved, so street-level renders still see the detailed mesh.
-    A lmhold_* plinth stays in the city GLB.
+    Buildings keep an lmbase_<id> stand-in in the city GLB. Point landmarks keep
+    a small lmhold_<id> pad.
     """
     dest = output_dir / "landmarks"
     dest.mkdir(parents=True, exist_ok=True)

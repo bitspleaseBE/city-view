@@ -1,16 +1,30 @@
 /**
  * One-off landmark GLBs load only while the camera is near them.
  *
- * Walking (and riding) loads inside 220 m and unloads past 310 m, so a
- * boundary doesn't thrash. Free view zoomed out far enough to see the
- * district keeps every landmark visible; zoom back in and the walk radii
- * apply again.
+ * Paths are relative to the page (`landmarks/<id>.glb`, `landmarks.json`),
+ * which is what GitHub Pages serves at /metropolis/.
+ *
+ * Walking (and riding) loads inside 300 m and unloads past 420 m, so a
+ * boundary doesn't thrash. From Halte Gounod that covers Heilige Geestkerk,
+ * Mechelsesteenweg 123, the Peter Benoitstraat houses, Vincentius, and
+ * Harmoniestraat 24. Free view zoomed out far enough to see the district
+ * keeps every landmark visible; zoom back in and the walk radii apply again.
+ *
+ * Until a GLB arrives the city keeps the ordinary building (`lmbase_<id>`)
+ * or, on older city files, the knee-high plinth (`lmhold_<id>`). The stand-in
+ * hides once the detailed mesh is in the scene and comes back when it unloads.
  */
 
-export const LOAD_M = 220;
-export const UNLOAD_M = 310;
+export const LOAD_M = 300;
+export const UNLOAD_M = 420;
 export const OVERVIEW_ON = 190;
 export const OVERVIEW_OFF = 130;
+
+/** OSM id from a city-GLB stand-in. Parts are `lmbase_<id>_roof`, `lmhold_<id>`, … */
+export function standinKey(name) {
+  const m = /^(?:lmbase_|lmhold_)(\d+)/.exec(String(name || ""));
+  return m ? m[1] : null;
+}
 
 /** Latched "show the whole district" flag for free view. Walking clears it. */
 export function overviewLatched(mode, height, overview) {
@@ -55,16 +69,20 @@ export function createLandmarkStream({ scene, loader, cityRoot, catalog }) {
   const holds = new Map();
   if (cityRoot) {
     cityRoot.traverse((obj) => {
-      const name = obj.name || "";
-      if (name.startsWith("lmhold_")) holds.set(name.slice("lmhold_".length), obj);
+      const id = standinKey(obj.name || "");
+      if (!id) return;
+      const list = holds.get(id);
+      if (list) list.push(obj);
+      else holds.set(id, [obj]);
     });
   }
   const resident = new Map();
   let overview = false;
 
   function setHold(id, visible) {
-    const hold = holds.get(String(id));
-    if (hold) hold.visible = visible;
+    const list = holds.get(String(id));
+    if (!list) return;
+    for (const obj of list) obj.visible = visible;
   }
 
   function entry(id) {
