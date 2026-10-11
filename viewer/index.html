@@ -965,6 +965,7 @@
       import { createTerraces } from "./terraces.js";
       import { createPropCollider } from "./props-collide.js";
       import { createPlayerMotion } from "./player-motion.js";
+      import { createPlayerCrash } from "./crash.js";
       import { createPlayerAvatar, preloadPlayer } from "./players.js";
       import { createThirdPersonCamera } from "./third-person.js";
       import { createMenu } from "./menu.js";
@@ -1363,8 +1364,8 @@
         if (cue) cue.textContent = "Tap to play";
       }
       let touch = null;
-      // GTA-style hop: short, snappy impulse; re-press Space to jump again.
-      const JUMP = { v: 0, y: 0, g: -24, strength: 7.4, active: false, held: false };
+      // GTA hop: enough to clear a low fence, a little hang at the top, then you just drop.
+      const JUMP = { v: 0, y: 0, g: -16, strength: 6.2, active: false, held: false };
       let prevTime = performance.now();
       let cityRoot = null;
       let spawnPos = new THREE.Vector3(-218.5, eyeHeight, -432.1);
@@ -1410,6 +1411,116 @@
       }
       const _riderObstacles = [{ x: 0, z: 0, r: 0.45 }];
       const _beforeStep = { x: 0, z: 0 };
+      const _afterWall = { x: 0, z: 0 };
+      let _lastVehicleHitMs = 0;
+      const HIT_SPEED = 1.8; // m/s: below this you walk beside it; above it you go down
+      /** Parked kerbside cars (velocity 0) captured before the city meshes are merged. */
+      const parkedCarSolids = [];
+      const _parkSize = new THREE.Vector3();
+      const _parkCenter = new THREE.Vector3();
+      const _parkScale = new THREE.Vector3();
+      const _parkFwd = new THREE.Vector3();
+      const _parkQuat = new THREE.Quaternion();
+
+      /** Speed component into the building face next to `from` (ring of samples → wall normal). */
+      function speedIntoWall(from, yaw, speed) {
+        if (!outdoors?.insideBuilding) return speed;
+        let nx = 0;
+        let nz = 0;
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2;
+          const sx = Math.sin(a);
+          const sz = Math.cos(a);
+          if (outdoors.insideBuilding(from.x + sx * 0.6, from.z + sz * 0.6)) {
+            nx += sx;
+            nz += sz;
+          }
+        }
+        const n = Math.hypot(nx, nz);
+        if (n < 1e-6) return speed;
+        return Math.max(0, (speed * (-Math.sin(yaw) * nx - Math.cos(yaw) * nz)) / n);
+      }
+
+      function collectParkedCarSolids(root) {
+        parkedCarSolids.length = 0;
+        root.updateMatrixWorld(true);
+        root.traverse((mesh) => {
+          if (!mesh.isMesh || !/_body$/.test(mesh.name || "")) return;
+          const host = mesh.parent;
+          if (!host || !/^car_\d+_/.test(host.name || "")) return;
+          const geo = mesh.geometry;
+          if (!geo) return;
+          if (!geo.boundingBox) geo.computeBoundingBox();
+          geo.boundingBox.getSize(_parkSize);
+          geo.boundingBox.getCenter(_parkCenter);
+          _parkCenter.applyMatrix4(host.matrixWorld);
+          host.getWorldQuaternion(_parkQuat);
+          host.getWorldScale(_parkScale);
+          const alongZ = _parkSize.z >= _parkSize.x;
+          const hl = (alongZ ? _parkSize.z * _parkScale.z : _parkSize.x * _parkScale.x) * 0.5;
+          const hw = (alongZ ? _parkSize.x * _parkScale.x : _parkSize.z * _parkScale.z) * 0.5;
+          if (hl < 0.4 || hw < 0.2) return;
+          _parkFwd.set(alongZ ? 0 : 1, 0, alongZ ? 1 : 0).applyQuaternion(_parkQuat);
+          const h = Math.hypot(_parkFwd.x, _parkFwd.z) || 1;
+          parkedCarSolids.push({
+            pos: { x: _parkCenter.x, z: _parkCenter.z },
+            tan: { x: _parkFwd.x / h, z: _parkFwd.z / h },
+            hl,
+            hw,
+            velocity: 0,
+          });
+        });
+        if (parkedCarSolids.length) {
+          console.info(`[metropolis] parked cars solid: ${parkedCarSolids.length}`);
+        }
+      }
+
+      function boxTouches(px, pz, cx, cz, ax, az, hl, hw, r) {
+        const dx = px - cx;
+        const dz = pz - cz;
+        const len = Math.hypot(ax, az) || 1;
+        const ux = ax / len;
+        const uz = az / len;
+        const a = dx * ux + dz * uz;
+        const b = dx * -uz + dz * ux;
+        return Math.abs(a) < hl + r && Math.abs(b) < hw + r;
+      }
+
+      /**
+       * Fastest moving car / tram / bike / scooter overlapping the walker.
+       * Parked and stopped objects stay at 0 so you slide along them instead of falling.
+       */
+      function fastestOverlap(pos, r) {
+        let best = 0;
+        const box = (cx, cz, ax, az, hl, hw, speed) => {
+          if (!(speed > best) || speed < HIT_SPEED) return;
+          if (boxTouches(pos.x, pos.z, cx, cz, ax, az, hl, hw, r)) best = speed;
+        };
+        const circle = (cx, cz, R, speed) => {
+          if (!(speed > best) || speed < HIT_SPEED) return;
+          const dx = pos.x - cx;
+          const dz = pos.z - cz;
+          if (dx * dx + dz * dz < (R + r) * (R + r)) best = speed;
+        };
+        for (const c of traffic.cars || []) {
+          if (!c?.pos || !c.tan) continue;
+          box(c.pos.x, c.pos.z, c.tan.x, c.tan.z, 2.15, 0.9, c.velocity || 0);
+        }
+        for (const v of transit.vehicles || []) {
+          if (!v?.pos || !v.tan || v.phase === "gone") continue;
+          const tram = v.mode === "tram";
+          box(v.pos.x, v.pos.z, v.tan.x, v.tan.z, tram ? 15.5 : 6.6, tram ? 1.2 : 1.25, v.velocity || 0);
+        }
+        if (micromobility) {
+          for (const v of micromobility.vehicles) {
+            if (!v?.pos) continue;
+            const spd = v.crash ? Math.hypot(v.crash.vx || 0, v.crash.vz || 0) : v.cur || 0;
+            circle(v.pos.x, v.pos.z, 0.62, spd);
+          }
+        }
+        return best;
+      }
+
       /** Riders and parked scooters are solid: slide the walker out instead of through them. */
       function pushOutOfSolids(pos) {
         const push = (cx, cz, R) => {
@@ -1429,8 +1540,8 @@
       const _vehicleSolids = [];
       /** Trunks, posts, benches, racks, fences, cars, buses and trams: solid on foot and on wheels. */
       function collideWorld(pos, onWheels) {
-        if (!props) return;
-        const r = onWheels ? 0.42 : 0.3;
+        if (!props) return false;
+        const r = onWheels ? 0.42 : 0.34;
         let hit = props.resolveStatic(pos, r);
         _vehicleSolids.length = 0;
         for (const c of traffic.cars || []) _vehicleSolids.push({ pos: c.pos, tan: c.tan, hl: 2.15, hw: 0.9 });
@@ -1439,11 +1550,13 @@
           const tram = v.mode === "tram";
           _vehicleSolids.push({ pos: v.pos, tan: v.tan, hl: tram ? 15.5 : 6.6, hw: tram ? 1.2 : 1.25 });
         }
+        for (const s of parkedCarSolids) _vehicleSolids.push(s);
         if (velo && velo.solids) for (const s of velo.solids) _vehicleSolids.push(s);
         hit = props.resolveVehicles(pos, r, _vehicleSolids) || hit;
         if (terraces) hit = props.resolveCircles(pos, r, terraces.solids) || hit;
         if (hit) playerMotion.bump(onWheels ? 0.35 : 0.6);
         if (hit && outdoors) outdoors.ensureOutdoors(pos);
+        return hit;
       }
       let minimap = null;
       let streetLocator = null;
@@ -1556,6 +1669,70 @@
           if (lockListeners[type]) lockListeners[type].push(fn);
         },
       };
+      const playerCrash = createPlayerCrash(THREE, camera, { eye: eyeHeight, canvas: renderer.domElement });
+      const CRASH_IMPACT = 3.2; // m/s straight into something solid throws you off
+      const CRASH_PERSON = 3.0; // m/s into a pedestrian: you both go down
+
+      /** Thrown off a scooter / Velo, or struck by traffic: the view goes down, then you get up. */
+      function crashRide(speed, label) {
+        if (playerCrash.active || playerCrash.dead || !playerCrash.vulnerable) return;
+        const w = walkControls.getObject();
+        const yaw = playerMotion.yaw();
+        if (scooters && scooters.isRiding()) {
+          const res = scooters.crash({ x: w.position.x, z: w.position.z, yaw, speed });
+          if (res) hud.spend(res.cost, `${res.brand} ride`);
+        }
+        if (velo && velo.isRiding && velo.isRiding()) {
+          velo.tryInteract({ x: w.position.x, z: w.position.z });
+        }
+        rideEl.style.display = "none";
+        promptEl.style.display = "none";
+        const dmg = playerCrash.start(w.position, yaw, speed);
+        playerMotion.stop();
+        keys.space = false;
+        JUMP.active = false;
+        JUMP.v = 0;
+        JUMP.y = 0;
+        const kmh = Math.round(Math.abs(speed) * 3.6);
+        if (playerCrash.dead) hud.notify(label || `Fatal impact at ${kmh} km/h`, 6000);
+        else hud.notify((label || `Crashed at ${kmh} km/h`) + ` · −${dmg} health`, 5000);
+        playerAvatar.setVisible(false);
+      }
+      /** Car, tram, bus, bike or scooter that could not stop in time. */
+      function hitByVehicle(speed) {
+        const now = performance.now();
+        if (now - _lastVehicleHitMs < 900) return;
+        if (playerCrash.active || playerCrash.dead || !playerCrash.vulnerable) return;
+        if (transit.isRiding && transit.isRiding()) return;
+        _lastVehicleHitMs = now;
+        crashRide(Math.max(speed, 3.5), `Hit by a vehicle at ${Math.round(speed * 3.6)} km/h`);
+      }
+      /** On foot, a moving overlap knocks you down. A stopped object is only a wall. */
+      function considerMovingHit(pos) {
+        if (playerCrash.active || playerCrash.dead || mode !== "walk") return;
+        if (transit.isRiding && transit.isRiding()) return;
+        if (velo && velo.isRiding && velo.isRiding()) return;
+        if (scooters && scooters.isRiding()) return;
+        const speed = fastestOverlap(pos, 0.36);
+        if (speed >= HIT_SPEED) hitByVehicle(speed);
+      }
+      playerCrash.setOnDeath(() => {
+        hud.notify("You died · restarting…", 4500);
+        setTimeout(() => {
+          if (!playerCrash.dead) return;
+          const w = walkControls.getObject();
+          const yaw = thirdPerson.yaw();
+          w.position.copy(spawnPos);
+          w.position.y = eyeHeight;
+          playerCrash.respawn(w.position, yaw);
+          playerMotion.stop();
+          thirdPerson.setYaw(yaw);
+          thirdPerson.snap(w.position);
+          playerAvatar.setVisible(true);
+          hud.setHealth(100);
+          hud.notify("Back on your feet", 2800);
+        }, 2800);
+      });
       // Free-view marker (top-down framing of the walker).
       const avatar = playerAvatar.root;
 
@@ -2264,6 +2441,7 @@
           paintParkedCars(cityRoot);
           parkedCars = wireParkedCarLamps(cityRoot, THREE);
           cityRoot.updateMatrixWorld(true);
+          collectParkedCarSolids(cityRoot);
           setLoad(0.9, "Building the streets");
           await nextFrame();
           if (new URLSearchParams(location.search).get("merge") !== "0") {
@@ -2283,6 +2461,8 @@
           await nextFrame();
           traffic = await createTraffic(scene, THREE);
           transit = await createTransit(scene, THREE, { tramCount: 6, busCount: 8 });
+          if (traffic.setOnHitPlayer) traffic.setOnHitPlayer((speed) => hitByVehicle(speed));
+          if (transit.setOnHitPlayer) transit.setOnHitPlayer((speed) => hitByVehicle(speed));
           // A handful of Aj, then the other bodies and the rest of the crowd after the city is up.
           pedestrians = await createPedestrians(scene, THREE, {
             count: 40,
@@ -2513,9 +2693,35 @@
         const ridingVelo = velo && velo.isRiding && velo.isRiding();
         const riding = ridingTram;
         const onScooter = scooters && scooters.isRiding();
+        playerMotion.setFootScale(playerCrash.speedScale());
 
-        if (!menuOpen) {
-          // ---- Jump (Space): edge-triggered hop, full air move like GTA ----
+        if (playerCrash.active) {
+          const w = walkControls.getObject();
+          _beforeStep.x = w.position.x;
+          _beforeStep.z = w.position.z;
+          playerCrash.update(dt, w);
+          if (playerCrash.active) {
+            let stopped = !!(outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep));
+            clampWalkerXZ(w.position);
+            stopped = collideWorld(w.position, false) || stopped;
+            if (stopped) playerCrash.stopHorizontal();
+          } else {
+            // Rise finished: boom behind the body, world-up, and clear of the vehicle.
+            camera.up.copy(UP_WORLD);
+            thirdPerson.snap(w.position);
+            playerAvatar.setVisible(true);
+            pushOutOfSolids(w.position);
+            collideWorld(w.position, false);
+          }
+        } else if (!menuOpen) {
+          // Just stood up inside a bus or car: keep sliding clear so it does not
+          // knock you straight back down and leave the camera rolled.
+          if (!playerCrash.vulnerable && mode === "walk") {
+            const w = walkControls.getObject();
+            pushOutOfSolids(w.position);
+            collideWorld(w.position, false);
+          }
+          // ---- Jump (Space): fence-height hop, a short hang, then you just fall ----
           const canJump =
             mode === "walk" && !riding && !ridingVelo && !onScooter && walkEngaged();
           if (!canJump) {
@@ -2526,9 +2732,12 @@
             if (keys.space && !JUMP.held && !JUMP.active) {
               JUMP.v = JUMP.strength;
               JUMP.active = true;
+              playerMotion.hop(2.8);
             }
             if (JUMP.active) {
-              JUMP.v += JUMP.g * dt;
+              // Lighter gravity near the apex so the hop hangs instead of peaking like a spike.
+              const g = Math.abs(JUMP.v) < 1.4 ? JUMP.g * 0.55 : JUMP.g;
+              JUMP.v += g * dt;
               JUMP.y += JUMP.v * dt;
               if (JUMP.y <= 0) {
                 JUMP.y = 0;
@@ -2551,11 +2760,42 @@
             _beforeStep.z = w.position.z;
             playerMotion.step(dt, keys, kind);
             w.position.y = playerMotion.eye(kind) + JUMP.y;
+            const overlapSpeed = !onScooter && !ridingVelo ? fastestOverlap(w.position, 0.36) : 0;
+            const wallHit = !!(outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep));
+            if (wallHit) playerMotion.bump(0.5);
             clampWalkerXZ(w.position);
-            if (outdoors && outdoors.rejectIfIndoors(w.position, _beforeStep)) playerMotion.bump(0.5);
+            _afterWall.x = w.position.x;
+            _afterWall.z = w.position.z;
             if (!onScooter && !ridingVelo) pushOutOfSolids(w.position);
             collideWorld(w.position, onScooter || ridingVelo);
-            if (ridingVelo && velo.update) {
+            if ((onScooter || ridingVelo) && dt > 0) {
+              const yaw = playerMotion.yaw();
+              const rideSpeed = playerMotion.speed;
+              let impact = Math.hypot(w.position.x - _afterWall.x, w.position.z - _afterWall.z) / dt;
+              if (wallHit) impact = Math.max(impact, speedIntoWall(_beforeStep, yaw, rideSpeed));
+              const people = pedestrians
+                ? pedestrians.hitTest(
+                    w.position.x - Math.sin(yaw) * 0.4,
+                    w.position.z - Math.cos(yaw) * 0.4,
+                    -Math.sin(yaw) * rideSpeed,
+                    -Math.cos(yaw) * rideSpeed,
+                    0.3,
+                  )
+                : 0;
+              if (
+                (impact > CRASH_IMPACT && Math.abs(rideSpeed) > CRASH_IMPACT) ||
+                (people && Math.abs(rideSpeed) > CRASH_PERSON)
+              ) {
+                crashRide(
+                  Math.abs(rideSpeed),
+                  onScooter
+                    ? `You came off the scooter at ${Math.round(Math.abs(rideSpeed) * 3.6)} km/h`
+                    : `You came off the Velo at ${Math.round(Math.abs(rideSpeed) * 3.6)} km/h`,
+                );
+              }
+            }
+            if (!playerCrash.active && overlapSpeed >= HIT_SPEED) hitByVehicle(overlapSpeed);
+            if (ridingVelo && velo.update && !playerCrash.active) {
               velo.update(dt, {
                 x: w.position.x,
                 z: w.position.z,
@@ -2564,7 +2804,7 @@
                 speed: playerMotion.speed,
               });
             }
-            if ((onScooter || ridingVelo) && Math.abs(playerMotion.speed) > 0.15) {
+            if ((onScooter || ridingVelo) && !playerCrash.active && Math.abs(playerMotion.speed) > 0.15) {
               thirdPerson.easeYawToward(playerMotion.yaw(), dt, 3);
             }
           } else {
@@ -2598,11 +2838,16 @@
           const fz = -Math.cos(y) * playerMotion.state.fwd - Math.sin(y) * playerMotion.state.side;
           if (fx * fx + fz * fz > 1e-6) bodyYaw = Math.atan2(-fx, -fz);
         }
+        const crashing = playerCrash.active;
         if (mode === "walk" || mode === "free") {
-          playerAvatar.update(menuOpen ? 0 : dt, wPos, spd, bodyYaw, moveKind);
-          playerAvatar.setVisible(true);
+          playerAvatar.update(menuOpen || crashing ? 0 : dt, wPos, crashing ? 0 : spd, bodyYaw, moveKind);
+          playerAvatar.setVisible(!crashing);
         }
-        if (mode === "walk" && !riding) {
+        if (crashing) {
+          // First-person tumble: the boom would fight the fall camera.
+          camera.up.copy(UP_WORLD);
+          camera.position.copy(wPos);
+        } else if (mode === "walk" && !riding) {
           thirdPerson.update(menuOpen ? 1 / 60 : dt, wPos);
         }
 
@@ -2622,6 +2867,7 @@
           if (traffic.setCamera) traffic.setCamera(camera.position.x, camera.position.z);
           if (transit.setCamera) transit.setCamera(camera.position.x, camera.position.z);
           if (micromobility?.setCamera) micromobility.setCamera(camera.position.x, camera.position.z);
+          if (mode === "walk") considerMovingHit(walkControls.getObject().position);
         } else if (stars.visible) {
           stars.position.copy(camera.position);
         }
@@ -2673,6 +2919,7 @@
         const sRide = scooters && scooters.isRiding() ? scooters.getRideHud() : null;
         const vRide = velo && velo.isRiding && velo.isRiding() ? velo.getRideHud() : null;
         const kmh = Math.abs(playerMotion.speed) * 3.6;
+        hud.setHealth(playerCrash.health);
         hud.update(rawDt, {
           hour: gameHour,
           dayIndex: gameDay,
