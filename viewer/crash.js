@@ -42,12 +42,15 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
   let onDeath = null;
   /** null, or the state of the fall in progress. */
   let c = null;
+  /** ms timestamp: ignore new hits until the get-up camera has settled. */
+  let safeUntil = 0;
 
   /** Thrown off at `speed` m/s heading `yaw`. Returns the damage taken. */
   function start(pos, yaw, speed) {
     if (dead) return 0;
     euler.setFromQuaternion(camera.quaternion);
-    const dmg = Math.round(Math.min(90, Math.max(8, 8 + (speed - 3) * 10)));
+    const throwSpeed = Math.min(16, Math.max(0, Number.isFinite(speed) ? speed : 4));
+    const dmg = Math.round(Math.min(90, Math.max(8, 8 + (throwSpeed - 3) * 10)));
     health = Math.max(0, health - dmg);
     sinceHit = 0;
     const killed = health <= 0;
@@ -67,9 +70,9 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
       pitch: euler.x,
       roll: 0,
       side: Math.random() < 0.5 ? -1 : 1,
-      vx: fx * speed * 0.8 * throwK,
-      vz: fz * speed * 0.8 * throwK,
-      vy: 1.6 + speed * 0.12 * throwK,
+      vx: fx * throwSpeed * 0.8 * throwK,
+      vz: fz * throwSpeed * 0.8 * throwK,
+      vy: 1.6 + throwSpeed * 0.12 * throwK,
       y: pos.y,
       shake: 0,
       lie: killed ? DEAD_LIE_S : 1.6 + dmg * 0.035,
@@ -121,7 +124,12 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
         daze = 1;
       }
     } else if (c.phase === "slide" || c.phase === "lie") {
-      const hs = Math.hypot(c.vx, c.vz);
+      let hs = Math.hypot(c.vx, c.vz);
+      if (!Number.isFinite(hs)) {
+        c.vx = 0;
+        c.vz = 0;
+        hs = 0;
+      }
       if (hs > 0) {
         const slow = Math.max(0, hs - SLIDE_DECEL * dt) / hs;
         c.vx *= slow;
@@ -157,7 +165,11 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
       c.roll = ease(c.fromRoll, 0, s);
       if (k >= 1) {
         p.y = standEye;
+        c.pitch = 0;
+        c.roll = 0;
+        camera.up.set(0, 1, 0);
         camera.quaternion.setFromEuler(euler.set(0, c.yaw, 0, "YXZ"));
+        safeUntil = performance.now() + 2800;
         c = null;
         return false;
       }
@@ -201,6 +213,10 @@ export function createPlayerCrash(THREE, camera, opts = {}) {
     },
     get active() {
       return !!c;
+    },
+    /** True once the get-up has finished and a new hit is allowed. */
+    get vulnerable() {
+      return performance.now() >= safeUntil;
     },
     get airborne() {
       return !!c && c.phase === "fly";

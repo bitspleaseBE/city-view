@@ -89,6 +89,8 @@ export function createPlayerAvatar(THREE, scene) {
   let bodyBones = null;
   let airBlend = 0;
   let airPoseSaved = false;
+  /** Hips XZ (root space) to hold. Pieter's walk translates the pelvis a full stride per loop. */
+  let pelvisPin = null;
   const _airBase = {
     lThigh: new THREE.Quaternion(),
     rThigh: new THREE.Quaternion(),
@@ -97,7 +99,9 @@ export function createPlayerAvatar(THREE, scene) {
     spine: new THREE.Quaternion(),
   };
   const _headPrev = new THREE.Quaternion();
+  const _headBind = new THREE.Quaternion();
   let headReady = false;
+  let headBindReady = false;
 
   // Grip targets match viewer/scooters.js + viewer/velo.js (bike scale 1.55).
   const GRIP = {
@@ -130,50 +134,12 @@ export function createPlayerAvatar(THREE, scene) {
     return fixed;
   }
 
-  /**
-   * Drop scale tracks (FBX keys identity scale and fights normalizeImportScale).
-   * Peel net horizontal drift off the pelvis / armature so a loop doesn't yank
-   * the body — and the head — back to the start of the stride. Pieter's walk
-   * ships ~120 units of pelvis travel; Mo's does not, but the same pass is safe.
-   */
+  /** Drop scale tracks — FBX keys identity scale and fights normalizeImportScale. */
   function sanitizeClip(clip) {
     if (!clip?.tracks?.length) return clip;
-    let changed = false;
-    const tracks = [];
-    for (const t of clip.tracks) {
-      if (t.name.endsWith(".scale")) {
-        changed = true;
-        continue;
-      }
-      if (t.name.endsWith(".position") && settleRootMotion(t)) changed = true;
-      tracks.push(t);
-    }
-    if (!changed) return clip;
+    const tracks = clip.tracks.filter((t) => !t.name.endsWith(".scale"));
+    if (tracks.length === clip.tracks.length) return clip;
     return new THREE.AnimationClip(clip.name, clip.duration, tracks);
-  }
-
-  /** Remove end-to-end travel on a position track; keep the bob around that line. */
-  function settleRootMotion(track) {
-    const bone = track.name.slice(0, -".position".length);
-    if (!/pelvis$/i.test(bone) && bone !== "Bip01" && bone !== "Armature") return false;
-    const values = track.values;
-    const times = track.times;
-    const n = times?.length || 0;
-    if (n < 2 || values.length < n * 3) return false;
-    const t0 = times[0];
-    const span = times[n - 1] - t0 || 1;
-    let changed = false;
-    for (let axis = 0; axis < 3; axis++) {
-      const drift = values[(n - 1) * 3 + axis] - values[axis];
-      // Bone units are centimetres. A stride is tens of units; hip bob is ~1–3.
-      if (Math.abs(drift) < 8) continue;
-      changed = true;
-      for (let i = 0; i < n; i++) {
-        const u = (times[i] - t0) / span;
-        values[i * 3 + axis] -= drift * u;
-      }
-    }
-    return changed;
   }
 
   // Reused each frame for Mixamo thigh-lift polish.
@@ -220,9 +186,35 @@ export function createPlayerAvatar(THREE, scene) {
       rCalf: findNamed(rig, "Bip01_R_Calf", "Bip01 R Calf", "RightLeg", "mixamorigRightLeg"),
       spine: findNamed(rig, "Bip01_Spine", "Bip01 Spine", "Spine", "mixamorigSpine"),
       head: findNamed(rig, "Bip01_Head", "Bip01 Head", "Head", "mixamorigHead"),
+      pelvis: findNamed(rig, "Bip01_Pelvis", "Bip01 Pelvis", "Pelvis", "mixamorigHips"),
     };
     headReady = false;
+    headBindReady = false;
     airPoseSaved = false;
+    pelvisPin = null;
+    if (bodyBones.head) {
+      _headBind.copy(bodyBones.head.quaternion);
+      headBindReady = true;
+    }
+  }
+
+  /**
+   * The walk was baked with the hips travelling forward and the feet planted in
+   * the world. Stripping that travel makes the feet slide back, then the loop
+   * yanks them forward a stride (two steps). Shift the mesh by the opposite
+   * amount so the hips stay put and the loop matches.
+   */
+  function pinWalkPelvis() {
+    const pelvis = bodyBones?.pelvis;
+    if (!pelvis) return;
+    visual.position.x = 0;
+    visual.position.z = 0;
+    root.updateMatrixWorld(true);
+    _vBone.setFromMatrixPosition(pelvis.matrixWorld);
+    root.worldToLocal(_vBone);
+    if (!pelvisPin) pelvisPin = { x: _vBone.x, z: _vBone.z };
+    visual.position.x = pelvisPin.x - _vBone.x;
+    visual.position.z = pelvisPin.z - _vBone.z;
   }
 
   /**
@@ -264,6 +256,19 @@ export function createPlayerAvatar(THREE, scene) {
    * Reject a one-frame head flip. Walk clips turn the head a degree or two per
    * key; a sudden yaw (bad loop, hemisphere flip) is what reads as a snap back.
    */
+  /**
+   * Pieter's walk keys sit ~180° off the head bind, so the face turns into the
+   * neck opening. Put that delta back on the bind. Clips already near the bind
+   * (Mo, Jacob) are left alone, and a frozen mixer is not applied twice.
+   */
+  function seatHeadOnBind() {
+    const head = bodyBones?.head;
+    if (!head || !headBindReady) return;
+    const dot = Math.abs(THREE.MathUtils.clamp(head.quaternion.dot(_headBind), -1, 1));
+    if (dot > 0.5) return;
+    head.quaternion.premultiply(_headBind);
+  }
+
   function stabilizeHead() {
     const head = bodyBones?.head;
     if (!head) return;
@@ -556,6 +561,7 @@ export function createPlayerAvatar(THREE, scene) {
       // Walk clips re-assert the tiny FBX armature scale after mixer.update.
       normalizeImportScale(visual);
       if (current === "walk" && actions.walk) {
+        pinWalkPelvis();
         const dur = actions.walk.getClip()?.duration || 1;
         const phase = (actions.walk.time / dur) * Math.PI * 2;
         polishWalkPose(visual, phase, !airborne && Math.abs(moveSpeed) >= 0.08);
@@ -563,8 +569,11 @@ export function createPlayerAvatar(THREE, scene) {
         const tuck = airBlend * airBlend * (3 - 2 * airBlend);
         if (tuck > 1e-3 && airPoseSaved) polishAirPose(tuck);
         else if (!airborne) restoreAirPose();
+        seatHeadOnBind();
         stabilizeHead();
       } else if (kind === "velo" || kind === "scooter") {
+        visual.position.x = 0;
+        visual.position.z = 0;
         // Ride clips don't put Rocketbox/Mixamo wrists on the bars — IK does.
         visual.updateMatrixWorld(true);
         polishRideGrips(kind, targetYaw);

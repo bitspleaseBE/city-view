@@ -1674,7 +1674,7 @@
 
       /** Thrown off a scooter / Velo, or struck by traffic: the view goes down, then you get up. */
       function crashRide(speed, label) {
-        if (playerCrash.active || playerCrash.dead) return;
+        if (playerCrash.active || playerCrash.dead || !playerCrash.vulnerable) return;
         const w = walkControls.getObject();
         const yaw = playerMotion.yaw();
         if (scooters && scooters.isRiding()) {
@@ -1701,7 +1701,7 @@
       function hitByVehicle(speed) {
         const now = performance.now();
         if (now - _lastVehicleHitMs < 900) return;
-        if (playerCrash.active || playerCrash.dead) return;
+        if (playerCrash.active || playerCrash.dead || !playerCrash.vulnerable) return;
         if (transit.isRiding && transit.isRiding()) return;
         _lastVehicleHitMs = now;
         crashRide(Math.max(speed, 3.5), `Hit by a vehicle at ${Math.round(speed * 3.6)} km/h`);
@@ -2676,10 +2676,21 @@
             stopped = collideWorld(w.position, false) || stopped;
             if (stopped) playerCrash.stopHorizontal();
           } else {
+            // Rise finished: boom behind the body, world-up, and clear of the vehicle.
+            camera.up.copy(UP_WORLD);
             thirdPerson.snap(w.position);
             playerAvatar.setVisible(true);
+            pushOutOfSolids(w.position);
+            collideWorld(w.position, false);
           }
         } else if (!menuOpen) {
+          // Just stood up inside a bus or car: keep sliding clear so it does not
+          // knock you straight back down and leave the camera rolled.
+          if (!playerCrash.vulnerable && mode === "walk") {
+            const w = walkControls.getObject();
+            pushOutOfSolids(w.position);
+            collideWorld(w.position, false);
+          }
           // ---- Jump (Space): fence-height hop, a short hang, then you just fall ----
           const canJump =
             mode === "walk" && !riding && !ridingVelo && !onScooter && walkEngaged();
